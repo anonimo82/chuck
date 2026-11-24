@@ -360,6 +360,68 @@ bool muxAudio(const std::string &videoPath, const std::string &audioPath, const 
     return wrote[0] && wrote[1] && out.finish();
 }
 
+
+// Audio track indices are ordinal among audio streams, not container stream IDs.
+int audioTrackCount(const Input &in) {
+    int count = 0;
+    for(unsigned i = 0; i < in.ctx->nb_streams; ++i)
+        if(in.ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) ++count;
+    return count;
+}
+bool extractAudio(Input &in, const std::string &dest, int track) {
+    const auto dot = dest.find_last_of('.');
+    if(dot == std::string::npos || track < 0) return false;
+    const auto ext = dest.substr(dot);
+    const char *format = ext == ".mka" ? "matroska" : ext == ".wav" ? "wav" :
+                         ext == ".flac" ? "flac" : ext == ".mp3" ? "mp3" :
+                         ext == ".m4a" ? "ipod" : ext == ".ogg" ? "ogg" :
+                         ext == ".opus" ? "opus" : nullptr;
+    if(!format) return false;
+    int index = -1;
+    for(unsigned i = 0; i < in.ctx->nb_streams; ++i) {
+        if(in.ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && track-- == 0) {
+            index = static_cast<int>(i);
+            break;
+        }
+    }
+    if(index < 0) return false;
+    auto *src = in.ctx->streams[index];
+    // Do not silently put an unrelated codec into a codec-specific extension.
+    const auto id = src->codecpar->codec_id;
+    if((ext == ".flac" && id != AV_CODEC_ID_FLAC) ||
+       (ext == ".mp3" && id != AV_CODEC_ID_MP3) ||
+       (ext == ".opus" && id != AV_CODEC_ID_OPUS) ||
+       (ext == ".m4a" && id != AV_CODEC_ID_AAC && id != AV_CODEC_ID_ALAC)) return false;
+    Output out(dest);
+    if(!out.open(format)) return false;
+    if(avformat_query_codec(out.ctx->oformat, id, FF_COMPLIANCE_NORMAL) <= 0) return false;
+    auto *dst = avformat_new_stream(out.ctx, nullptr);
+    if(!dst || avcodec_parameters_copy(dst->codecpar, src->codecpar) < 0) return false;
+    dst->codecpar->codec_tag = 0;
+    dst->time_base = src->time_base;
+    dst->disposition = src->disposition;
+    if(av_dict_copy(&dst->metadata, src->metadata, 0) < 0) return false;
+    if(avformat_write_header(out.ctx, nullptr) < 0) return false;
+    Packet packet;
+    if(!packet.p) return false;
+    int ret;
+    bool wrote = false;
+    while((ret = av_read_frame(in.ctx, packet.p)) >= 0) {
+        if(packet.p->stream_index != index) {
+            av_packet_unref(packet.p);
+            continue;
+        }
+        av_packet_rescale_ts(packet.p, src->time_base, dst->time_base);
+        packet.p->stream_index = dst->index;
+        packet.p->pos = -1;
+        const int written = av_interleaved_write_frame(out.ctx, packet.p);
+        av_packet_unref(packet.p);
+        if(written < 0) return false;
+        wrote = true;
+    }
+    return ret == AVERROR_EOF && wrote && out.finish();
+}
+
 // Strict P6 RGB8 input, with standard whitespace/comments in the header.
 bool ppmToken(FILE *f, std::string &token) {
     token.clear();
@@ -768,6 +830,25 @@ CK_DLL_SFUN(video_extract_sequence) {
             RETURN->v_int = extractSequence(in, prefix, static_cast<int>(start), static_cast<int>(limit));
     } catch(...) {}
 }
+CK_DLL_SFUN(video_audio_tracks) {
+    RETURN->v_int = -1;
+    try {
+        auto path = GET_NEXT_STRING_SAFE(ARGS);
+        Input in;
+        if(in.open(path)) RETURN->v_int = audioTrackCount(in);
+    } catch(...) {}
+}
+CK_DLL_SFUN(video_extract_audio) {
+    RETURN->v_int = 0;
+    try {
+        auto source = GET_NEXT_STRING_SAFE(ARGS);
+        auto dest = GET_NEXT_STRING_SAFE(ARGS);
+        auto track = GET_NEXT_INT(ARGS);
+        Input in;
+        if(track >= 0 && track <= 2147483647 && in.open(source) &&
+           extractAudio(in, dest, static_cast<int>(track))) RETURN->v_int = 1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -815,5 +896,11 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "string", "prefix");
     QUERY->add_arg(QUERY, "int", "start");
     QUERY->add_arg(QUERY, "int", "limit");
+    QUERY->add_sfun(QUERY, video_audio_tracks, "int", "audioTracks");
+    QUERY->add_arg(QUERY, "string", "source");
+    QUERY->add_sfun(QUERY, video_extract_audio, "int", "extractAudio");
+    QUERY->add_arg(QUERY, "string", "source");
+    QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_arg(QUERY, "int", "track");
     return QUERY->end_class(QUERY);
 }
