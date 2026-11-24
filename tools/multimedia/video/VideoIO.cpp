@@ -290,6 +290,103 @@ bool remux(Input &input, const std::string &dest) {
 
 
 
+
+// Conservative packet-copy trim for streams without reordered video timestamps.
+// The first keyframe at or after start is the common timestamp origin.
+bool trim(const std::string &source, const std::string &dest, double start, double end) {
+    Input in;
+    if(!in.open(source)) return false;
+    if(!std::isfinite(start) || !std::isfinite(end) || start < 0 ||
+       end <= start || end > 1000000000.0) return false;
+    const auto dot = dest.find_last_of('.');
+    if(dot == std::string::npos) return false;
+    const auto ext = dest.substr(dot);
+    const char *format = ext == ".mkv" ? "matroska" : ext == ".mp4" ? "mp4" :
+                         ext == ".mov" ? "mov" : ext == ".webm" ? "webm" : nullptr;
+    if(!format) return false;
+    for(unsigned i = 0; i < in.ctx->nb_streams; ++i)
+        if(static_cast<int>(i) != in.video &&
+           in.ctx->streams[i]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) return false;
+    const int64_t origin = in.ctx->start_time == AV_NOPTS_VALUE ? 0 : in.ctx->start_time;
+    const AVRational us{1, AV_TIME_BASE};
+    const int64_t begin = origin + static_cast<int64_t>(std::llround(start * AV_TIME_BASE));
+    const int64_t stop = origin + static_cast<int64_t>(std::llround(end * AV_TIME_BASE));
+    Packet packet;
+    if(!packet.p) return false;
+    // First pass finds a suitable video boundary. Reopen for the actual copy,
+    // so audio packets interleaved before the keyframe are not accidentally lost.
+    int64_t anchor = AV_NOPTS_VALUE;
+    int ret;
+    while((ret = av_read_frame(in.ctx, packet.p)) >= 0) {
+        auto *p = packet.p;
+        if(p->stream_index == in.video) {
+            if(p->pts == AV_NOPTS_VALUE || p->dts == AV_NOPTS_VALUE || p->pts != p->dts)
+                return false;
+            int64_t pts = av_rescale_q(p->pts, in.ctx->streams[in.video]->time_base, us);
+            if(pts >= begin && pts < stop && (p->flags & AV_PKT_FLAG_KEY)) {
+                anchor = pts;
+                av_packet_unref(p);
+                break;
+            }
+            if(pts >= stop) return false;
+        }
+        av_packet_unref(p);
+    }
+    if(anchor == AV_NOPTS_VALUE) return false;
+    Input copy;
+    if(!copy.open(source) || copy.video != in.video ||
+       copy.ctx->nb_streams != in.ctx->nb_streams) return false;
+    Output out(dest);
+    if(!out.open(format)) return false;
+    for(unsigned i = 0; i < copy.ctx->nb_streams; ++i) {
+        auto *src = copy.ctx->streams[i];
+        if(avformat_query_codec(out.ctx->oformat, src->codecpar->codec_id, FF_COMPLIANCE_NORMAL) <= 0)
+            return false;
+        auto *dst = avformat_new_stream(out.ctx, nullptr);
+        if(!dst || avcodec_parameters_copy(dst->codecpar, src->codecpar) < 0) return false;
+        dst->codecpar->codec_tag = 0;
+        dst->time_base = src->time_base;
+        dst->avg_frame_rate = src->avg_frame_rate;
+        dst->sample_aspect_ratio = src->sample_aspect_ratio;
+        dst->disposition = src->disposition;
+        if(av_dict_copy(&dst->metadata, src->metadata, 0) < 0) return false;
+    }
+    if(avformat_write_header(out.ctx, nullptr) < 0) return false;
+    std::vector<bool> written(copy.ctx->nb_streams, false);
+    std::vector<int64_t> previous(copy.ctx->nb_streams, AV_NOPTS_VALUE);
+    while((ret = av_read_frame(copy.ctx, packet.p)) >= 0) {
+        auto *p = packet.p;
+        int i = p->stream_index;
+        if(i < 0 || static_cast<unsigned>(i) >= copy.ctx->nb_streams) return false;
+        auto tb = copy.ctx->streams[i]->time_base;
+        if(p->pts == AV_NOPTS_VALUE || p->dts == AV_NOPTS_VALUE || p->pts != p->dts)
+            return false;
+        int64_t pts = av_rescale_q(p->pts, tb, us);
+        if(previous[i] != AV_NOPTS_VALUE && pts <= previous[i]) return false;
+        previous[i] = pts;
+        if(pts < anchor || pts >= stop) { av_packet_unref(p); continue; }
+        // Keep only complete audio packets within the requested interval.
+        if(i != copy.video && (p->duration <= 0 ||
+           av_rescale_q(p->duration, tb, us) > stop - pts)) {
+            av_packet_unref(p); continue;
+        }
+        if(i == copy.video && !written[i] && !(p->flags & AV_PKT_FLAG_KEY)) return false;
+        int64_t offset = av_rescale_q(anchor, us, tb);
+        p->pts -= offset;
+        p->dts -= offset;
+        av_packet_rescale_ts(p, tb, out.ctx->streams[i]->time_base);
+        p->pos = -1;
+        int status = av_interleaved_write_frame(out.ctx, p);
+        av_packet_unref(p);
+        if(status < 0) return false;
+        written[i] = true;
+    }
+    if(ret != AVERROR_EOF) return false;
+    // Refuse empty audio tracks rather than silently dropping them.
+    for(bool ok : written) if(!ok) return false;
+    return out.finish();
+}
+
 // Merge the selected video and audio streams, retaining their packet timestamps.
 // No decoding, resampling, trimming or time stretching.
 bool muxAudio(const std::string &videoPath, const std::string &audioPath, const std::string &dest) {
@@ -1163,6 +1260,16 @@ CK_DLL_SFUN(video_transcode_av) {
                      static_cast<int>(quality), static_cast<int>(kbps))) RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_trim) {
+    RETURN->v_int = 0;
+    try {
+        auto source = GET_NEXT_STRING_SAFE(ARGS);
+        auto dest = GET_NEXT_STRING_SAFE(ARGS);
+        auto start = GET_NEXT_FLOAT(ARGS);
+        auto end = GET_NEXT_FLOAT(ARGS);
+        if(trim(source, dest, start, end)) RETURN->v_int = 1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -1228,5 +1335,10 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "string", "codec");
     QUERY->add_arg(QUERY, "int", "quality");
     QUERY->add_arg(QUERY, "int", "audioKbps");
+    QUERY->add_sfun(QUERY, video_trim, "int", "trim");
+    QUERY->add_arg(QUERY, "string", "source");
+    QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_arg(QUERY, "float", "start");
+    QUERY->add_arg(QUERY, "float", "end");
     return QUERY->end_class(QUERY);
 }
