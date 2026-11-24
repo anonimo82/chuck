@@ -7,6 +7,11 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <memory>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <new>
 
 namespace {
 bool load(smf::MidiFile &m, const std::string &path) {
@@ -69,6 +74,149 @@ CK_DLL_SFUN(midi_note) {
         if(saveNew(m, path)) RETURN->v_int = 1;
     } catch(...) {}
 }
+
+namespace {
+struct MidiState {
+    std::unique_ptr<smf::MidiFile> file;
+    int transpose=0;
+    double velocity=1;
+    void reset() { transpose=0; velocity=1; }
+    bool read(const std::string &path) {
+        auto next=std::make_unique<smf::MidiFile>();
+        if(!load(*next,path)) return false;
+        next->absoluteTicks();
+        file=std::move(next);
+        reset();
+        return true;
+    }
+    smf::MidiEvent *event(t_CKINT track,t_CKINT index) {
+        if(!file || track<0 || track>=file->getTrackCount() ||
+           index<0 || index>=(*file)[static_cast<int>(track)].size()) return nullptr;
+        return &(*file)[static_cast<int>(track)][static_cast<int>(index)];
+    }
+    bool save(const std::string &path) const {
+        if(!file) return false;
+        smf::MidiFile copy(*file);
+        for(int t=0;t<copy.getTrackCount();++t) {
+            for(int i=0;i<copy[t].size();++i) {
+                auto &e=copy[t][i];
+                if(e.size()!=3) continue;
+                unsigned status=e[0]&0xf0;
+                if(status!=0x80 && status!=0x90 && status!=0xa0) continue;
+                int pitch=static_cast<int>(e[1])+transpose;
+                // Reject out-of-range notes rather than merge distinct pitches by clipping.
+                if(pitch<0 || pitch>127) return false;
+                e[1]=static_cast<unsigned char>(pitch);
+                if(status==0x90 && e[2]>0)
+                    e[2]=static_cast<unsigned char>(std::max(1L,std::min(127L,std::lround(e[2]*velocity))));
+            }
+        }
+        return saveNew(copy,path);
+    }
+};
+t_CKUINT midiSequenceOffset=0;
+MidiState *midiState(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<MidiState *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,midiSequenceOffset)));
+}
+}
+CK_DLL_CTOR(midi_sequence_ctor) {
+    static_assert(sizeof(t_CKUINT)>=sizeof(uintptr_t),"ChucK integer must hold native pointer");
+    OBJ_MEMBER_UINT(SELF,midiSequenceOffset)=0;
+    OBJ_MEMBER_UINT(SELF,midiSequenceOffset)=reinterpret_cast<uintptr_t>(new(std::nothrow) MidiState);
+}
+CK_DLL_DTOR(midi_sequence_dtor) {
+    delete midiState(SELF,API);
+    OBJ_MEMBER_UINT(SELF,midiSequenceOffset)=0;
+}
+CK_DLL_MFUN(midi_sequence_load) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API);
+        auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(p && p->read(path)) RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_save) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API);
+        auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(p && p->save(path)) RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_loaded) {
+    auto *p=midiState(SELF,API);
+    RETURN->v_int=p && p->file;
+}
+CK_DLL_MFUN(midi_sequence_tracks) {
+    auto *p=midiState(SELF,API);
+    RETURN->v_int=p && p->file?p->file->getTrackCount():-1;
+}
+CK_DLL_MFUN(midi_sequence_events) {
+    auto *p=midiState(SELF,API);
+    auto track=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p && p->file && track>=0 && track<p->file->getTrackCount()
+        ?(*p->file)[static_cast<int>(track)].size():-1;
+}
+CK_DLL_MFUN(midi_sequence_tpq) {
+    auto *p=midiState(SELF,API);
+    RETURN->v_int=p && p->file?p->file->getTicksPerQuarterNote():-1;
+}
+CK_DLL_MFUN(midi_sequence_tick) {
+    auto *p=midiState(SELF,API);
+    auto track=GET_NEXT_INT(ARGS),index=GET_NEXT_INT(ARGS);
+    auto *e=p?p->event(track,index):nullptr;
+    RETURN->v_int=e?e->tick:-1;
+}
+CK_DLL_MFUN(midi_sequence_size) {
+    auto *p=midiState(SELF,API);
+    auto track=GET_NEXT_INT(ARGS),index=GET_NEXT_INT(ARGS);
+    auto *e=p?p->event(track,index):nullptr;
+    RETURN->v_int=e?static_cast<t_CKINT>(e->size()):-1;
+}
+CK_DLL_MFUN(midi_sequence_byte) {
+    auto *p=midiState(SELF,API);
+    auto track=GET_NEXT_INT(ARGS),index=GET_NEXT_INT(ARGS),byte=GET_NEXT_INT(ARGS);
+    auto *e=p?p->event(track,index):nullptr;
+    RETURN->v_int=e && byte>=0 && static_cast<uint64_t>(byte)<e->size()?(*e)[static_cast<size_t>(byte)]:-1;
+}
+CK_DLL_MFUN(midi_sequence_set_velocity) {
+    auto *p=midiState(SELF,API);
+    auto track=GET_NEXT_INT(ARGS),index=GET_NEXT_INT(ARGS),value=GET_NEXT_INT(ARGS);
+    auto *e=p?p->event(track,index):nullptr;
+    RETURN->v_int=0;
+    if(e && e->size()==3 && ((*e)[0]&0xf0)==0x90 && (*e)[2]>0 && value>=1 && value<=127) {
+        (*e)[2]=static_cast<unsigned char>(value);
+        RETURN->v_int=1;
+    }
+}
+CK_DLL_MFUN(midi_sequence_get_transpose) {
+    auto *p=midiState(SELF,API);
+    RETURN->v_int=p?p->transpose:0;
+}
+CK_DLL_MFUN(midi_sequence_set_transpose) {
+    auto *p=midiState(SELF,API);
+    auto v=GET_NEXT_INT(ARGS);
+    if(p && v>=-127 && v<=127) p->transpose=static_cast<int>(v);
+    RETURN->v_int=p?p->transpose:0;
+}
+CK_DLL_MFUN(midi_sequence_get_velocity) {
+    auto *p=midiState(SELF,API);
+    RETURN->v_float=p?p->velocity:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(midi_sequence_set_gain) {
+    auto *p=midiState(SELF,API);
+    auto v=GET_NEXT_FLOAT(ARGS);
+    RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p && std::isfinite(v) && v>0 && v<=16) RETURN->v_float=p->velocity=v;
+}
+CK_DLL_MFUN(midi_sequence_reset) {
+    if(auto *p=midiState(SELF,API)) p->reset();
+}
+CK_DLL_MFUN(midi_sequence_clear) {
+    if(auto *p=midiState(SELF,API)) { p->file.reset(); p->reset(); }
+}
+
 CK_DLL_QUERY(MidiFileIO) {
     QUERY->setname(QUERY, "MidiFileIO");
     QUERY->begin_class(QUERY, "MidiFileIO", "Object");
@@ -85,5 +233,42 @@ CK_DLL_QUERY(MidiFileIO) {
     QUERY->add_arg(QUERY, "int", "pitch");
     QUERY->add_arg(QUERY, "int", "velocity");
     QUERY->add_arg(QUERY, "int", "ticks");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MidiSequence","Object");
+    midiSequenceOffset=QUERY->add_mvar(QUERY,"int","@midiSequenceNative",FALSE);
+    if(midiSequenceOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,midi_sequence_ctor);
+    QUERY->add_dtor(QUERY,midi_sequence_dtor);
+    QUERY->add_mfun(QUERY,midi_sequence_load,"int","load");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,midi_sequence_save,"int","save");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,midi_sequence_loaded,"int","loaded");
+    QUERY->add_mfun(QUERY,midi_sequence_tracks,"int","tracks");
+    QUERY->add_mfun(QUERY,midi_sequence_events,"int","events");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_mfun(QUERY,midi_sequence_tpq,"int","ticksPerQuarter");
+    QUERY->add_mfun(QUERY,midi_sequence_tick,"int","tickAt");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,midi_sequence_size,"int","sizeAt");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,midi_sequence_byte,"int","byteAt");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"int","byteIndex");
+    QUERY->add_mfun(QUERY,midi_sequence_set_velocity,"int","setVelocity");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,midi_sequence_get_transpose,"int","transpose");
+    QUERY->add_mfun(QUERY,midi_sequence_set_transpose,"int","transpose");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,midi_sequence_get_velocity,"float","velocityGain");
+    QUERY->add_mfun(QUERY,midi_sequence_set_gain,"float","velocityGain");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,midi_sequence_reset,"void","reset");
+    QUERY->add_mfun(QUERY,midi_sequence_clear,"void","clear");
     return QUERY->end_class(QUERY);
 }
