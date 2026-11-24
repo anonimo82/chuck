@@ -9,7 +9,7 @@ CHUCK = HERE.parents[1] / "src/chuck"
 def run(module, script, expected, directory):
     path = directory / "test.ck"
     name = {"vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO"}[module]
-    path.write_text(f'@import "{name}";\n' + 'fun void check(int ok) { if(ok) <<< "PASS" >>>; else <<< "FAIL" >>>; }\n' + script)
+    path.write_text(f'@import "{name}";\n' + 'fun void check(int ok) { if(ok) <<< "PASS" >>>; else <<< "FAIL" >>>; }\n' + script, encoding="utf-8")
     r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
     log = r.stdout + r.stderr
     print(module, log)
