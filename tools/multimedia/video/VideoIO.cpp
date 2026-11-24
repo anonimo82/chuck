@@ -713,12 +713,18 @@ struct OverlayReader {
     }
 };
 bool overlayVideo(const std::string &base,const std::string &layer,const std::string &dest,
-                  int w,int h,int fps,int x,int y,int lw,int lh,double opacity,int rate,int channels) {
+                  int w,int h,int fps,int x,int y,int lw,int lh,double opacity,int rate,int channels,
+                  int key=-1,double tolerance=0,double softness=0,
+                  double baseGain=1,double layerGain=0) {
     if(w<1 || h<1 || w>8192 || h>8192 || fps<1 || fps>120 ||
        lw<1 || lh<1 || lw>w || lh>h || x<0 || y<0 || x>w-lw || y>h-lh ||
        !std::isfinite(opacity) || opacity<0 || opacity>1 ||
        rate<8000 || rate>96000 || channels<1 || channels>2 ||
        dest.size()<4 || dest.substr(dest.size()-4)!=".mkv") return false;
+    if(key < -1 || key > 0xffffff || !std::isfinite(tolerance) || !std::isfinite(softness) ||
+       tolerance<0 || tolerance>1 || softness<0 || softness>1 || tolerance+softness>1 ||
+       !std::isfinite(baseGain) || !std::isfinite(layerGain) ||
+       baseGain<0 || baseGain>4 || layerGain<0 || layerGain>4) return false;
     OverlayReader main, inset;
     if(!main.open(base) || !inset.open(layer)) return false;
     const auto *encoder=avcodec_find_encoder_by_name("ffv1");
@@ -767,20 +773,32 @@ bool overlayVideo(const std::string &base,const std::string &layer,const std::st
         }
     };
     int alpha=static_cast<int>(std::llround(opacity*65535));
-    int64_t count=0;
+    int64_t count=0, layerFrames=0;
     for(;;) {
         bool active=false, show=false;
         if(!main.at(count,fps,active)) return false;
         if(!active) break;
         if(count>=1000000 || !main.render(canvas.p) || !inset.at(count,fps,show)) return false;
+        if(show) ++layerFrames;
         if(show && alpha) {
             if(!inset.render(small.p)) return false;
             for(int row=0;row<lh;++row) {
                 auto *d=canvas.p->data[0]+static_cast<size_t>(y+row)*canvas.p->linesize[0]+x*4;
                 auto *v=small.p->data[0]+static_cast<size_t>(row)*small.p->linesize[0];
-                for(int col=0;col<lw;++col) for(int k=0;k<3;++k) {
-                    int j=col*4+k;
-                    d[j]=static_cast<uint8_t>((d[j]*(65535-alpha)+v[j]*alpha+32767)/65535);
+                for(int col=0;col<lw;++col) {
+                    int pixelAlpha=alpha;
+                    if(key>=0) {
+                        int j=col*4;
+                        int db=v[j]-(key&255), dg=v[j+1]-((key>>8)&255), dr=v[j+2]-((key>>16)&255);
+                        double distance=std::sqrt((db*db+dg*dg+dr*dr)/195075.0);
+                        if(distance<=tolerance) pixelAlpha=0;
+                        else if(softness>0 && distance<tolerance+softness)
+                            pixelAlpha=static_cast<int>(std::llround(alpha*(distance-tolerance)/softness));
+                    }
+                    for(int k=0;k<3;++k) {
+                        int j=col*4+k;
+                        d[j]=static_cast<uint8_t>((d[j]*(65535-pixelAlpha)+v[j]*pixelAlpha+32767)/65535);
+                    }
                 }
             }
         }
@@ -789,8 +807,40 @@ bool overlayVideo(const std::string &base,const std::string &layer,const std::st
     }
     if(!count || avcodec_send_frame(enc.ctx,nullptr)<0 || !drain(true)) return false;
     int64_t length=av_rescale_q(count,enc.ctx->time_base,AVRational{1,rate});
-    return normalizedAudio(base,main.audio,rate,channels,main.origin,main.stream->time_base,
-                           0,length,audio,out.ctx) && out.finish();
+    if(baseGain==1 && layerGain==0)
+        return normalizedAudio(base,main.audio,rate,channels,main.origin,main.stream->time_base,
+                               0,length,audio,out.ctx) && out.finish();
+    // Bound full PCM capture for this initial offline mixing implementation.
+    if(length > INT64_C(128)*1024*1024/(channels*2)) return false;
+    std::vector<uint8_t> basePCM, layerPCM;
+    if(!normalizedAudio(base,baseGain==0?-1:main.audio,rate,channels,main.origin,main.stream->time_base,
+                        0,length,nullptr,nullptr,&basePCM)) return false;
+    int64_t layerLength=std::min(length,av_rescale_q(layerFrames,enc.ctx->time_base,AVRational{1,rate}));
+    if(layerGain>0 && layerLength>0 &&
+       !normalizedAudio(layer,inset.audio,rate,channels,inset.origin,inset.stream->time_base,
+                        0,layerLength,nullptr,nullptr,&layerPCM)) return false;
+    for(int64_t i=0;i<length*channels;++i) {
+        size_t pos=static_cast<size_t>(i)*2;
+        int16_t a=0,b=0;
+        std::memcpy(&a,basePCM.data()+pos,2);
+        if(pos+2<=layerPCM.size()) std::memcpy(&b,layerPCM.data()+pos,2);
+        auto value=std::llround(a*baseGain+b*layerGain);
+        int16_t mixed=static_cast<int16_t>(std::max<long long>(-32768,std::min<long long>(32767,value)));
+        std::memcpy(basePCM.data()+pos,&mixed,2);
+    }
+    for(int64_t offset=0;offset<length;) {
+        int block=static_cast<int>(std::min<int64_t>(4096,length-offset));
+        if(av_new_packet(packet.p,block*channels*2)<0) return false;
+        std::memcpy(packet.p->data,basePCM.data()+static_cast<size_t>(offset)*channels*2,packet.p->size);
+        packet.p->pts=packet.p->dts=offset; packet.p->duration=block;
+        packet.p->flags=AV_PKT_FLAG_KEY; packet.p->stream_index=audio->index;
+        av_packet_rescale_ts(packet.p,AVRational{1,rate},audio->time_base);
+        int status=av_interleaved_write_frame(out.ctx,packet.p);
+        av_packet_unref(packet.p);
+        if(status<0) return false;
+        offset+=block;
+    }
+    return out.finish();
 }
 
 bool concatNormalized(const std::string &first, const std::string &secondClip,
@@ -2289,6 +2339,23 @@ CK_DLL_SFUN(video_overlay) {
            overlayVideo(base,layer,dest,w,h,fps,x,y,lw,lh,opacity,rate,channels)) RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_composite) {
+    RETURN->v_int=0;
+    try {
+        auto base=GET_NEXT_STRING_SAFE(ARGS), layer=GET_NEXT_STRING_SAFE(ARGS), dest=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS), h=GET_NEXT_INT(ARGS), fps=GET_NEXT_INT(ARGS);
+        auto x=GET_NEXT_INT(ARGS), y=GET_NEXT_INT(ARGS), lw=GET_NEXT_INT(ARGS), lh=GET_NEXT_INT(ARGS);
+        auto opacity=GET_NEXT_FLOAT(ARGS);
+        auto rate=GET_NEXT_INT(ARGS), channels=GET_NEXT_INT(ARGS);
+        auto key=GET_NEXT_INT(ARGS);
+        auto tolerance=GET_NEXT_FLOAT(ARGS), softness=GET_NEXT_FLOAT(ARGS);
+        auto baseGain=GET_NEXT_FLOAT(ARGS), layerGain=GET_NEXT_FLOAT(ARGS);
+        if(key>=-1 && key<=0xffffff && w>=1 && w<=8192 && h>=1 && h<=8192 && fps>=1 && fps<=120 &&
+           x>=0 && x<=8192 && y>=0 && y<=8192 && lw>=1 && lw<=8192 && lh>=1 && lh<=8192 &&
+           rate>=8000 && rate<=96000 && channels>=1 && channels<=2 &&
+           overlayVideo(base,layer,dest,w,h,fps,x,y,lw,lh,opacity,rate,channels,static_cast<int>(key),tolerance,softness,baseGain,layerGain)) RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -2425,5 +2492,24 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"float","opacity");
     QUERY->add_arg(QUERY,"int","sampleRate");
     QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_sfun(QUERY,video_composite,"int","composite");
+    QUERY->add_arg(QUERY,"string","baseClip");
+    QUERY->add_arg(QUERY,"string","layerClip");
+    QUERY->add_arg(QUERY,"string","destination");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","fps");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"int","layerWidth");
+    QUERY->add_arg(QUERY,"int","layerHeight");
+    QUERY->add_arg(QUERY,"float","opacity");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_arg(QUERY,"int","keyRGB");
+    QUERY->add_arg(QUERY,"float","tolerance");
+    QUERY->add_arg(QUERY,"float","softness");
+    QUERY->add_arg(QUERY,"float","baseGain");
+    QUERY->add_arg(QUERY,"float","layerGain");
     return QUERY->end_class(QUERY);
 }
