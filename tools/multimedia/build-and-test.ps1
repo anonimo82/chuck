@@ -55,13 +55,7 @@ try {
         $imports = & "$bin/objdump.exe" -p $file
         if ($LASTEXITCODE -ne 0) { throw "Cannot inspect DLL imports of $file" }
         foreach ($line in $imports) {
-            if ($line -match '^\s*DLL Name:\s*(\S+\.dll)\s*
-    Run-Native "$bin/python.exe" @("$PSScriptRoot/raster/test_raster.py")
-    Run-Native "$bin/python.exe" @("$PSScriptRoot/audio/test_audio.py")
-    Run-Native "$bin/python.exe" @("$PSScriptRoot/test_multimedia.py")
-    Write-Host "All multimedia smoke tests passed."
-} finally { Stop-Transcript }
-) {
+            if ($line -match '^\s*DLL Name:\s*(\S+\.dll)\s*$') {
                 $name = $Matches[1]
                 if ($seen.ContainsKey($name)) { continue }
                 $seen[$name] = $true
