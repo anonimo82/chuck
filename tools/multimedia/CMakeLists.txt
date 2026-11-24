@@ -6,7 +6,25 @@ set(MIDIFILE_SOURCE_DIR "" CACHE PATH "Path to midifile source checkout")
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MAGICK REQUIRED IMPORTED_TARGET MagickWand)
 pkg_check_modules(SVG REQUIRED IMPORTED_TARGET librsvg-2.0>=2.46 cairo)
-pkg_check_modules(ASSIMP REQUIRED IMPORTED_TARGET assimp)
+# MSYS2 Assimp 6.0.6 may ship a .pc file containing Unix paths and
+# build-machine-specific linker flags. Link the installed DLL import library
+# directly on MinGW, using the prefix of the selected compiler.
+if(MINGW)
+  get_filename_component(MINGW_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+  get_filename_component(MINGW_PREFIX "${MINGW_BIN}" DIRECTORY)
+  find_path(ASSIMP_NATIVE_INCLUDE NAMES assimp/Importer.hpp
+    PATHS "${MINGW_PREFIX}/include" NO_DEFAULT_PATH REQUIRED)
+  find_library(ASSIMP_NATIVE_LIBRARY NAMES assimp
+    PATHS "${MINGW_PREFIX}/lib" NO_DEFAULT_PATH REQUIRED)
+  add_library(AssimpNative UNKNOWN IMPORTED)
+  set_target_properties(AssimpNative PROPERTIES
+    IMPORTED_LOCATION "${ASSIMP_NATIVE_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${ASSIMP_NATIVE_INCLUDE}")
+  set(ASSIMP_TARGET AssimpNative)
+else()
+  pkg_check_modules(ASSIMP REQUIRED IMPORTED_TARGET assimp)
+  set(ASSIMP_TARGET PkgConfig::ASSIMP)
+endif()
 pkg_check_modules(SND REQUIRED IMPORTED_TARGET sndfile>=1.2.0)
 pkg_check_modules(AV REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale)
 if(NOT EXISTS "${MIDIFILE_SOURCE_DIR}/include/MidiFile.h")
@@ -24,7 +42,7 @@ target_link_libraries(RasterIO PRIVATE PkgConfig::MAGICK)
 chugin(VectorIO vector/VectorIO.cpp)
 target_link_libraries(VectorIO PRIVATE PkgConfig::SVG)
 chugin(ModelIO model/ModelIO.cpp)
-target_link_libraries(ModelIO PRIVATE PkgConfig::ASSIMP)
+target_link_libraries(ModelIO PRIVATE ${ASSIMP_TARGET})
 chugin(AudioIO audio/AudioIO.cpp)
 target_link_libraries(AudioIO PRIVATE PkgConfig::SND)
 file(GLOB MIDI_SOURCES CONFIGURE_DEPENDS "${MIDIFILE_SOURCE_DIR}/src/*.cpp")
