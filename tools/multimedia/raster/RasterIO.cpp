@@ -78,6 +78,9 @@ CK_DLL_SFUN(raster_convert) {
         if(fmt.empty()) return;
         auto w = makeWand();
         if(!read(w.get(), source)) return;
+        // Set both the wand output format and the current image format.
+        // The wand retains the input format from read(), which can override encoding.
+        if(MagickSetFormat(w.get(), fmt.c_str()) == MagickFalse) { report(w.get(), "output wand format"); return; }
         if(MagickSetImageFormat(w.get(), fmt.c_str()) == MagickFalse) { report(w.get(), "output format"); return; }
         size_t size = 0;
         unsigned char *blob = MagickGetImageBlob(w.get(), &size);
