@@ -143,3 +143,36 @@ check(!VideoIO.muxAudio("generated.mkv", "sound.wav", "unsupported.bin"));
     assert decoded("audiovisual.mkv") == red + blue
     audio_bytes = subprocess.check_output(["ffmpeg", "-nostdin", "-v", "error", "-i", str(p / "audiovisual.mkv"), "-map", "0:a:0", "-c:a", "pcm_s16le", "-f", "s16le", "-"], timeout=30)
     assert audio_bytes == pcm
+
+    run("video", """
+check(VideoIO.transcode("generated.mkv", "resized.mkv", 32, 24, "ffv1", 0));
+check(VideoIO.width("resized.mkv") == 32);
+check(VideoIO.height("resized.mkv") == 24);
+check(!VideoIO.transcode("generated.mkv", "resized.mkv", 32, 24, "ffv1", 0));
+check(!VideoIO.transcode("audiovisual.mkv", "reject-audio.mkv", 32, 24, "ffv1", 0));
+check(!VideoIO.transcode("generated.mkv", "invalid-size.mkv", 0, 24, "ffv1", 0));
+check(!VideoIO.transcode("generated.mkv", "invalid-codec.mkv", 32, 24, "unknown", 0));
+check(!VideoIO.transcode("missing.mkv", "missing-source.mkv", 32, 24, "ffv1", 0));
+""", 8, p)
+    assert decoded("resized.mkv") == bytes((255, 0, 0)) * (32 * 24) + bytes((0, 0, 255)) * (32 * 24)
+    for name in ("reject-audio.mkv", "invalid-size.mkv", "invalid-codec.mkv", "missing-source.mkv"):
+        assert not (p / name).exists(), name
+    for mode, ext, quality in (("h264", "mp4", 23), ("vp9", "webm", 32)):
+        name = "transcoded." + ext
+        run("video", f"""
+if(VideoIO.encoderAvailable("{mode}")) {{
+    check(VideoIO.transcode("generated.mkv", "{name}", 32, 24, "{mode}", {quality}));
+    check(VideoIO.width("{name}") == 32);
+    check(VideoIO.height("{name}") == 24);
+}} else {{
+    <<< "SKIP encoder {mode} unavailable" >>>;
+    check(!VideoIO.transcode("generated.mkv", "{name}", 32, 24, "{mode}", {quality}));
+    check(!VideoIO.encoderAvailable("{mode}"));
+    check(!VideoIO.transcode("generated.mkv", "wrong.bin", 32, 24, "{mode}", {quality}));
+}}
+""", 3, p)
+        if (p / name).exists():
+            rgb = decoded(name)
+            assert len(rgb) == 32 * 24 * 3 * 2
+            assert rgb[0] > 200 and rgb[2] < 50
+            assert rgb[32 * 24 * 3 + 2] > 200

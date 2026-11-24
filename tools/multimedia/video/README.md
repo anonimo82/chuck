@@ -53,3 +53,14 @@ The six-argument overload accepts h264 (libx264/MP4), vp9 (libvpx-vp9/WebM), or 
 Selects the best video stream from the first input and best audio stream from the second input using FFmpeg. Existing audio in the video input is not copied; additional streams are ignored. Copies compressed packets without re-encoding. Supported output containers: MKV, MP4, MOV and WebM, subject to codec compatibility (e.g. FFV1 and PCM in MKV; H.264 and AAC in MP4; VP9 and Opus in WebM). Returns 1 on success, 0 on failure. Requires a new destination file. Ordinary failures remove incomplete outputs. Packet timestamps are preserved subject to muxer time-base rounding and container rules; no independent start-time normalization, trimming, padding, resampling or synchronization correction is performed. If tracks differ in duration, both are retained in full. Intended for trusted local files and offline processing.
 
 Eight new smoke checks and independent exact RGB/PCM decode comparisons are included; not yet executed.
+
+### Transcode and resize an existing video
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.transcode("animation.mkv", "small.mp4", 640, 360, "h264", 23) >>>;
+```
+
+The six arguments select source, new destination, width, height, codec, and CRF quality. Codec/container pairs match encodeSequence: FFV1/MKV (quality 0), H.264/MP4 and VP9/WebM (quality 0–51). Dimensions must be 1–8192, and even for H.264 and VP9. The implementation decodes and scales frames directly in memory, preserving strictly increasing presentation timestamps subject to output muxer rounding. It stretches to the requested dimensions and outputs square pixels; no aspect-ratio correction, rotation handling, color management, or frame rate conversion is provided. FFV1 is lossless relative to its encoded BGR0 frames, not necessarily the original source pixels after scaling or color conversion. Only single-stream video inputs are accepted: audio, subtitles and additional streams cause rejection rather than silent loss. No overwrite; partial outputs are removed on ordinary failures. Returns 1 on success, 0 on failure. Offline only.
+
+Fourteen added smoke checks and independent decoded pixel checks are pending execution.

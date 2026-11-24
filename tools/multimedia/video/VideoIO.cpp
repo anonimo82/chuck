@@ -429,6 +429,116 @@ bool encodeSequence(const std::string &prefix, const std::string &dest, int coun
     return out.finish();
 }
 
+
+// Transcode a single video-only stream, preserving presentation timestamps.
+// Reject extra streams explicitly instead of silently discarding audio.
+bool transcode(const std::string &source, const std::string &dest,
+               int w, int h, const std::string &mode, int quality) {
+    const bool ffv1 = mode == "ffv1", h264 = mode == "h264", vp9 = mode == "vp9";
+    const char *container = ffv1 ? "matroska" : h264 ? "mp4" : vp9 ? "webm" : nullptr;
+    const std::string ext = ffv1 ? ".mkv" : h264 ? ".mp4" : ".webm";
+    if(!container || dest.size() < ext.size() || dest.substr(dest.size()-ext.size()) != ext ||
+       w < 1 || h < 1 || w > 8192 || h > 8192 || quality < 0 || quality > 51 ||
+       (ffv1 && quality != 0) || (!ffv1 && ((w & 1) || (h & 1)))) return false;
+    Input in;
+    if(!in.open(source) || in.ctx->nb_streams != 1) return false;
+    auto *src = in.ctx->streams[in.video];
+    const auto *decoder = avcodec_find_decoder(src->codecpar->codec_id);
+    const auto *encoder = avcodec_find_encoder_by_name(ffv1 ? "ffv1" : h264 ? "libx264" : "libvpx-vp9");
+    if(!decoder || !encoder) return false;
+    Codec dec, enc;
+    dec.ctx = avcodec_alloc_context3(decoder);
+    enc.ctx = avcodec_alloc_context3(encoder);
+    if(!dec.ctx || !enc.ctx || avcodec_parameters_to_context(dec.ctx, src->codecpar) < 0)
+        return false;
+    dec.ctx->pkt_timebase = src->time_base;
+    if(avcodec_open2(dec.ctx, decoder, nullptr) < 0) return false;
+    Output out(dest);
+    if(!out.open(container)) return false;
+    enc.ctx->width = w;
+    enc.ctx->height = h;
+    enc.ctx->pix_fmt = ffv1 ? AV_PIX_FMT_BGR0 : AV_PIX_FMT_YUV420P;
+    enc.ctx->time_base = src->time_base;
+    enc.ctx->framerate = av_guess_frame_rate(in.ctx, src, nullptr);
+    enc.ctx->sample_aspect_ratio = AVRational{1,1};
+    if(out.ctx->oformat->flags & AVFMT_GLOBALHEADER) enc.ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    AVDictionary *options = nullptr;
+    if(!ffv1) {
+        const auto crf = std::to_string(quality);
+        if(av_dict_set(&options, "crf", crf.c_str(), 0) < 0 ||
+           (h264 && av_dict_set(&options, "preset", "medium", 0) < 0)) {
+            av_dict_free(&options); return false;
+        }
+        if(vp9) enc.ctx->bit_rate = 0;
+    }
+    int opened = avcodec_open2(enc.ctx, encoder, &options);
+    bool unused = av_dict_count(options) != 0;
+    av_dict_free(&options);
+    if(opened < 0 || unused) return false;
+    auto *dst = avformat_new_stream(out.ctx, nullptr);
+    if(!dst || avcodec_parameters_from_context(dst->codecpar, enc.ctx) < 0) return false;
+    dst->time_base = enc.ctx->time_base;
+    dst->avg_frame_rate = enc.ctx->framerate;
+    dst->sample_aspect_ratio = enc.ctx->sample_aspect_ratio;
+    if(avformat_write_header(out.ctx, nullptr) < 0) return false;
+    Frame decoded, scaled;
+    Packet inputPacket, outputPacket;
+    Scale scale;
+    if(!decoded.p || !scaled.p || !inputPacket.p || !outputPacket.p) return false;
+    scaled.p->width = w;
+    scaled.p->height = h;
+    scaled.p->format = enc.ctx->pix_fmt;
+    if(av_frame_get_buffer(scaled.p, 32) < 0) return false;
+    auto drainEncoder = [&](bool flush) {
+        for(;;) {
+            int ret = avcodec_receive_packet(enc.ctx, outputPacket.p);
+            if(ret == AVERROR_EOF) return flush;
+            if(ret == AVERROR(EAGAIN)) return !flush;
+            if(ret < 0) return false;
+            av_packet_rescale_ts(outputPacket.p, enc.ctx->time_base, dst->time_base);
+            outputPacket.p->stream_index = dst->index;
+            int written = av_interleaved_write_frame(out.ctx, outputPacket.p);
+            av_packet_unref(outputPacket.p);
+            if(written < 0) return false;
+        }
+    };
+    int64_t previous = AV_NOPTS_VALUE;
+    auto drainDecoder = [&](bool flush) {
+        for(;;) {
+            int ret = avcodec_receive_frame(dec.ctx, decoded.p);
+            if(ret == AVERROR_EOF) return flush;
+            if(ret == AVERROR(EAGAIN)) return !flush;
+            if(ret < 0) return false;
+            auto *frame = decoded.p;
+            if(frame->width < 1 || frame->height < 1 || frame->width > 8192 || frame->height > 8192)
+                return false;
+            int64_t pts = frame->best_effort_timestamp;
+            if(pts == AV_NOPTS_VALUE || (previous != AV_NOPTS_VALUE && pts <= previous)) return false;
+            scale.p = sws_getCachedContext(scale.p, frame->width, frame->height,
+                static_cast<AVPixelFormat>(frame->format), w, h, enc.ctx->pix_fmt,
+                SWS_BILINEAR, nullptr, nullptr, nullptr);
+            if(!scale.p || av_frame_make_writable(scaled.p) < 0 ||
+               sws_scale(scale.p, frame->data, frame->linesize, 0, frame->height,
+                         scaled.p->data, scaled.p->linesize) != h) return false;
+            scaled.p->pts = pts;
+            scaled.p->pict_type = AV_PICTURE_TYPE_NONE;
+            previous = pts;
+            av_frame_unref(frame);
+            if(avcodec_send_frame(enc.ctx, scaled.p) < 0 || !drainEncoder(false)) return false;
+        }
+    };
+    int ret;
+    while((ret = av_read_frame(in.ctx, inputPacket.p)) >= 0) {
+        int sent = avcodec_send_packet(dec.ctx, inputPacket.p);
+        av_packet_unref(inputPacket.p);
+        if(sent < 0 || !drainDecoder(false)) return false;
+    }
+    if(ret != AVERROR_EOF || avcodec_send_packet(dec.ctx, nullptr) < 0 ||
+       !drainDecoder(true) || previous == AV_NOPTS_VALUE ||
+       avcodec_send_frame(enc.ctx, nullptr) < 0 || !drainEncoder(true)) return false;
+    return out.finish();
+}
+
 }
 CK_DLL_SFUN(video_width) {
     RETURN->v_int = -1;
@@ -522,6 +632,20 @@ CK_DLL_SFUN(video_mux_audio) {
         if(muxAudio(video, audio, dest)) RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_transcode) {
+    RETURN->v_int = 0;
+    try {
+        auto source = GET_NEXT_STRING_SAFE(ARGS);
+        auto dest = GET_NEXT_STRING_SAFE(ARGS);
+        auto w = GET_NEXT_INT(ARGS);
+        auto h = GET_NEXT_INT(ARGS);
+        auto mode = GET_NEXT_STRING_SAFE(ARGS);
+        auto quality = GET_NEXT_INT(ARGS);
+        if(w >= 1 && w <= 8192 && h >= 1 && h <= 8192 && quality >= 0 && quality <= 51 &&
+           transcode(source, dest, static_cast<int>(w), static_cast<int>(h), mode,
+                     static_cast<int>(quality))) RETURN->v_int = 1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -557,5 +681,12 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "string", "video");
     QUERY->add_arg(QUERY, "string", "audio");
     QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_sfun(QUERY, video_transcode, "int", "transcode");
+    QUERY->add_arg(QUERY, "string", "source");
+    QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_arg(QUERY, "int", "width");
+    QUERY->add_arg(QUERY, "int", "height");
+    QUERY->add_arg(QUERY, "string", "codec");
+    QUERY->add_arg(QUERY, "int", "quality");
     return QUERY->end_class(QUERY);
 }
