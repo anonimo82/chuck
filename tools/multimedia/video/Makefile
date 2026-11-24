@@ -11,7 +11,7 @@ else
 SHARED := -shared
 endif
 all: VideoIO.chug
-VideoIO.chug: VideoIO.cpp
+VideoIO.chug: VideoIO.cpp ../subtitle/subtitle_io.h ../file_compat.h
 	$(PKG_CONFIG) --exists $(AV_PACKAGES)
 	$(CXX) $(CXXFLAGS) $(AV_CFLAGS) $(SHARED) -o $@ $< $(AV_LIBS)
 clean:
