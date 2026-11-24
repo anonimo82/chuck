@@ -232,3 +232,13 @@ watermark uses the same positional arguments as overlay, but the second input is
 ```
 
 The UTF-8 text manifest has seven tab-separated fields per line: type (image or video), local path, x, y, width, height, opacity. Paths are resolved relative to the process working directory, not the manifest; spaces are allowed, tabs/newlines are not. Empty lines and lines beginning with # are ignored. CRLF and LF are supported; use no UTF-8 BOM. First row is drawn first, last row on top. Maximum eight layers and 64 KiB manifest; the sum of target layer pixel buffers is limited to 256 MiB, excluding decoder and muxer buffers. Image layers retain alpha and are displayed throughout; video layers start at their first presentation frame and disappear at EOF. The base controls duration and audio, with other audio ignored. One output encoding pass and no temporary files. No overwrite. Output FFV1/PCM MKV. Chroma key, per-layer audio mixing, and temporal keyframes are not yet exposed in the multilayer API. Eight smoke checks and independent RGB/PCM assertions await execution.
+
+### Timed text titles
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.title("main.mp4", "titled.mkv", "ChucK Multimedia",
+                  "Sans Bold", 48, 16777215, 100, 100, 0.0, 5.0) >>>;
+```
+
+title renders plain UTF-8 text once using Pango/Cairo, at the given pixel size, packed RGB color (0xRRGGBB), and top-left pixel coordinates. Text wraps at the remaining canvas width and clips at the bottom edge. The title is shown at normalized frame timestamps in [beginSeconds,endSeconds); negative or empty intervals are rejected. Text is antialiased, with no background or markup. The source dimensions are retained and the guessed source frame rate rounded to an integer in 1–120 FPS. Output is FFV1/PCM MKV; audio is normalized to the source sample rate if 8–96 kHz (otherwise 48 kHz), mono for mono sources, stereo otherwise, and silence if absent. Existing single-video/at-most-one-audio source constraints apply. Fonts depend on the installed system fonts and Pango fallback. No overwrite. Nine smoke checks and independent timing, color and PCM comparisons await execution. PangoCairo is now an explicit VideoIO build dependency.
