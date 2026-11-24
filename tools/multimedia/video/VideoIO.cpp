@@ -1048,16 +1048,25 @@ struct AudioEncoder {
 };
 
 bool transcode(const std::string &source, const std::string &dest,
-               int w, int h, const std::string &mode, int quality, int audioKbps = 0) {
+               int w, int h, const std::string &mode, int quality, int audioKbps = 0,
+               int64_t firstFrame = 0, int64_t frameCount = 0) {
     const bool ffv1 = mode == "ffv1", h264 = mode == "h264", vp9 = mode == "vp9";
     const char *container = ffv1 ? "matroska" : h264 ? "mp4" : vp9 ? "webm" : nullptr;
     const std::string ext = ffv1 ? ".mkv" : h264 ? ".mp4" : ".webm";
     if(!container || dest.size() < ext.size() || dest.substr(dest.size()-ext.size()) != ext ||
-       w < 1 || h < 1 || w > 8192 || h > 8192 || quality < 0 || quality > 51 ||
+       (!(frameCount > 0 && w == 0 && h == 0) && (w < 1 || h < 1 || w > 8192 || h > 8192)) || quality < 0 || quality > 51 ||
        (ffv1 && quality != 0) || (!ffv1 && ((w & 1) || (h & 1)))) return false;
     if(audioKbps && (ffv1 || audioKbps < 32 || audioKbps > 256)) return false;
     Input in;
     if(!in.open(source)) return false;
+    const bool cutting = frameCount > 0;
+    if(cutting && (firstFrame < 0 || in.ctx->nb_streams != 1 || audioKbps)) return false;
+    if(cutting && w == 0 && h == 0) {
+        w = in.ctx->streams[in.video]->codecpar->width;
+        h = in.ctx->streams[in.video]->codecpar->height;
+        if(w < 1 || h < 1 || w > 8192 || h > 8192 || (!ffv1 && ((w & 1) || (h & 1))))
+            return false;
+    }
     for(unsigned i = 0; i < in.ctx->nb_streams; ++i) {
         if(static_cast<int>(i) != in.video &&
            in.ctx->streams[i]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) return false;
@@ -1147,9 +1156,10 @@ bool transcode(const std::string &source, const std::string &dest,
             if(written < 0) return false;
         }
     };
-    int64_t previous = AV_NOPTS_VALUE;
+    int64_t previous = AV_NOPTS_VALUE, seen = 0, selected = 0, anchor = AV_NOPTS_VALUE;
     auto drainDecoder = [&](bool flush) {
         for(;;) {
+            if(cutting && selected == frameCount) return true;
             int ret = avcodec_receive_frame(dec.ctx, decoded.p);
             if(ret == AVERROR_EOF) return flush;
             if(ret == AVERROR(EAGAIN)) return !flush;
@@ -1159,21 +1169,28 @@ bool transcode(const std::string &source, const std::string &dest,
                 return false;
             int64_t pts = frame->best_effort_timestamp;
             if(pts == AV_NOPTS_VALUE || (previous != AV_NOPTS_VALUE && pts <= previous)) return false;
+            if(cutting && seen++ < firstFrame) {
+                previous = pts;
+                av_frame_unref(frame);
+                continue;
+            }
+            if(cutting && anchor == AV_NOPTS_VALUE) anchor = pts;
             scale.p = sws_getCachedContext(scale.p, frame->width, frame->height,
                 static_cast<AVPixelFormat>(frame->format), w, h, enc.ctx->pix_fmt,
                 SWS_BILINEAR, nullptr, nullptr, nullptr);
             if(!scale.p || av_frame_make_writable(scaled.p) < 0 ||
                sws_scale(scale.p, frame->data, frame->linesize, 0, frame->height,
                          scaled.p->data, scaled.p->linesize) != h) return false;
-            scaled.p->pts = pts;
+            scaled.p->pts = cutting ? pts - anchor : pts;
+            if(cutting) ++selected;
             scaled.p->pict_type = AV_PICTURE_TYPE_NONE;
             previous = pts;
             av_frame_unref(frame);
             if(avcodec_send_frame(enc.ctx, scaled.p) < 0 || !drainEncoder(false)) return false;
         }
     };
-    int ret;
-    while((ret = av_read_frame(in.ctx, inputPacket.p)) >= 0) {
+    int ret = 0;
+    while((!cutting || selected < frameCount) && (ret = av_read_frame(in.ctx, inputPacket.p)) >= 0) {
         int i = inputPacket.p->stream_index;
         if(i < 0 || static_cast<unsigned>(i) >= mapping.size()) return false;
         if(i == in.video) {
@@ -1195,8 +1212,11 @@ bool transcode(const std::string &source, const std::string &dest,
             if(written < 0) return false;
         }
     }
-    if(ret != AVERROR_EOF || avcodec_send_packet(dec.ctx, nullptr) < 0 ||
-       !drainDecoder(true) || previous == AV_NOPTS_VALUE ||
+    if(!cutting || selected < frameCount) {
+        if(ret != AVERROR_EOF || avcodec_send_packet(dec.ctx, nullptr) < 0 ||
+           !drainDecoder(true)) return false;
+    }
+    if(previous == AV_NOPTS_VALUE || (cutting && selected != frameCount) ||
        avcodec_send_frame(enc.ctx, nullptr) < 0 || !drainEncoder(true)) return false;
     for(auto &audio : audioEncoders) if(audio && !audio->finish()) return false;
     return out.finish();
@@ -1387,6 +1407,18 @@ CK_DLL_SFUN(video_concat) {
         if(concatenate(first, second, dest)) RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_trim_frames) {
+    RETURN->v_int = 0;
+    try {
+        auto source = GET_NEXT_STRING_SAFE(ARGS);
+        auto dest = GET_NEXT_STRING_SAFE(ARGS);
+        auto first = GET_NEXT_INT(ARGS);
+        auto count = GET_NEXT_INT(ARGS);
+        if(first >= 0 && first <= 2147483647 && count >= 1 && count <= 100000 &&
+           transcode(source, dest, 0, 0, "ffv1", 0, 0, first, count))
+            RETURN->v_int = 1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -1461,5 +1493,10 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "string", "first");
     QUERY->add_arg(QUERY, "string", "secondClip");
     QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_sfun(QUERY, video_trim_frames, "int", "trimFrames");
+    QUERY->add_arg(QUERY, "string", "source");
+    QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_arg(QUERY, "int", "firstFrame");
+    QUERY->add_arg(QUERY, "int", "frameCount");
     return QUERY->end_class(QUERY);
 }
