@@ -617,3 +617,36 @@ check(!VideoIO.transition("trim-av.mkv", "trim-av.mkv", "power.mkv", 16, 16, 4, 
     assert shorts(audio_samples("power.mkv",0))==shorts(pcm)+expected_power+shorts(pcm2)
     assert not (p/"bad-visual.mkv").exists()
     assert not (p/"bad-curve.mkv").exists()
+
+    # Overlay begins at the first presentation frame and disappears at EOF.
+    # Generate a short solid-blue layer independently of the base.
+    subprocess.run(["ffmpeg","-nostdin","-v","error","-f","lavfi","-i",
+                    "color=c=blue:s=16x16:r=2:d=1","-c:v","ffv1",
+                    "-pix_fmt","bgr0",str(p/"overlay-blue.mkv")],check=True,timeout=30)
+    layer_rgb=decoded("overlay-blue.mkv")[:stride]
+    run("video", """
+check(VideoIO.overlay("trim-av.mkv", "overlay-blue.mkv", "pip.mkv", 16, 16, 4, 4, 4, 8, 8, 1.0, 8000, 1));
+check(VideoIO.overlay("trim-av.mkv", "overlay-blue.mkv", "pip-half.mkv", 16, 16, 4, 4, 4, 8, 8, 0.5, 8000, 1));
+check(VideoIO.overlay("trim-av.mkv", "overlay-blue.mkv", "pip-zero.mkv", 16, 16, 4, 4, 4, 8, 8, 0.0, 8000, 1));
+check(VideoIO.overlay("trim-source.mkv", "trim-av.mkv", "pip-silent.mkv", 16, 16, 4, 4, 4, 8, 8, 1.0, 8000, 1));
+check(!VideoIO.overlay("trim-av.mkv", "overlay-blue.mkv", "pip.mkv", 16, 16, 4, 4, 4, 8, 8, 1.0, 8000, 1));
+check(!VideoIO.overlay("trim-av.mkv", "overlay-blue.mkv", "pip-bounds.mkv", 16, 16, 4, 10, 4, 8, 8, 1.0, 8000, 1));
+check(!VideoIO.overlay("trim-av.mkv", "overlay-blue.mkv", "pip-alpha.mkv", 16, 16, 4, 4, 4, 8, 8, 1.1, 8000, 1));
+check(!VideoIO.overlay("trim-av.mkv", "missing.mkv", "pip-missing.mkv", 16, 16, 4, 4, 4, 8, 8, 1.0, 8000, 1));
+check(!VideoIO.overlay("multi-audio.mkv", "overlay-blue.mkv", "pip-multi.mkv", 16, 16, 4, 4, 4, 8, 8, 1.0, 8000, 1));
+""",9,p)
+    original=red*2+blue*2+red*2+blue*2
+    assert decoded("pip-zero.mkv")==original
+    for name,alpha in (("pip.mkv",65535),("pip-half.mkv",32768)):
+        expected=bytearray(original)
+        for frame in range(4):
+            for yy in range(4,12):
+                for xx in range(4,12):
+                    for ch in range(3):
+                        j=frame*stride+(yy*16+xx)*3+ch
+                        expected[j]=(expected[j]*(65535-alpha)+layer_rgb[ch]*alpha+32767)//65535
+        assert decoded(name)==expected
+        assert audio_samples(name,0)==pcm+pcm2
+    assert audio_samples("pip-silent.mkv",0)==bytes(32000)
+    for name in ("pip-bounds.mkv","pip-alpha.mkv","pip-missing.mkv","pip-multi.mkv"):
+        assert not (p/name).exists(),name

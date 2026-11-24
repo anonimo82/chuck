@@ -191,3 +191,13 @@ crossfade uses the same normalization as concatAV, overlapping the tail of the f
 ```
 
 transition has the same parameters and constraints as crossfade, followed by a visual mode and an audio curve. Visual modes: "linear" (existing dissolve), "wipeLeft" (new image revealed from the left edge toward the right), "wipeDown" (top toward bottom), and "black" (first image fades to black, then second fades in; exact black midpoint when the overlap contains an odd number of frames). Audio curves: "linear" and "equalPower" (cosine/sine gains with saturation to signed 16-bit PCM to avoid overflow; correlated loud signals can clip). Unknown modes are rejected. Existing crossfade behavior is unchanged. Eight additional smoke checks and independent pixel/sample comparisons are pending execution, along with the eight checks from the preceding crossfade change.
+
+### Picture-in-picture and opacity compositing
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.overlay("main.mp4", "inset.webm", "composite.mkv",
+                    1280, 720, 30, 900, 20, 360, 202, 0.75, 48000, 2) >>>;
+```
+
+overlay(baseClip, layerClip, destination, width, height, fps, x, y, layerWidth, layerHeight, opacity, sampleRate, channels) normalizes each video independently to the requested pixel dimensions and samples both on the output time grid. Coordinates are measured in pixels from the upper-left corner. The layer rectangle must fit within the canvas. Global opacity is 0–1; RGB byte blending is linear without gamma correction or source alpha. Both clips begin at their first decoded presentation timestamp; the inset disappears at its end and the base controls output duration. Output is FFV1/BGR0 and PCM S16LE in MKV. Only base audio is normalized (8000–96000 Hz, mono/stereo); layer audio is deliberately ignored and missing base audio produces silence. Each input accepts one video plus at most one audio track. Video reading uses one-frame lookahead rather than storing whole decoded clips, but the separate audio pass can still cause substantial muxer buffering. Maximum one million output frames; known positive final frame durations and increasing timestamps required. No overwrite; ordinary failure removes incomplete output. Nine smoke checks plus independent RGB/PCM comparisons await execution.
