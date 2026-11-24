@@ -276,6 +276,55 @@ CK_DLL_MFUN(audio_buffer_set_sample) {
     }
 }
 
+
+namespace {
+bool bufferDimensions(t_CKINT frames,t_CKINT rate,t_CKINT channels) {
+    return frames>0 && rate>0 && rate<=384000 && channels>0 && channels<=8 &&
+        frames<=32*1024*1024/channels;
+}
+}
+CK_DLL_MFUN(audio_buffer_create) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API);
+        auto frames=GET_NEXT_INT(ARGS),rate=GET_NEXT_INT(ARGS),channels=GET_NEXT_INT(ARGS);
+        if(!p || !bufferDimensions(frames,rate,channels)) return;
+        std::vector<double> data(static_cast<size_t>(frames)*channels,0.0);
+        p->samples=std::move(data); p->rate=rate; p->channels=channels; p->reset();
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(audio_buffer_import_samples) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API);
+        auto rate=GET_NEXT_INT(ARGS),channels=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p || !a || channels<1 || channels>8) return;
+        auto n=API->object->array_float_size(a);
+        if(n<=0 || n%channels || !bufferDimensions(n/channels,rate,channels)) return;
+        std::vector<double> data(static_cast<size_t>(n));
+        for(t_CKINT i=0;i<n;++i) {
+            double v=API->object->array_float_get_idx(a,i);
+            if(!std::isfinite(v) || v< -1 || v>1) return;
+            data[i]=v;
+        }
+        p->samples=std::move(data); p->rate=rate; p->channels=channels; p->reset();
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(audio_buffer_export_samples) {
+    RETURN->v_int=0;
+    auto *p=audioState(SELF,API);
+    auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+    if(!p || !a || !p->loaded() ||
+       API->object->array_float_size(a)!=static_cast<t_CKINT>(p->samples.size())) return;
+    for(size_t f=0;f<p->frames();++f)
+        for(int c=0;c<p->channels;++c)
+            API->object->array_float_set_idx(a,f*p->channels+c,p->value(f,c));
+    RETURN->v_int=1;
+}
+
 CK_DLL_QUERY(AudioIO) {
     QUERY->setname(QUERY, "AudioIO");
     QUERY->begin_class(QUERY, "AudioIO", "Object");
@@ -321,5 +370,15 @@ CK_DLL_QUERY(AudioIO) {
     QUERY->add_arg(QUERY,"int","frameIndex");
     QUERY->add_arg(QUERY,"int","channel");
     QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,audio_buffer_create,"int","create");
+    QUERY->add_arg(QUERY,"int","frameCount");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_mfun(QUERY,audio_buffer_import_samples,"int","importSamples");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,audio_buffer_export_samples,"int","exportSamples");
+    QUERY->add_arg(QUERY,"float[]","samples");
     return QUERY->end_class(QUERY);
 }

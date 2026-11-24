@@ -1529,3 +1529,69 @@ check(captions.textAt(2.0)=="First");
 check(captions.save("track-curve.srt"));
 """,6,p)
     assert (p/"track-curve.srt").read_bytes()==b"1\n00:00:02,000 --> 00:00:03,000\nFirst\n\n2\n00:00:02,500 --> 00:00:04,000\nSecond\n\n"
+
+    run("raster", """
+RasterImage image;
+int pixels[8];
+check(image.create(2,1));
+check(image.width()==2 && image.height()==1);
+check(image.pixelAt(0,0,3)==0);
+check(image.setPixel(0,0,200,100,50,255));
+check(image.pixelAt(0,0,0)==200);
+check(!image.setPixel(2,0,1,2,3,4));
+check(!image.setPixel(0,0,256,0,0,255));
+0.5 => image.red;
+check(image.exportPixels(pixels));
+check(pixels[0]==100 && pixels[1]==100 && pixels[2]==50 && pixels[3]==255);
+check(image.pixelAt(0,0,0)==200);
+RasterImage copy;
+check(copy.importPixels(2,1,pixels));
+check(copy.red()==1.0 && copy.pixelAt(0,0,0)==100);
+-1 => pixels[0];
+check(!copy.importPixels(2,1,pixels));
+check(copy.pixelAt(0,0,0)==100);
+check(!copy.create(0,1));
+check(copy.save("memory-raster.png"));
+""",16,p)
+    assert decoded("memory-raster.png")==bytes((100,100,50,0,0,0))
+    run("audio", """
+AudioBuffer audio;
+float samples[4];
+check(audio.create(2,8000,2));
+check(audio.frames()==2 && audio.channels()==2);
+check(audio.sampleAt(0,0)==0.0);
+check(audio.setSample(0,0,0.25));
+check(audio.setSample(0,1,-0.5));
+2.0 => audio.gain;
+check(audio.exportSamples(samples));
+check(samples[0]==0.5 && samples[1]==-1.0);
+AudioBuffer copy;
+check(copy.importSamples(8000,2,samples));
+check(copy.gain()==1.0 && copy.sampleAt(0,0)==0.5);
+2.0 => samples[0];
+check(!copy.importSamples(8000,2,samples));
+check(copy.sampleAt(0,0)==0.5);
+check(!copy.create(2,0,2));
+check(copy.save("memory-audio.wav"));
+""",13,p)
+    check_buffer("memory-audio.wav",[16384,-32768,0,0])
+    run("video", """
+@import "RasterIO";
+VideoClip clip;
+RasterImage image;
+int pixels[1024];
+check(clip.load("generated.mkv"));
+check(clip.exportPixels(pixels));
+check(pixels[0]==255 && pixels[1]==0 && pixels[2]==0 && pixels[3]==255);
+check(image.importPixels(16,16,pixels));
+check(image.setPixel(0,0,0,255,0,255));
+check(image.save("memory-video-frame.png"));
+check(clip.next()==1);
+0.5 => clip.blue;
+check(clip.exportPixels(pixels));
+check(pixels[0]==0 && pixels[1]==0 && pixels[2]==128 && pixels[3]==255);
+check(image.importPixels(16,16,pixels));
+check(image.save("memory-video-blue.png"));
+""",11,p)
+    assert decoded("memory-video-frame.png")==bytes((0,255,0))+red[3:]
+    assert decoded("memory-video-blue.png")==bytes((0,0,128))*256
