@@ -201,3 +201,14 @@ transition has the same parameters and constraints as crossfade, followed by a v
 ```
 
 overlay(baseClip, layerClip, destination, width, height, fps, x, y, layerWidth, layerHeight, opacity, sampleRate, channels) normalizes each video independently to the requested pixel dimensions and samples both on the output time grid. Coordinates are measured in pixels from the upper-left corner. The layer rectangle must fit within the canvas. Global opacity is 0–1; RGB byte blending is linear without gamma correction or source alpha. Both clips begin at their first decoded presentation timestamp; the inset disappears at its end and the base controls output duration. Output is FFV1/BGR0 and PCM S16LE in MKV. Only base audio is normalized (8000–96000 Hz, mono/stereo); layer audio is deliberately ignored and missing base audio produces silence. Each input accepts one video plus at most one audio track. Video reading uses one-frame lookahead rather than storing whole decoded clips, but the separate audio pass can still cause substantial muxer buffering. Maximum one million output frames; known positive final frame durations and increasing timestamps required. No overwrite; ordinary failure removes incomplete output. Nine smoke checks plus independent RGB/PCM comparisons await execution.
+
+### Chroma key and audio mixing
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.composite("main.mp4", "green-screen.webm", "composite.mkv",
+                      1280, 720, 30, 0, 0, 1280, 720, 1.0, 48000, 2,
+                      65280, 0.15, 0.1, 1.0, 0.5) >>>;
+```
+
+composite extends overlay with five parameters: keyRGB (packed 0xRRGGBB integer, or -1 to disable), tolerance, softness, baseGain and layerGain. The normalized Euclidean RGB distance is measured after scaling. Pixels within tolerance become transparent; the next softness interval linearly restores opacity. Tolerance and softness are nonnegative and their sum must not exceed one. This is a basic RGB key, without spill suppression or source alpha. Audio gains are linear amplitudes in [0,4]; normalized signed PCM samples are summed, rounded and saturated. The layer audio is limited to its visible video duration; missing audio is silence. The base controls output duration. Each captured PCM buffer is limited to 128 MiB; muxer buffering remains additional. The original overlay API is unchanged. Nine new smoke checks plus independent pixel and PCM comparisons await execution.
