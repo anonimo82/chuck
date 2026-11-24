@@ -1674,3 +1674,88 @@ check(b.finish());
 """,9,p)
     assert decoded("writer-a.mkv")==bytes(16*16*3*2)
     assert decoded("writer-b.mkv")==bytes(16*16*3)
+
+    # Synchronized raster + AudioBuffer blocks; no temporary media files.
+    run("video", """
+@import "RasterIO";
+@import "AudioIO";
+VideoWriter writer;
+RasterImage image;
+AudioBuffer audio;
+int pixels[1024];
+float block[8000];
+float bad[1];
+check(writer.nextAudioFrames()==0);
+check(writer.audioFrames()==0);
+check(!writer.openAV("avwriter-bad.mkv",16,16,2,7999,2));
+check(!writer.openAV("avwriter-bad.mkv",16,16,2,8000,3));
+check(writer.openAV("avwriter.mkv",16,16,2,8000,2));
+check(writer.nextAudioFrames()==4000);
+check(image.create(16,16));
+for(0 => int y; y<16; y++)
+    for(0 => int x; x<16; x++) image.setPixel(x,y,255,0,0,255);
+check(image.exportPixels(pixels));
+check(audio.create(4000,8000,2));
+for(0 => int i; i<4000; i++) {
+    audio.setSample(i,0,0.25);
+    audio.setSample(i,1,-0.5);
+}
+check(audio.exportSamples(block));
+check(!writer.appendFrame(pixels));
+check(!writer.appendAV(pixels,bad));
+2.0 => block[0];
+check(!writer.appendAV(pixels,block));
+check(writer.frames()==0 && writer.audioFrames()==0);
+check(audio.exportSamples(block));
+0 => pixels[3];
+check(!writer.appendAV(pixels,block));
+check(writer.frames()==0 && writer.audioFrames()==0);
+255 => pixels[3];
+check(writer.appendAV(pixels,block));
+check(writer.frames()==1 && writer.audioFrames()==4000);
+check(writer.nextAudioFrames()==4000);
+for(0 => int y; y<16; y++)
+    for(0 => int x; x<16; x++) image.setPixel(x,y,0,0,255,255);
+check(image.exportPixels(pixels));
+0.5 => audio.gain;
+check(audio.exportSamples(block));
+check(writer.appendAV(pixels,block));
+check(writer.frames()==2 && writer.audioFrames()==8000);
+check(writer.finish());
+check(!writer.active() && writer.audioFrames()==0);
+check(!writer.openAV("avwriter.mkv",16,16,2,8000,2));
+check(writer.openAV("avwriter-abort.mkv",16,16,2,8000,2));
+check(writer.appendAV(pixels,block));
+writer.abort();
+check(!writer.active());
+check(writer.open("avwriter-video.mkv",16,16,2));
+check(!writer.appendAV(pixels,block));
+check(writer.appendFrame(pixels));
+check(writer.finish());
+""",34,p)
+    assert decoded("avwriter.mkv")==red+blue
+    def writer_pcm(name):
+        return subprocess.check_output(["ffmpeg","-nostdin","-v","error","-i",str(p/name),
+            "-map","0:a:0","-f","s16le","-acodec","pcm_s16le","-"],timeout=30)
+    assert writer_pcm("avwriter.mkv")==struct.pack("<hh",8192,-16384)*4000+struct.pack("<hh",4096,-8192)*4000
+    assert not (p/"avwriter-bad.mkv").exists() and not (p/"avwriter-abort.mkv").exists()
+    # 8000 / 3 is nonintegral: use rounded cumulative boundaries, not fixed blocks.
+    run("video", """
+VideoWriter writer;
+int pixels[1024];
+float longBlock[2667];
+float shortBlock[2666];
+for(0 => int i; i<256; i++) 255 => pixels[i*4+3];
+check(writer.openAV("avwriter-fractional.mkv",16,16,3,8000,1));
+check(writer.nextAudioFrames()==2667);
+check(writer.appendAV(pixels,longBlock));
+check(writer.nextAudioFrames()==2666);
+check(!writer.appendAV(pixels,longBlock));
+check(writer.appendAV(pixels,shortBlock));
+check(writer.nextAudioFrames()==2667);
+check(writer.appendAV(pixels,longBlock));
+check(writer.audioFrames()==8000 && writer.frames()==3);
+check(writer.finish());
+""",10,p)
+    assert decoded("avwriter-fractional.mkv")==bytes(16*16*3*3)
+    assert writer_pcm("avwriter-fractional.mkv")==bytes(16000)

@@ -3046,10 +3046,12 @@ struct VideoWriterState {
     Codec codec;
     Frame frame;
     Packet packet;
-    AVStream *stream=nullptr;
+    AVStream *stream=nullptr, *audio=nullptr;
+    int rate=0, channels=0;
+    int64_t samples=0;
     int64_t count=0;
     explicit VideoWriterState(const std::string &p):path(p),out(path) {}
-    bool open(int w,int h,int fps) {
+    bool open(int w,int h,int fps,int audioRate=0,int audioChannels=0) {
         if(path.size()<4 || path.substr(path.size()-4)!=".mkv" ||
            !frame.p || !packet.p) return false;
         const auto *encoder=avcodec_find_encoder_by_name("ffv1");
@@ -3067,6 +3069,18 @@ struct VideoWriterState {
         if(!stream || avcodec_parameters_from_context(stream->codecpar,codec.ctx)<0) return false;
         stream->time_base=codec.ctx->time_base;
         stream->avg_frame_rate=codec.ctx->framerate;
+        rate=audioRate; channels=audioChannels;
+        if(rate) {
+            audio=avformat_new_stream(out.ctx,nullptr);
+            if(!audio) return false;
+            auto *p=audio->codecpar;
+            p->codec_type=AVMEDIA_TYPE_AUDIO; p->codec_id=AV_CODEC_ID_PCM_S16LE;
+            p->format=AV_SAMPLE_FMT_S16; p->sample_rate=rate;
+            av_channel_layout_default(&p->ch_layout,channels);
+            p->bits_per_coded_sample=p->bits_per_raw_sample=16;
+            p->block_align=channels*2; p->bit_rate=static_cast<int64_t>(rate)*channels*16;
+            audio->time_base=AVRational{1,rate};
+        }
         frame.p->format=codec.ctx->pix_fmt;
         frame.p->width=w; frame.p->height=h;
         return av_frame_get_buffer(frame.p,32)>=0 && avformat_write_header(out.ctx,nullptr)>=0;
@@ -3109,6 +3123,35 @@ struct VideoWriterState {
         if(avcodec_send_frame(codec.ctx,frame.p)<0 || !drain(false)) return -1;
         ++count; return 1;
     }
+    int64_t nextSamples() const {
+        if(!audio || count>=1000000) return 0;
+        return av_rescale_q(count+1,codec.ctx->time_base,AVRational{1,rate})-samples;
+    }
+    int appendAV(Chuck_DL_Api::ArrayInt pixels,Chuck_DL_Api::ArrayFloat data,CK_DL_API API) {
+        const int64_t n=nextSamples();
+        if(!audio || !data || n<=0 || API->object->array_float_size(data)!=n*channels) return 0;
+        // Validate and quantize the complete audio block before submitting video.
+        Packet pcm;
+        if(!pcm.p || av_new_packet(pcm.p,static_cast<int>(n*channels*2))<0) return -1;
+        for(int64_t i=0;i<n*channels;++i) {
+            double v=API->object->array_float_get_idx(data,i);
+            if(!std::isfinite(v) || v< -1 || v>1) return 0;
+            int q=static_cast<int>(std::lround(v*32768.0));
+            q=std::max(-32768,std::min(32767,q));
+            uint16_t bits=static_cast<uint16_t>(q);
+            pcm.p->data[2*i]=static_cast<uint8_t>(bits);
+            pcm.p->data[2*i+1]=static_cast<uint8_t>(bits>>8);
+        }
+        int ret=append(pixels,API);
+        if(ret!=1) return ret;
+        pcm.p->pts=pcm.p->dts=samples;
+        pcm.p->duration=n; pcm.p->stream_index=audio->index;
+        pcm.p->flags=AV_PKT_FLAG_KEY; pcm.p->pos=-1;
+        av_packet_rescale_ts(pcm.p,AVRational{1,rate},audio->time_base);
+        if(av_interleaved_write_frame(out.ctx,pcm.p)<0) return -1;
+        samples+=n;
+        return 1;
+    }
     bool finish() {
         return count>0 && avcodec_send_frame(codec.ctx,nullptr)>=0 && drain(true) && out.finish();
     }
@@ -3145,7 +3188,7 @@ CK_DLL_MFUN(video_writer_append) {
     RETURN->v_int=0;
     auto *p=writerState(SELF,API);
     auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
-    if(!p || !p->writer) return;
+    if(!p || !p->writer || p->writer->audio) return;
     try {
         int ret=p->writer->append(a,API);
         if(ret<0) p->writer.reset();
@@ -3167,6 +3210,42 @@ CK_DLL_MFUN(video_writer_active) {
 }
 CK_DLL_MFUN(video_writer_frames) {
     auto *p=writerState(SELF,API); RETURN->v_int=p && p->writer?p->writer->count:0;
+}
+
+
+CK_DLL_MFUN(video_writer_open_av) {
+    RETURN->v_int=0;
+    try {
+        auto *p=writerState(SELF,API);
+        auto path=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),fps=GET_NEXT_INT(ARGS);
+        auto rate=GET_NEXT_INT(ARGS),channels=GET_NEXT_INT(ARGS);
+        if(!p || p->writer || w<1 || h<1 || w>8192 || h>8192 ||
+           w*h>16777216 || fps<1 || fps>120 || rate<8000 || rate>96000 ||
+           channels<1 || channels>2) return;
+        auto next=std::make_unique<VideoWriterState>(path);
+        if(next->open(w,h,fps,rate,channels)) { p->writer=std::move(next); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_writer_append_av) {
+    RETURN->v_int=0;
+    auto *p=writerState(SELF,API);
+    auto pixels=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+    auto audio=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+    if(!p || !p->writer || !p->writer->audio) return;
+    try {
+        int ret=p->writer->appendAV(pixels,audio,API);
+        if(ret<0) p->writer.reset();
+        RETURN->v_int=ret==1;
+    } catch(...) { p->writer.reset(); }
+}
+CK_DLL_MFUN(video_writer_next_samples) {
+    auto *p=writerState(SELF,API);
+    RETURN->v_int=p && p->writer?p->writer->nextSamples():0;
+}
+CK_DLL_MFUN(video_writer_audio_frames) {
+    auto *p=writerState(SELF,API);
+    RETURN->v_int=p && p->writer?p->writer->samples:0;
 }
 
 CK_DLL_QUERY(VideoIO) {
@@ -3428,5 +3507,17 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_mfun(QUERY,video_writer_abort,"void","abort");
     QUERY->add_mfun(QUERY,video_writer_active,"int","active");
     QUERY->add_mfun(QUERY,video_writer_frames,"int","frames");
+    QUERY->add_mfun(QUERY,video_writer_open_av,"int","openAV");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","fps");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_mfun(QUERY,video_writer_append_av,"int","appendAV");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,video_writer_next_samples,"int","nextAudioFrames");
+    QUERY->add_mfun(QUERY,video_writer_audio_frames,"int","audioFrames");
     return QUERY->end_class(QUERY);
 }
