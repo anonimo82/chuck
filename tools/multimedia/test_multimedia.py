@@ -369,3 +369,22 @@ check(!VideoIO.trim("trim-source.mkv", "invalid-trim.bin", 0.0, 1.0));
     for name in ("negative.mkv", "reversed.mkv", "beyond-end.mkv",
                  "no-keyframe.mkv", "missing-trim.mkv", "invalid-trim.bin"):
         assert not (p / name).exists(), name
+
+    # Concatenate identical stream configurations, checking actual decoded content.
+    run("video", """
+check(VideoIO.concat("trim-source.mkv", "trim-source.mkv", "joined.mkv"));
+check(VideoIO.concat("trim-av.mkv", "trim-av.mkv", "joined-av.mkv"));
+check(!VideoIO.concat("trim-source.mkv", "trim-source.mkv", "joined.mkv"));
+check(!VideoIO.concat("trim-source.mkv", "trim-av.mkv", "bad-streams.mkv"));
+check(!VideoIO.concat("trim-source.mkv", "resized.mkv", "bad-size.mkv"));
+check(!VideoIO.concat("missing.mkv", "trim-source.mkv", "bad-source.mkv"));
+check(!VideoIO.concat("trim-source.mkv", "missing.mkv", "bad-second.mkv"));
+check(!VideoIO.concat("trim-source.mkv", "trim-source.mkv", "bad-container.bin"));
+""", 8, p)
+    assert decoded("joined.mkv") == (red + blue + red + blue) * 2
+    assert decoded("joined-av.mkv") == decoded("joined.mkv")
+    assert len(audio_tracks("joined-av.mkv")) == 1
+    assert audio_samples("joined-av.mkv", 0) == (pcm + pcm2) * 2
+    for name in ("bad-streams.mkv", "bad-size.mkv", "bad-source.mkv",
+                 "bad-second.mkv", "bad-container.bin"):
+        assert not (p / name).exists(), name
