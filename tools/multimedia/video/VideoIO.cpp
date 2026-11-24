@@ -208,6 +208,83 @@ bool remux(Input &input, const std::string &dest) {
 }
 
 
+
+// Merge the selected video and audio streams, retaining their packet timestamps.
+// No decoding, resampling, trimming or time stretching.
+bool muxAudio(const std::string &videoPath, const std::string &audioPath, const std::string &dest) {
+    const auto dot = dest.find_last_of('.');
+    if(dot == std::string::npos) return false;
+    const auto ext = dest.substr(dot);
+    const char *format = ext == ".mkv" ? "matroska" : ext == ".mp4" ? "mp4" :
+                         ext == ".mov" ? "mov" : ext == ".webm" ? "webm" : nullptr;
+    if(!format) return false;
+    Input video, audio;
+    if(!video.open(videoPath)) return false;
+    {
+        std::unique_ptr<FILE, decltype(&fclose)> file(std::fopen(audioPath.c_str(), "rb"), fclose);
+        if(!file) return false;
+    }
+    if(avformat_open_input(&audio.ctx, audioPath.c_str(), nullptr, nullptr) < 0 ||
+       avformat_find_stream_info(audio.ctx, nullptr) < 0) return false;
+    int audioIndex = av_find_best_stream(audio.ctx, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+    if(audioIndex < 0) return false;
+    Output out(dest);
+    if(!out.open(format)) return false;
+    AVFormatContext *inputs[2] = {video.ctx, audio.ctx};
+    int indices[2] = {video.video, audioIndex};
+    for(int i = 0; i < 2; ++i) {
+        auto *src = inputs[i]->streams[indices[i]];
+        auto *dst = avformat_new_stream(out.ctx, nullptr);
+        if(!dst || avcodec_parameters_copy(dst->codecpar, src->codecpar) < 0) return false;
+        dst->codecpar->codec_tag = 0;
+        dst->time_base = src->time_base;
+        dst->avg_frame_rate = src->avg_frame_rate;
+        dst->sample_aspect_ratio = src->sample_aspect_ratio;
+        if(av_dict_copy(&dst->metadata, src->metadata, 0) < 0) return false;
+    }
+    if(avformat_write_header(out.ctx, nullptr) < 0) return false;
+    Packet packets[2];
+    if(!packets[0].p || !packets[1].p) return false;
+    bool ready[2] = {false, false}, ended[2] = {false, false}, wrote[2] = {false, false};
+    for(;;) {
+        for(int i = 0; i < 2; ++i) {
+            if(ready[i] || ended[i]) continue;
+            int ret;
+            while((ret = av_read_frame(inputs[i], packets[i].p)) >= 0) {
+                if(packets[i].p->stream_index == indices[i]) {
+                    ready[i] = true;
+                    break;
+                }
+                av_packet_unref(packets[i].p);
+            }
+            if(!ready[i]) {
+                if(ret != AVERROR_EOF) return false;
+                ended[i] = true;
+            }
+        }
+        if(!ready[0] && !ready[1]) break;
+        int i = ready[0] ? 0 : 1;
+        if(ready[0] && ready[1]) {
+            auto timestamp = [](AVPacket *p) { return p->dts == AV_NOPTS_VALUE ? p->pts : p->dts; };
+            auto a = timestamp(packets[0].p), b = timestamp(packets[1].p);
+            if(a == AV_NOPTS_VALUE || b == AV_NOPTS_VALUE) return false;
+            if(av_compare_ts(a, inputs[0]->streams[indices[0]]->time_base,
+                             b, inputs[1]->streams[indices[1]]->time_base) > 0) i = 1;
+        }
+        auto *p = packets[i].p;
+        av_packet_rescale_ts(p, inputs[i]->streams[indices[i]]->time_base,
+                             out.ctx->streams[i]->time_base);
+        p->stream_index = i;
+        p->pos = -1;
+        int result = av_interleaved_write_frame(out.ctx, p);
+        av_packet_unref(p);
+        if(result < 0) return false;
+        ready[i] = false;
+        wrote[i] = true;
+    }
+    return wrote[0] && wrote[1] && out.finish();
+}
+
 // Strict P6 RGB8 input, with standard whitespace/comments in the header.
 bool ppmToken(FILE *f, std::string &token) {
     token.clear();
@@ -436,6 +513,15 @@ CK_DLL_SFUN(video_encoder_available) {
         if(name && avcodec_find_encoder_by_name(name)) RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_mux_audio) {
+    RETURN->v_int = 0;
+    try {
+        auto video = GET_NEXT_STRING_SAFE(ARGS);
+        auto audio = GET_NEXT_STRING_SAFE(ARGS);
+        auto dest = GET_NEXT_STRING_SAFE(ARGS);
+        if(muxAudio(video, audio, dest)) RETURN->v_int = 1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -467,5 +553,9 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "int", "quality");
     QUERY->add_sfun(QUERY, video_encoder_available, "int", "encoderAvailable");
     QUERY->add_arg(QUERY, "string", "codec");
+    QUERY->add_sfun(QUERY, video_mux_audio, "int", "muxAudio");
+    QUERY->add_arg(QUERY, "string", "video");
+    QUERY->add_arg(QUERY, "string", "audio");
+    QUERY->add_arg(QUERY, "string", "destination");
     return QUERY->end_class(QUERY);
 }
