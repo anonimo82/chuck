@@ -1,5 +1,6 @@
 // Optional offline video I/O for ChucK.
 #include "chuck_dl.h"
+#include "../file_compat.h"
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -79,7 +80,7 @@ bool extract(Input &input, const std::string &dest) {
     if(sws_scale(scale.p, frame.p->data, frame.p->linesize, 0, h, planes, strides) != h)
         return false;
     // PPM P6 is lossless RGB; no additional image encoder dependency.
-    FILE *out = std::fopen(dest.c_str(), "wbx");
+    FILE *out = mediaio::openNew(dest.c_str());
     if(!out) return false;
     bool ok = std::fprintf(out, "P6\n%d %d\n255\n", w, h) > 0;
     for(int y = 0; ok && y < h; ++y)
