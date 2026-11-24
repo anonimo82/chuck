@@ -7,11 +7,11 @@ try {
     if (!(Test-Path "$MsysRoot\usr\bin\bash.exe")) {
         # Use the official stable release directly, also on systems without winget.
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/msys2/msys2-installer/releases/latest" -Headers @{"User-Agent"="ChucK-Multimedia-Setup"}
-        $asset = $release.assets | Where-Object { $_.name -match '^msys2-x86_64-\d{8}\.exe$' } | Select-Object -First 1
-        if (!$asset) { throw "Official MSYS2 x64 installer not found." }
-        $checksum = $release.assets | Where-Object { $_.name -eq ($asset.name + ".sha256") } | Select-Object -First 1
-        if (!$checksum) { throw "Official MSYS2 checksum not found." }
+        # Stable release explicitly listed on the official MSYS2 download page.
+        $name = "msys2-x86_64-20261120.exe"
+        $base = "https://github.com/msys2/msys2-installer/releases/download/2026-11-20"
+        $asset = @{name=$name; browser_download_url="$base/$name"}
+        $checksum = @{name="$name.sha256"; browser_download_url="$base/$name.sha256"}
         $temp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
         New-Item -ItemType Directory -Path $temp | Out-Null
         try {
