@@ -49,5 +49,18 @@ check(VideoIO.height("clip.mkv") == 16);
 check(VideoIO.fps("clip.mkv") == 2.0);
 check(VideoIO.firstFrame("clip.mkv", "frame.ppm"));
 check(!VideoIO.firstFrame("clip.mkv", "frame.ppm"));
-""", 5, p)
+check(VideoIO.remux("clip.mkv", "copy.mkv"));
+check(VideoIO.width("copy.mkv") == 16);
+check(VideoIO.height("copy.mkv") == 16);
+check(!VideoIO.remux("clip.mkv", "copy.mkv"));
+check(!VideoIO.remux("clip.mkv", "bad.unknown"));
+check(!VideoIO.remux("clip.mkv", "bad.webm"));
+""", 11, p)
+    assert not (p / "bad.webm").exists()
+    assert not (p / "bad.unknown").exists()
+    for name in ("clip.mkv", "copy.mkv"):
+        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(p / name), "-f", "null", "-"], check=True, timeout=30)
+    def decoded(name):
+        return subprocess.check_output(["ffmpeg", "-nostdin", "-v", "error", "-i", str(p / name), "-map", "0:v:0", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], timeout=30)
+    assert decoded("clip.mkv") == decoded("copy.mkv")
     assert (p / "frame.ppm").read_bytes().startswith(b"P6\n16 16\n255\n")
