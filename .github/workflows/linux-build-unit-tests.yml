@@ -27,3 +27,8 @@ jobs:
       run: |
         make -C tools/multimedia/raster
         python3 tools/multimedia/raster/test_raster.py
+
+    - name: Build AudioIO and run smoke test
+      run: |
+        make -C tools/multimedia/audio
+        python3 tools/multimedia/audio/test_audio.py
