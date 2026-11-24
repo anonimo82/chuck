@@ -9,6 +9,7 @@ extern "C" {
 }
 #include <cstdio>
 #include <cerrno>
+#include <cctype>
 #include <memory>
 #include <string>
 #include <vector>
@@ -206,6 +207,113 @@ bool remux(Input &input, const std::string &dest) {
     return result == AVERROR_EOF && out.finish();
 }
 
+
+// Strict P6 RGB8 input, with standard whitespace/comments in the header.
+bool ppmToken(FILE *f, std::string &token) {
+    token.clear();
+    int c;
+    do {
+        c = std::fgetc(f);
+        if(c == '#') { do { c = std::fgetc(f); } while(c != EOF && c != '\n'); }
+    } while(c != EOF && std::isspace(static_cast<unsigned char>(c)));
+    while(c != EOF && !std::isspace(static_cast<unsigned char>(c))) {
+        if(token.size() >= 32) return false;
+        token += static_cast<char>(c);
+        c = std::fgetc(f);
+    }
+    return c != EOF && !token.empty();
+}
+bool ppmNumber(FILE *f, int &value) {
+    std::string token;
+    if(!ppmToken(f, token)) return false;
+    value = 0;
+    for(char c : token) {
+        if(c < '0' || c > '9' || value > 8192) return false;
+        value = value * 10 + c - '0';
+    }
+    return value > 0 && value <= 8192;
+}
+bool loadPPM(const std::string &path, int &w, int &h, std::vector<unsigned char> &rgb) {
+    std::unique_ptr<FILE, decltype(&fclose)> f(std::fopen(path.c_str(), "rb"), fclose);
+    std::string magic;
+    int maxval;
+    if(!f || !ppmToken(f.get(), magic) || magic != "P6" ||
+       !ppmNumber(f.get(), w) || !ppmNumber(f.get(), h) ||
+       !ppmNumber(f.get(), maxval) || maxval != 255) return false;
+    rgb.resize(static_cast<size_t>(w) * h * 3);
+    return std::fread(rgb.data(), 1, rgb.size(), f.get()) == rgb.size() &&
+           std::fgetc(f.get()) == EOF && !std::ferror(f.get());
+}
+// Read prefix000000.ppm, prefix000001.ppm, ... and encode lossless RGB.
+bool encodeSequence(const std::string &prefix, const std::string &dest, int count, int fps) {
+    if(count < 1 || count > 100000 || fps < 1 || fps > 120 ||
+       dest.size() < 4 || dest.substr(dest.size()-4) != ".mkv") return false;
+    const auto *encoder = avcodec_find_encoder(AV_CODEC_ID_FFV1);
+    if(!encoder) return false;
+    Codec codec;
+    codec.ctx = avcodec_alloc_context3(encoder);
+    if(!codec.ctx) return false;
+    Output out(dest);
+    Frame frame;
+    Packet packet;
+    if(!frame.p || !packet.p) return false;
+    AVStream *stream = nullptr;
+    std::vector<unsigned char> rgb;
+    auto drain = [&](bool flushing) {
+        for(;;) {
+            int ret = avcodec_receive_packet(codec.ctx, packet.p);
+            if(ret == AVERROR_EOF) return flushing;
+            if(ret == AVERROR(EAGAIN)) return !flushing;
+            if(ret < 0) return false;
+            av_packet_rescale_ts(packet.p, codec.ctx->time_base, stream->time_base);
+            packet.p->stream_index = stream->index;
+            int written = av_interleaved_write_frame(out.ctx, packet.p);
+            av_packet_unref(packet.p);
+            if(written < 0) return false;
+        }
+    };
+    for(int i = 0; i < count; ++i) {
+        char suffix[32];
+        std::snprintf(suffix, sizeof suffix, "%06d.ppm", i);
+        int w, h;
+        if(!loadPPM(prefix + suffix, w, h, rgb)) return false;
+        if(i == 0) {
+            if(!out.open("matroska")) return false;
+            codec.ctx->width = w;
+            codec.ctx->height = h;
+            codec.ctx->pix_fmt = AV_PIX_FMT_BGR0;
+            codec.ctx->time_base = AVRational{1, fps};
+            codec.ctx->framerate = AVRational{fps, 1};
+            if(out.ctx->oformat->flags & AVFMT_GLOBALHEADER)
+                codec.ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+            if(avcodec_open2(codec.ctx, encoder, nullptr) < 0) return false;
+            stream = avformat_new_stream(out.ctx, nullptr);
+            if(!stream || avcodec_parameters_from_context(stream->codecpar, codec.ctx) < 0) return false;
+            stream->time_base = codec.ctx->time_base;
+            stream->avg_frame_rate = codec.ctx->framerate;
+            if(avformat_write_header(out.ctx, nullptr) < 0) return false;
+            frame.p->format = codec.ctx->pix_fmt;
+            frame.p->width = w;
+            frame.p->height = h;
+            if(av_frame_get_buffer(frame.p, 32) < 0) return false;
+        }
+        if(w != codec.ctx->width || h != codec.ctx->height ||
+           av_frame_make_writable(frame.p) < 0) return false;
+        for(int y = 0; y < h; ++y) {
+            auto *dst = frame.p->data[0] + static_cast<size_t>(y) * frame.p->linesize[0];
+            const auto *src = rgb.data() + static_cast<size_t>(y) * w * 3;
+            for(int x = 0; x < w; ++x) {
+                dst[4*x] = src[3*x+2]; dst[4*x+1] = src[3*x+1];
+                dst[4*x+2] = src[3*x]; dst[4*x+3] = 0;
+            }
+        }
+        frame.p->pts = i;
+        if(avcodec_send_frame(codec.ctx, frame.p) < 0 || !drain(false)) return false;
+    }
+    if(avcodec_send_frame(codec.ctx, nullptr) < 0 || !drain(true)) return false;
+    return out.finish();
+}
+
 }
 CK_DLL_SFUN(video_width) {
     RETURN->v_int = -1;
@@ -254,6 +362,18 @@ CK_DLL_SFUN(video_remux) {
         if(in.open(source) && remux(in, dest)) RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_sequence) {
+    RETURN->v_int = 0;
+    try {
+        auto prefix = GET_NEXT_STRING_SAFE(ARGS);
+        auto dest = GET_NEXT_STRING_SAFE(ARGS);
+        auto count = GET_NEXT_INT(ARGS);
+        auto fps = GET_NEXT_INT(ARGS);
+        if(count >= 1 && count <= 100000 && fps >= 1 && fps <= 120 &&
+           encodeSequence(prefix, dest, static_cast<int>(count), static_cast<int>(fps)))
+            RETURN->v_int = 1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -271,5 +391,10 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_sfun(QUERY, video_remux, "int", "remux");
     QUERY->add_arg(QUERY, "string", "source");
     QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_sfun(QUERY, video_sequence, "int", "encodeSequence");
+    QUERY->add_arg(QUERY, "string", "prefix");
+    QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_arg(QUERY, "int", "count");
+    QUERY->add_arg(QUERY, "int", "fps");
     return QUERY->end_class(QUERY);
 }

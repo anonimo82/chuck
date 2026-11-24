@@ -64,3 +64,25 @@ check(!VideoIO.remux("clip.mkv", "bad.webm"));
         return subprocess.check_output(["ffmpeg", "-nostdin", "-v", "error", "-i", str(p / name), "-map", "0:v:0", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], timeout=30)
     assert decoded("clip.mkv") == decoded("copy.mkv")
     assert (p / "frame.ppm").read_bytes().startswith(b"P6\n16 16\n255\n")
+
+    # Two distinct RGB frames, and one wrong-sized frame for error cleanup.
+    red = bytes((255, 0, 0)) * (16 * 16)
+    blue = bytes((0, 0, 255)) * (16 * 16)
+    for i, pixels in enumerate((red, blue)):
+        (p / f"seq{i:06d}.ppm").write_bytes(b"P6\n16 16\n255\n" + pixels)
+    (p / "seq000002.ppm").write_bytes(b"P6\n1 1\n255\n" + b"\x00\x00\x00")
+    run("video", """
+check(VideoIO.encodeSequence("seq", "generated.mkv", 2, 2));
+check(VideoIO.width("generated.mkv") == 16);
+check(VideoIO.height("generated.mkv") == 16);
+check(VideoIO.fps("generated.mkv") == 2.0);
+check(!VideoIO.encodeSequence("seq", "generated.mkv", 2, 2));
+check(!VideoIO.encodeSequence("seq", "invalid.mkv", 3, 2));
+check(!VideoIO.encodeSequence("missing", "missing.mkv", 1, 2));
+check(!VideoIO.encodeSequence("seq", "zero.mkv", 0, 2));
+check(!VideoIO.encodeSequence("seq", "bad-rate.mkv", 2, 0));
+check(!VideoIO.encodeSequence("seq", "wrong.mp4", 2, 2));
+""", 10, p)
+    for name in ("invalid.mkv", "missing.mkv", "zero.mkv", "bad-rate.mkv", "wrong.mp4"):
+        assert not (p / name).exists(), name
+    assert decoded("generated.mkv") == red + blue
