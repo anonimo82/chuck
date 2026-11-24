@@ -38,7 +38,7 @@ check(RasterIO.width("missing.png") == -1, "missing input");
 check(RasterIO.convert("input.png", "output.unknown") == 0, "unsupported output");
 """)
         result = subprocess.run(
-            [os.environ.get("CHUCK_EXE", str(ROOT / "src/chuck")), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE)), script.name],
+            [os.environ.get("CHUCK_EXE", str(ROOT / "src/chuck")), "--silent", "--chugin-path-auto-load:" + os.environ.get("CHUGIN_DIR", str(HERE)), script.name],
             cwd=tmp, capture_output=True, text=True, timeout=30)
         log = result.stdout + result.stderr
         print(log)
