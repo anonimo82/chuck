@@ -245,10 +245,19 @@ bool loadPPM(const std::string &path, int &w, int &h, std::vector<unsigned char>
            std::fgetc(f.get()) == EOF && !std::ferror(f.get());
 }
 // Read prefix000000.ppm, prefix000001.ppm, ... and encode lossless RGB.
-bool encodeSequence(const std::string &prefix, const std::string &dest, int count, int fps) {
+bool encodeSequence(const std::string &prefix, const std::string &dest, int count, int fps,
+                    const std::string &mode = "ffv1", int quality = 0) {
     if(count < 1 || count > 100000 || fps < 1 || fps > 120 ||
-       dest.size() < 4 || dest.substr(dest.size()-4) != ".mkv") return false;
-    const auto *encoder = avcodec_find_encoder(AV_CODEC_ID_FFV1);
+       quality < 0 || quality > 51) return false;
+    const bool lossless = mode == "ffv1";
+    const bool h264 = mode == "h264";
+    const bool vp9 = mode == "vp9";
+    const char *container = lossless ? "matroska" : h264 ? "mp4" : vp9 ? "webm" : nullptr;
+    const char *extension = lossless ? ".mkv" : h264 ? ".mp4" : ".webm";
+    const std::string ext(extension);
+    if(!container || dest.size() < ext.size() || dest.substr(dest.size()-ext.size()) != ext ||
+       (lossless && quality != 0)) return false;
+    const auto *encoder = avcodec_find_encoder_by_name(lossless ? "ffv1" : h264 ? "libx264" : "libvpx-vp9");
     if(!encoder) return false;
     Codec codec;
     codec.ctx = avcodec_alloc_context3(encoder);
@@ -259,6 +268,7 @@ bool encodeSequence(const std::string &prefix, const std::string &dest, int coun
     if(!frame.p || !packet.p) return false;
     AVStream *stream = nullptr;
     std::vector<unsigned char> rgb;
+    Scale scale;
     auto drain = [&](bool flushing) {
         for(;;) {
             int ret = avcodec_receive_packet(codec.ctx, packet.p);
@@ -278,15 +288,34 @@ bool encodeSequence(const std::string &prefix, const std::string &dest, int coun
         int w, h;
         if(!loadPPM(prefix + suffix, w, h, rgb)) return false;
         if(i == 0) {
-            if(!out.open("matroska")) return false;
+            if(!lossless && ((w & 1) || (h & 1))) return false;
+            if(!out.open(container)) return false;
             codec.ctx->width = w;
             codec.ctx->height = h;
-            codec.ctx->pix_fmt = AV_PIX_FMT_BGR0;
+            codec.ctx->pix_fmt = lossless ? AV_PIX_FMT_BGR0 : AV_PIX_FMT_YUV420P;
             codec.ctx->time_base = AVRational{1, fps};
             codec.ctx->framerate = AVRational{fps, 1};
             if(out.ctx->oformat->flags & AVFMT_GLOBALHEADER)
                 codec.ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-            if(avcodec_open2(codec.ctx, encoder, nullptr) < 0) return false;
+            AVDictionary *options = nullptr;
+            if(!lossless) {
+                const auto crf = std::to_string(quality);
+                if(av_dict_set(&options, "crf", crf.c_str(), 0) < 0 ||
+                   (h264 && av_dict_set(&options, "preset", "medium", 0) < 0)) {
+                    av_dict_free(&options);
+                    return false;
+                }
+                if(vp9) codec.ctx->bit_rate = 0;
+            }
+            const int opened = avcodec_open2(codec.ctx, encoder, &options);
+            const bool unused = av_dict_count(options) != 0;
+            av_dict_free(&options);
+            if(opened < 0 || unused) return false;
+            if(!lossless) {
+                scale.p = sws_getContext(w, h, AV_PIX_FMT_RGB24, w, h,
+                    AV_PIX_FMT_YUV420P, SWS_BILINEAR, nullptr, nullptr, nullptr);
+                if(!scale.p) return false;
+            }
             stream = avformat_new_stream(out.ctx, nullptr);
             if(!stream || avcodec_parameters_from_context(stream->codecpar, codec.ctx) < 0) return false;
             stream->time_base = codec.ctx->time_base;
@@ -299,6 +328,7 @@ bool encodeSequence(const std::string &prefix, const std::string &dest, int coun
         }
         if(w != codec.ctx->width || h != codec.ctx->height ||
            av_frame_make_writable(frame.p) < 0) return false;
+        if(lossless) {
         for(int y = 0; y < h; ++y) {
             auto *dst = frame.p->data[0] + static_cast<size_t>(y) * frame.p->linesize[0];
             const auto *src = rgb.data() + static_cast<size_t>(y) * w * 3;
@@ -306,6 +336,14 @@ bool encodeSequence(const std::string &prefix, const std::string &dest, int coun
                 dst[4*x] = src[3*x+2]; dst[4*x+1] = src[3*x+1];
                 dst[4*x+2] = src[3*x]; dst[4*x+3] = 0;
             }
+        }
+        } else {
+            // Pad the input for SIMD reads by swscale.
+            rgb.resize(rgb.size() + 64, 0);
+            const uint8_t *planes[4] = {rgb.data(), nullptr, nullptr, nullptr};
+            int strides[4] = {w * 3, 0, 0, 0};
+            if(sws_scale(scale.p, planes, strides, 0, h, frame.p->data, frame.p->linesize) != h)
+                return false;
         }
         frame.p->pts = i;
         if(avcodec_send_frame(codec.ctx, frame.p) < 0 || !drain(false)) return false;
@@ -374,6 +412,30 @@ CK_DLL_SFUN(video_sequence) {
             RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_sequence_compressed) {
+    RETURN->v_int = 0;
+    try {
+        auto prefix = GET_NEXT_STRING_SAFE(ARGS);
+        auto dest = GET_NEXT_STRING_SAFE(ARGS);
+        auto count = GET_NEXT_INT(ARGS);
+        auto fps = GET_NEXT_INT(ARGS);
+        auto mode = GET_NEXT_STRING_SAFE(ARGS);
+        auto quality = GET_NEXT_INT(ARGS);
+        if(count >= 1 && count <= 100000 && fps >= 1 && fps <= 120 &&
+           quality >= 0 && quality <= 51 &&
+           encodeSequence(prefix, dest, static_cast<int>(count), static_cast<int>(fps),
+                          mode, static_cast<int>(quality))) RETURN->v_int = 1;
+    } catch(...) {}
+}
+CK_DLL_SFUN(video_encoder_available) {
+    RETURN->v_int = 0;
+    try {
+        auto mode = GET_NEXT_STRING_SAFE(ARGS);
+        const char *name = mode == "ffv1" ? "ffv1" : mode == "h264" ? "libx264" :
+                           mode == "vp9" ? "libvpx-vp9" : nullptr;
+        if(name && avcodec_find_encoder_by_name(name)) RETURN->v_int = 1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -396,5 +458,14 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "string", "destination");
     QUERY->add_arg(QUERY, "int", "count");
     QUERY->add_arg(QUERY, "int", "fps");
+    QUERY->add_sfun(QUERY, video_sequence_compressed, "int", "encodeSequence");
+    QUERY->add_arg(QUERY, "string", "prefix");
+    QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_arg(QUERY, "int", "count");
+    QUERY->add_arg(QUERY, "int", "fps");
+    QUERY->add_arg(QUERY, "string", "codec");
+    QUERY->add_arg(QUERY, "int", "quality");
+    QUERY->add_sfun(QUERY, video_encoder_available, "int", "encoderAvailable");
+    QUERY->add_arg(QUERY, "string", "codec");
     return QUERY->end_class(QUERY);
 }
