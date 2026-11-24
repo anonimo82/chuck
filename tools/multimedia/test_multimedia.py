@@ -762,16 +762,21 @@ check(!VideoIO.title("trim-av.mkv", "title-time.mkv", "A", "Sans", 12, 16777215,
 check(!VideoIO.title("trim-av.mkv", "title-position.mkv", "A", "Sans", 12, 16777215, 16, 0, 0.0, 1.0));
 check(!VideoIO.title("trim-av.mkv", "title-size.mkv", "A", "Sans", 0, 16777215, 0, 0, 0.0, 1.0));
 """,9,p)
+    # title preserves the native 2 FPS fixture, unlike earlier 4 FPS overlays.
+    title_original=red+blue+red+blue
+    assert decoded("trim-av.mkv")==title_original
     for name in ("title.mkv","title-color.mkv"):
         data=decoded(name)
-        assert len(data)==len(original)
-        for frame in range(8):
+        assert len(data)==len(title_original), (name,len(data)//stride,4)
+        for frame in range(4):
             lo,hi=frame*stride,(frame+1)*stride
-            assert (data[lo:hi]!=original[lo:hi])==(2<=frame<6), (name,frame)
+            assert (data[lo:hi]!=title_original[lo:hi])==(1<=frame<3), (name,frame)
         assert audio_samples(name,0)==pcm+pcm2
     assert decoded("title.mkv")!=decoded("title-color.mkv")
-    assert decoded("title-outside.mkv")==original
-    assert decoded("title-utf8.mkv")!=original
+    assert decoded("title-outside.mkv")==title_original
+    utf8=decoded("title-utf8.mkv")
+    assert len(utf8)==len(title_original)
+    assert utf8!=title_original
     for name in ("title-empty.mkv","title-time.mkv","title-position.mkv","title-size.mkv"):
         assert not (p/name).exists(),name
 
