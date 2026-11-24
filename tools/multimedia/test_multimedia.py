@@ -1853,3 +1853,63 @@ check(image.pixelAt(1,0,1)==255 && image.pixelAt(1,0,3)==255);
     halfred=bytes((128,0,0))
     assert decoded("draw-resize.png")==((green*2+halfred*2)*2+(halfred*2+green*2)*2)
     assert decoded("draw-composite.png")==bytes((128,0,127))+green+blue[:3]*2+bytes((0,128,128))+blue[:3]*11
+
+    run("vector", """
+@import "RasterIO";
+VectorImage image;
+VectorImage copy;
+RasterImage raster;
+int pixels[1024];
+float points[6];
+check(image.shapes()==-1);
+check(!image.addRect(0.0,0.0,4.0,4.0,16711680,1.0));
+check(image.create(16,16));
+check(image.loaded() && image.shapes()==0);
+check(!image.create(0,16));
+check(image.addRect(2.0,4.0,4.0,2.0,16711680,1.0));
+check(image.addCircle(12.0,12.0,2.0,255,1.0));
+check(image.addLine(0.0,8.0,8.0,8.0,1.0,65280,1.0));
+0.0 => points[0]; 0.0 => points[1];
+4.0 => points[2]; 0.0 => points[3];
+0.0 => points[4]; 4.0 => points[5];
+check(image.addPolygon(points,16777215,1.0));
+check(image.shapes()==4);
+check(!image.addRect(0.0,0.0,-1.0,1.0,0,1.0));
+check(!image.addCircle(2.0,2.0,1.0,16777216,1.0));
+check(!image.addLine(0.0,0.0,1.0,1.0,0.0,0,1.0));
+check(!image.addPolygon(points,0,2.0));
+check(image.shapes()==4);
+check(image.save("vector-shapes.svg"));
+check(!image.save("vector-shapes.svg"));
+check(copy.load("vector-shapes.svg"));
+check(copy.shapes()==-1);
+check(!copy.removeShape(0));
+check(image.removeShape(3));
+check(image.removeShape(2));
+check(image.removeShape(1));
+check(!image.removeShape(1));
+check(image.shapes()==1);
+check(image.exportPixels(16,16,pixels));
+check(pixels[(4*16+2)*4]==255 && pixels[(4*16+2)*4+3]==255);
+check(pixels[3]==0);
+check(raster.importPixels(16,16,pixels));
+check(raster.save("vector-memory.png"));
+2.0 => image.x;
+check(image.exportPixels(16,16,pixels));
+check(pixels[(4*16+2)*4+3]==0 && pixels[(4*16+4)*4]==255);
+check(image.save("vector-raw.svg"));
+check(image.render("vector-moved-memory.png",16,16));
+image.clear();
+check(!image.loaded() && image.shapes()==-1);
+check(!image.exportPixels(16,16,pixels));
+check(copy.loaded());
+""",37,p)
+    import xml.etree.ElementTree as ET
+    ns="{http://www.w3.org/2000/svg}"
+    assert [e.tag for e in ET.parse(p/"vector-shapes.svg").getroot()]==[ns+"rect",ns+"circle",ns+"line",ns+"polygon"]
+    assert len(ET.parse(p/"vector-raw.svg").getroot())==1
+    def expected_vector_rect(left):
+        return b"".join(bytes((255,0,0)) if left<=x<left+4 and 4<=y<6 else bytes(3)
+                        for y in range(16) for x in range(16))
+    assert decoded("vector-memory.png")==expected_vector_rect(2)
+    assert decoded("vector-moved-memory.png")==expected_vector_rect(4)
