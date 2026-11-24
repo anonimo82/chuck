@@ -715,3 +715,37 @@ check(!VideoIO.watermark("trim-av.mkv", "mark.png", "mark-alpha.mkv", 16, 16, 4,
     assert audio_samples("marked-small.mkv",0)==bytes(32000)
     for name in ("mark-missing.mkv","mark-video.mkv","mark-bounds.mkv","mark-alpha.mkv"):
         assert not (p/name).exists(),name
+
+    # Ordered layers, with an image over a video and vice versa.
+    (p/"layers.tsv").write_text("video\toverlay-blue.mkv\t0\t0\t16\t16\t1\nimage\tmark.png\t0\t0\t16\t16\t1\n",encoding="utf-8")
+    (p/"reverse.tsv").write_text("image\tmark.png\t0\t0\t16\t16\t1\nvideo\toverlay-blue.mkv\t0\t0\t16\t16\t1\n",encoding="utf-8")
+    (p/"one.tsv").write_text("image\tmark.png\t0\t0\t16\t16\t0.5\n",encoding="utf-8")
+    (p/"empty.tsv").write_text("# no layers\n",encoding="utf-8")
+    (p/"bad.tsv").write_text("image\tmark.png\t0\t0\t16\t16\t1\tjunk\n",encoding="utf-8")
+    (p/"too-many.tsv").write_text("image\tmark.png\t0\t0\t16\t16\t1\n"*9,encoding="utf-8")
+    (p/"missing-layer.tsv").write_text("image\tmissing.png\t0\t0\t16\t16\t1\n",encoding="utf-8")
+    run("video", """
+check(VideoIO.multilayer("trim-av.mkv", "layers.tsv", "layers.mkv", 16, 16, 4, 8000, 1));
+check(VideoIO.multilayer("trim-av.mkv", "reverse.tsv", "reverse.mkv", 16, 16, 4, 8000, 1));
+check(VideoIO.multilayer("trim-av.mkv", "one.tsv", "one.mkv", 16, 16, 4, 8000, 1));
+check(!VideoIO.multilayer("trim-av.mkv", "layers.tsv", "layers.mkv", 16, 16, 4, 8000, 1));
+check(!VideoIO.multilayer("trim-av.mkv", "empty.tsv", "empty.mkv", 16, 16, 4, 8000, 1));
+check(!VideoIO.multilayer("trim-av.mkv", "bad.tsv", "bad-layers.mkv", 16, 16, 4, 8000, 1));
+check(!VideoIO.multilayer("trim-av.mkv", "too-many.tsv", "too-many.mkv", 16, 16, 4, 8000, 1));
+check(!VideoIO.multilayer("trim-av.mkv", "missing-layer.tsv", "missing-layer.mkv", 16, 16, 4, 8000, 1));
+""",8,p)
+    expected=bytearray(decoded("marked.mkv"))
+    for frame in range(4):
+        for yy in range(16):
+            for xx in range(16):
+                a=(0 if xx<4 else 128 if xx<8 else 255)*257
+                for ch in range(3):
+                    j=frame*stride+(yy*16+xx)*3+ch
+                    expected[j]=(layer_rgb[ch]*(65535-a)+(255 if ch==1 else 0)*a+32767)//65535
+    assert decoded("layers.mkv")==expected
+    assert decoded("reverse.mkv")==layer_rgb*4+decoded("marked.mkv")[4*stride:]
+    assert decoded("one.mkv")==decoded("marked-half.mkv")
+    for name in ("layers.mkv","reverse.mkv","one.mkv"):
+        assert audio_samples(name,0)==pcm+pcm2
+    for name in ("empty.mkv","bad-layers.mkv","too-many.mkv","missing-layer.mkv"):
+        assert not (p/name).exists(),name
