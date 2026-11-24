@@ -153,3 +153,12 @@ trimAV uses a first decoding pass to locate the presentation timestamps of the f
 ### Compressed audio in synchronized trimming
 
 The same trimAV API now attempts native decoding of non-S16LE audio, converting decoded samples to interleaved signed 16-bit PCM with libswresample, without changing the sample rate. PCM S16LE retains its existing direct packet path. All compatible audio tracks and their metadata are retained. Decoder output must have stable sample rate, sample format, channel layout and continuous presentation timestamps; the entire selected interval must exist. Codec priming, timestamp rounding, discontinuities, unsupported decoders or dynamic format changes may cause failure. Conversion to 16-bit PCM can quantize higher-precision audio. Six conditional smoke checks (AAC, MP3, Opus encoder fixtures) and independent PCM/RGB assertions are added; this extension is not yet compiled or tested.
+
+### Normalized concatenation of heterogeneous video clips
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.concatNormalized("first.mp4", "second.webm", "joined.mkv", 1920, 1080, 30) >>>;
+```
+
+concatNormalized(firstClip, secondClip, destination, width, height, fps) decodes two single-stream video files, scales each to the requested dimensions (1–8192), and emits one continuous FFV1/BGR0 MKV at integer 1–120 fps. Each clip is independently anchored at its first decoded presentation timestamp. Frames are selected by holding the most recent input frame on the target time grid (duplication or dropping, not interpolation); each clip duration rounds upward to a whole output frame. Requires strictly increasing decoded timestamps and a positive final frame duration. Maximum combined output: one million frames. Aspect ratio is stretched, with square output pixels; rotation and color metadata are not normalized. Additional streams, including audio, are rejected rather than discarded. No intermediate files or external commands, no overwrite, incomplete output removed on ordinary failure. Eleven new smoke checks plus RGB and timestamp comparisons are pending execution. Audio normalization is a separate future extension.
