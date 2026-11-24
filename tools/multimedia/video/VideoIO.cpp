@@ -504,10 +504,18 @@ bool concatenate(const std::string &first, const std::string &second, const std:
 // Reject discontinuities; trim or silence-pad at clip boundaries.
 bool normalizedAudio(const std::string &source, int audioIndex, int rate, int channels,
                      int64_t videoOrigin, AVRational videoTB, int64_t offset, int64_t length,
-                     AVStream *dst, AVFormatContext *out) {
+                     AVStream *dst, AVFormatContext *out, std::vector<uint8_t> *capture = nullptr) {
     if(length <= 0 || offset < 0) return false;
     int64_t written = 0;
     auto write = [&](const uint8_t *data, int64_t n) {
+        if(capture) {
+            if(n < 0 || n > (INT64_C(128)*1024*1024-static_cast<int64_t>(capture->size()))/(channels*2)) return false;
+            size_t bytes=static_cast<size_t>(n)*channels*2;
+            if(data) capture->insert(capture->end(),data,data+bytes);
+            else capture->resize(capture->size()+bytes,0);
+            written+=n;
+            return true;
+        }
         while(n > 0) {
             int block = static_cast<int>(std::min<int64_t>(n, 4096));
             Packet p;
@@ -618,7 +626,7 @@ bool normalizedAudio(const std::string &source, int audioIndex, int rate, int ch
 }
 
 bool concatNormalized(const std::string &first, const std::string &secondClip,
-                      const std::string &dest, int w, int h, int fps, int rate = 0, int channels = 0) {
+                      const std::string &dest, int w, int h, int fps, int rate = 0, int channels = 0, int fade = 0) {
     if(w < 1 || h < 1 || w > 8192 || h > 8192 || fps < 1 || fps > 120 ||
        dest.size() < 4 || dest.substr(dest.size()-4) != ".mkv") return false;
     Input a, b;
@@ -635,6 +643,10 @@ bool concatNormalized(const std::string &first, const std::string &secondClip,
             audioIndices[c]=static_cast<int>(i);
         }
     }
+    if(fade && (!rate || fade < 2 || fade > 1200 || static_cast<int64_t>(fade)*w*h*4 > INT64_C(256)*1024*1024 || rate%fps != 0)) return false;
+    std::vector<std::vector<uint8_t>> tail;
+    std::vector<uint8_t> audioTail;
+    int64_t fadeSamples = fade ? static_cast<int64_t>(fade)*(rate/fps) : 0;
     const auto *encoder = avcodec_find_encoder_by_name("ffv1");
     if(!encoder) return false;
     Output out(dest);
@@ -695,6 +707,18 @@ bool concatNormalized(const std::string &first, const std::string &secondClip,
             if(status < 0) return false;
         }
     };
+    auto emit = [&]() {
+        scaled.p->pts=total++;
+        scaled.p->pict_type=AV_PICTURE_TYPE_NONE;
+        return avcodec_send_frame(enc.ctx,scaled.p)>=0 && drainEncoder(false);
+    };
+    Frame mixed;
+    if(fade) {
+        if(!mixed.p) return false;
+        mixed.p->format=AV_PIX_FMT_BGR0; mixed.p->width=w; mixed.p->height=h;
+        if(av_frame_get_buffer(mixed.p,32)<0) return false;
+        tail.reserve(fade);
+    }
     for(int c=0;c<2;++c) {
         auto *clip=clips[c];
         int64_t clipOffset=total;
@@ -720,10 +744,31 @@ bool concatNormalized(const std::string &first, const std::string &secondClip,
             if(limit < local || limit > 1000000 || total + (limit-local) > 1000000)
                 return false;
             while(local < limit) {
-                scaled.p->pts = total++;
-                scaled.p->pict_type = AV_PICTURE_TYPE_NONE;
-                if(avcodec_send_frame(enc.ctx, scaled.p) < 0 || !drainEncoder(false))
-                    return false;
+                if(fade && c==0) {
+                    std::vector<uint8_t> pixels(static_cast<size_t>(w)*h*4);
+                    for(int y=0;y<h;++y) std::memcpy(pixels.data()+static_cast<size_t>(y)*w*4,
+                        scaled.p->data[0]+static_cast<size_t>(y)*scaled.p->linesize[0],w*4);
+                    if(tail.size()==static_cast<size_t>(fade)) {
+                        if(av_frame_make_writable(mixed.p)<0) return false;
+                        for(int y=0;y<h;++y) std::memcpy(mixed.p->data[0]+static_cast<size_t>(y)*mixed.p->linesize[0],
+                            tail.front().data()+static_cast<size_t>(y)*w*4,w*4);
+                        mixed.p->pts=total++; mixed.p->pict_type=AV_PICTURE_TYPE_NONE;
+                        if(avcodec_send_frame(enc.ctx,mixed.p)<0 || !drainEncoder(false)) return false;
+                        tail.erase(tail.begin());
+                    }
+                    tail.push_back(std::move(pixels));
+                } else if(fade && local<fade) {
+                    if(tail.size()!=static_cast<size_t>(fade) || av_frame_make_writable(mixed.p)<0) return false;
+                    for(int y=0;y<h;++y) {
+                        auto *d=mixed.p->data[0]+static_cast<size_t>(y)*mixed.p->linesize[0];
+                        auto *src=scaled.p->data[0]+static_cast<size_t>(y)*scaled.p->linesize[0];
+                        auto *old=tail[local].data()+static_cast<size_t>(y)*w*4;
+                        for(int x=0;x<w*4;++x)
+                            d[x]=static_cast<uint8_t>((old[x]*(fade-1-local)+src[x]*local+(fade-1)/2)/(fade-1));
+                    }
+                    mixed.p->pts=total++; mixed.p->pict_type=AV_PICTURE_TYPE_NONE;
+                    if(avcodec_send_frame(enc.ctx,mixed.p)<0 || !drainEncoder(false)) return false;
+                } else if(!emit()) return false;
                 ++local;
             }
             return true;
@@ -767,7 +812,43 @@ bool concatNormalized(const std::string &first, const std::string &secondClip,
         if(ret != AVERROR_EOF || avcodec_send_packet(dec.ctx, nullptr) < 0 ||
            !drain(true) || previous == AV_NOPTS_VALUE || duration <= 0 ||
            duration > bound || !emitUntil(previous+duration) || local == 0) return false;
-        if(rate) {
+        if(fade && local<fade) return false;
+        if(fade) {
+            int64_t length=local*(rate/fps);
+            std::vector<uint8_t> pcm;
+            if(!normalizedAudio(c==0?first:secondClip,audioIndices[c],rate,channels,origin,
+                                stream->time_base,0,length,nullptr,nullptr,&pcm)) return false;
+            auto writePCM = [&](const uint8_t *data,int64_t n,int64_t offset) {
+                while(n>0) {
+                    int block=static_cast<int>(std::min<int64_t>(n,4096));
+                    Packet p;
+                    if(!p.p || av_new_packet(p.p,block*channels*2)<0) return false;
+                    std::memcpy(p.p->data,data,p.p->size);
+                    p.p->pts=p.p->dts=offset; p.p->duration=block;
+                    p.p->stream_index=audioDst->index; p.p->flags=AV_PKT_FLAG_KEY;
+                    av_packet_rescale_ts(p.p,AVRational{1,rate},audioDst->time_base);
+                    if(av_interleaved_write_frame(out.ctx,p.p)<0) return false;
+                    data+=block*channels*2; offset+=block; n-=block;
+                }
+                return true;
+            };
+            size_t overlap=static_cast<size_t>(fadeSamples)*channels*2;
+            if(c==0) {
+                if(!writePCM(pcm.data(),length-fadeSamples,0)) return false;
+                audioTail.assign(pcm.end()-overlap,pcm.end());
+            } else {
+                if(audioTail.size()!=overlap || fadeSamples<2) return false;
+                for(int64_t i=0;i<fadeSamples;++i) for(int ch=0;ch<channels;++ch) {
+                    size_t k=static_cast<size_t>(i*channels+ch)*2;
+                    int16_t x,y;
+                    std::memcpy(&x,audioTail.data()+k,2); std::memcpy(&y,pcm.data()+k,2);
+                    int16_t z=static_cast<int16_t>((static_cast<int64_t>(x)*(fadeSamples-1-i)+
+                                                   static_cast<int64_t>(y)*i)/(fadeSamples-1));
+                    std::memcpy(pcm.data()+k,&z,2);
+                }
+                if(!writePCM(pcm.data(),length,clipOffset*(rate/fps))) return false;
+            }
+        } else if(rate) {
             int64_t begin=av_rescale_q(clipOffset, enc.ctx->time_base, AVRational{1,rate});
             int64_t end=av_rescale_q(total, enc.ctx->time_base, AVRational{1,rate});
             if(!normalizedAudio(c==0?first:secondClip,audioIndices[c],rate,channels,origin,
@@ -1966,6 +2047,23 @@ CK_DLL_SFUN(video_concat_av) {
            concatNormalized(first,secondClip,dest,w,h,fps,rate,channels)) RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_crossfade) {
+    RETURN->v_int=0;
+    try {
+        auto first=GET_NEXT_STRING_SAFE(ARGS);
+        auto secondClip=GET_NEXT_STRING_SAFE(ARGS);
+        auto dest=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS), h=GET_NEXT_INT(ARGS), fps=GET_NEXT_INT(ARGS);
+        auto rate=GET_NEXT_INT(ARGS), channels=GET_NEXT_INT(ARGS);
+        auto duration=GET_NEXT_FLOAT(ARGS);
+        if(w>=1 && w<=8192 && h>=1 && h<=8192 && fps>=1 && fps<=120 &&
+           rate>=8000 && rate<=96000 && channels>=1 && channels<=2 &&
+           std::isfinite(duration) && duration>0 && duration*fps<=1200 &&
+           std::llround(duration*fps)>=2 &&
+           concatNormalized(first,secondClip,dest,w,h,fps,rate,channels,
+                            static_cast<int>(std::llround(duration*fps)))) RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -2066,5 +2164,15 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"int","fps");
     QUERY->add_arg(QUERY,"int","sampleRate");
     QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_sfun(QUERY,video_crossfade,"int","crossfade");
+    QUERY->add_arg(QUERY,"string","firstClip");
+    QUERY->add_arg(QUERY,"string","secondClip");
+    QUERY->add_arg(QUERY,"string","destination");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","fps");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_arg(QUERY,"float","fadeSeconds");
     return QUERY->end_class(QUERY);
 }

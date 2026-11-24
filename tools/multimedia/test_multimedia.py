@@ -554,3 +554,34 @@ check(!VideoIO.concatAV("trim-av.mkv", "different.mp4", "bad-av-channels.mkv", 1
     assert audio_samples("normalized-leading.mkv", 0) == bytes(16000) + pcm + pcm2
     for name in ("bad-av-multi.mkv", "bad-av-rate.mkv", "bad-av-channels.mkv"):
         assert not (p / name).exists(), name
+
+    # Linear crossfade: 2 s + 2 s - 1 s = 3 s at 4 fps.
+    run("video", """
+check(VideoIO.crossfade("trim-av.mkv", "trim-av.mkv", "fade.mkv", 16, 16, 4, 8000, 1, 1.0));
+check(VideoIO.crossfade("trim-av.mkv", "trim-source.mkv", "fade-silent.mkv", 16, 16, 4, 8000, 1, 1.0));
+check(!VideoIO.crossfade("trim-av.mkv", "trim-av.mkv", "fade.mkv", 16, 16, 4, 8000, 1, 1.0));
+check(!VideoIO.crossfade("trim-av.mkv", "trim-av.mkv", "fade-zero.mkv", 16, 16, 4, 8000, 1, 0.0));
+check(!VideoIO.crossfade("trim-av.mkv", "trim-av.mkv", "fade-long.mkv", 16, 16, 4, 8000, 1, 3.0));
+check(!VideoIO.crossfade("trim-av.mkv", "trim-av.mkv", "fade-grid.mkv", 16, 16, 3, 8000, 1, 1.0));
+check(!VideoIO.crossfade("missing.mkv", "trim-av.mkv", "fade-missing.mkv", 16, 16, 4, 8000, 1, 1.0));
+""", 7, p)
+    # Constant matching frames in the overlap must remain bit-exact.
+    expected = (red*2 + blue*2)*3
+    assert decoded("fade.mkv") == expected
+    assert decoded("fade-silent.mkv") == expected
+    import struct
+    def shorts(data):
+        return struct.unpack("<" + "h"*(len(data)//2), data)
+    x,y = shorts(pcm2),shorts(pcm)
+    blended = [int((a*(7999-i)+b*i)/7999) for i,(a,b) in enumerate(zip(x,y))]
+    faded = [int(a*(7999-i)/7999) for i,a in enumerate(x)]
+    assert shorts(audio_samples("fade.mkv",0)) == shorts(pcm)+tuple(blended)+shorts(pcm2)
+    assert shorts(audio_samples("fade-silent.mkv",0)) == shorts(pcm)+tuple(faded)+(0,)*8000
+    # Different colors across the overlap exercise actual pixel blending.
+    run("video", """
+check(VideoIO.crossfade("trim-av.mkv", "generated.mkv", "fade-colors.mkv", 16, 16, 4, 8000, 1, 0.5));
+""", 1, p)
+    expected_colors = red*2+blue*2+red*2+blue+red+blue*2
+    assert decoded("fade-colors.mkv") == expected_colors
+    for name in ("fade-zero.mkv","fade-long.mkv","fade-grid.mkv","fade-missing.mkv"):
+        assert not (p/name).exists(), name
