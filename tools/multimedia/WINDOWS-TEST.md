@@ -33,3 +33,7 @@ User-executed build-and-test.ps1 against source revision 9f9f3efe337b734cc7d098f
 ## Audiovisual transitions Windows result — 2026-11-24
 
 User-executed build-and-test.ps1 against source revision d32d24cb389d10d6b3da85c964ab7467ba8b5640 (PRs #29–#30). ChucK 1.5.5.9 x64, API 10.2, MSYS2 UCRT64. All six Chugins loaded and all 210 smoke checks passed: RasterIO 8, VectorIO 4, ModelIO 6, AudioIO 7, MidiFileIO 5, VideoIO 180. All 16 new checks ran (8 linear crossfade and 8 selectable transitions), including independent RGB and PCM comparisons and linear-mode compatibility. Final script message: All multimedia smoke tests passed. Validation remains limited to tested fixtures; memory limits, integer audio/video grid constraints, broader media combinations and other platforms remain outstanding.
+
+## Picture-in-picture and chroma-key compositing Windows result — 2026-11-24
+
+User-executed build-and-test.ps1 against source revision 20850643135db803ebc46e920b4bc8634f2d9659 (PRs #31–#32). ChucK 1.5.5.9 x64, API 10.2, MSYS2 UCRT64. All six Chugins loaded and all 228 smoke checks passed: RasterIO 8, VectorIO 4, ModelIO 6, AudioIO 7, MidiFileIO 5, VideoIO 198. All 18 new checks ran (9 picture-in-picture and 9 chroma-key/audio mixing), including independent RGB and PCM assertions. Final script message: All multimedia smoke tests passed. Validation remains limited to tested fixtures; soft-key edges, more varied media, long-clip memory usage, multiple tracks and other platforms require further validation.
