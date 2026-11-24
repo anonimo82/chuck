@@ -242,3 +242,13 @@ The UTF-8 text manifest has seven tab-separated fields per line: type (image or 
 ```
 
 title renders plain UTF-8 text once using Pango/Cairo, at the given pixel size, packed RGB color (0xRRGGBB), and top-left pixel coordinates. Text wraps at the remaining canvas width and clips at the bottom edge. The title is shown at normalized frame timestamps in [beginSeconds,endSeconds); negative or empty intervals are rejected. Text is antialiased, with no background or markup. The source dimensions are retained and the guessed source frame rate rounded to an integer in 1–120 FPS. Output is FFV1/PCM MKV; audio is normalized to the source sample rate if 8–96 kHz (otherwise 48 kHz), mono for mono sources, stereo otherwise, and silence if absent. Existing single-video/at-most-one-audio source constraints apply. Fonts depend on the installed system fonts and Pango fallback. No overwrite. Nine smoke checks and independent timing, color and PCM comparisons await execution. PangoCairo is now an explicit VideoIO build dependency.
+
+### Burn-in subtitles
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.burnSubtitles("film.mp4", "captions.srt", "subtitled.mkv",
+                          "Sans Bold", 36, 16777215, 40) >>>;
+```
+
+Uses the same strict plain UTF-8 SRT/WebVTT parser as SubtitleIO. The final argument is the bottom margin in pixels. Cues are active on the half-open millisecond interval [start,end), evaluated on the normalized output frame grid. Simultaneous cues are joined by newlines in file order, horizontally centered, bottom aligned in the available region, with a black outline and antialiasing. Text wraps and clips when it exceeds the available canvas. Combined active text is limited to 16384 bytes. Glyphs are rendered again only when the visible text changes. Output resolution, integer FPS selection and audio normalization follow title(); one FFV1/PCM MKV encoding pass, no temporary images, no overwrite. Nine additional smoke checks and independent frame/audio comparisons await execution.

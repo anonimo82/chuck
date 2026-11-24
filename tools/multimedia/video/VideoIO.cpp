@@ -1,6 +1,7 @@
 // Optional offline video I/O for ChucK.
 #include "chuck_dl.h"
 #include "../file_compat.h"
+#include "../subtitle/subtitle_io.h"
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -897,7 +898,7 @@ bool overlayVideo(const std::string &base,const std::string &layer,const std::st
 }
 
 
-bool renderTitle(AVFrame *dest,const std::string &text,const std::string &font,int size,int rgb) {
+bool renderTitle(AVFrame *dest,const std::string &text,const std::string &font,int size,int rgb,bool caption=false) {
     if(text.empty() || text.size()>16384 || font.empty() || font.size()>256 ||
        !g_utf8_validate(text.data(),static_cast<gssize>(text.size()),nullptr) ||
        !g_utf8_validate(font.data(),static_cast<gssize>(font.size()),nullptr) ||
@@ -918,8 +919,22 @@ bool renderTitle(AVFrame *dest,const std::string &text,const std::string &font,i
     pango_layout_set_text(layout,text.data(),static_cast<int>(text.size()));
     pango_layout_set_width(layout,dest->width*PANGO_SCALE);
     pango_layout_set_wrap(layout,PANGO_WRAP_WORD_CHAR);
-    cairo_set_source_rgb(cr.get(),((rgb>>16)&255)/255.0,((rgb>>8)&255)/255.0,(rgb&255)/255.0);
-    pango_cairo_show_layout(cr.get(),layout);
+    if(caption) {
+        pango_layout_set_alignment(layout,PANGO_ALIGN_CENTER);
+        PangoRectangle logical;
+        pango_layout_get_pixel_extents(layout,nullptr,&logical);
+        cairo_move_to(cr.get(),0,std::max(0,dest->height-logical.height-logical.y));
+        pango_cairo_layout_path(cr.get(),layout);
+        cairo_set_source_rgb(cr.get(),0,0,0);
+        cairo_set_line_join(cr.get(),CAIRO_LINE_JOIN_ROUND);
+        cairo_set_line_width(cr.get(),std::max(1.0,size/12.0));
+        cairo_stroke_preserve(cr.get());
+        cairo_set_source_rgb(cr.get(),((rgb>>16)&255)/255.0,((rgb>>8)&255)/255.0,(rgb&255)/255.0);
+        cairo_fill(cr.get());
+    } else {
+        cairo_set_source_rgb(cr.get(),((rgb>>16)&255)/255.0,((rgb>>8)&255)/255.0,(rgb&255)/255.0);
+        pango_cairo_show_layout(cr.get(),layout);
+    }
     g_object_unref(layout);
     if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return false;
     cairo_surface_flush(surface.get());
@@ -948,6 +963,11 @@ struct CompositeLayer {
     double opacity=1;
     bool still=false;
     bool title=false;
+    bool captions=false;
+    std::vector<subtitles::Cue> cues;
+    size_t nextCue=0;
+    std::vector<size_t> activeCues;
+    std::string cachedText;
     std::string font;
     int fontSize=48,rgb=0xffffff;
     double begin=0,end=1e15;
@@ -974,7 +994,10 @@ bool multilayerVideo(const std::string &base,const std::string &dest,int w,int h
         l.pixels.p->format=l.still?AV_PIX_FMT_BGRA:AV_PIX_FMT_BGR0;
         if(av_frame_get_buffer(l.pixels.p,32)<0) return false;
         if(l.still) {
-            if(l.title) {
+            if(l.captions) {
+                if(l.cues.empty() || l.font.empty() || l.font.size()>256 ||
+                   !g_utf8_validate(l.font.data(),static_cast<gssize>(l.font.size()),nullptr)) return false;
+            } else if(l.title) {
                 if(!renderTitle(l.pixels.p,l.path,l.font,l.fontSize,l.rgb)) return false;
             } else if(!loadWatermark(l.path,l.pixels.p)) return false;
         } else if(!l.reader.open(l.path)) return false;
@@ -1034,6 +1057,28 @@ bool multilayerVideo(const std::string &base,const std::string &dest,int w,int h
             double seconds=static_cast<double>(count)/fps;
             if(seconds<l.begin || seconds>=l.end) continue;
             bool show=l.still;
+            if(l.captions) {
+                // Exact rational timestamp comparison, with half-open cue intervals.
+                auto reached=[&](int64_t ms){return count*1000>=ms*fps;};
+                auto &active=l.activeCues;
+                active.erase(std::remove_if(active.begin(),active.end(),
+                    [&](size_t i){return reached(l.cues[i].end);}),active.end());
+                while(l.nextCue<l.cues.size() && reached(l.cues[l.nextCue].start)) {
+                    if(!reached(l.cues[l.nextCue].end)) active.push_back(l.nextCue);
+                    ++l.nextCue;
+                }
+                std::string content;
+                for(auto i:active) {
+                    if(!content.empty()) content+='\n';
+                    content+=l.cues[i].text;
+                    if(content.size()>16384) return false;
+                }
+                show=!content.empty();
+                if(show && content!=l.cachedText) {
+                    if(!renderTitle(l.pixels.p,content,l.font,l.fontSize,l.rgb,true)) return false;
+                    l.cachedText=std::move(content);
+                }
+            }
             if(!l.still && !l.reader.at(count,fps,show)) return false;
             int alpha=static_cast<int>(std::llround(l.opacity*65535));
             if(!show || !alpha) continue;
@@ -2676,6 +2721,42 @@ CK_DLL_SFUN(video_title) {
         if(multilayerVideo(source,dest,w,h,fps,rate,channels,layers)) RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_burn_subtitles) {
+    RETURN->v_int=0;
+    try {
+        auto source=GET_NEXT_STRING_SAFE(ARGS), captions=GET_NEXT_STRING_SAFE(ARGS), dest=GET_NEXT_STRING_SAFE(ARGS);
+        auto font=GET_NEXT_STRING_SAFE(ARGS);
+        auto size=GET_NEXT_INT(ARGS), rgb=GET_NEXT_INT(ARGS);
+        auto margin=GET_NEXT_INT(ARGS);
+        if(size<1 || size>512 || rgb<0 || rgb>0xffffff || margin<0 || margin>8191) return;
+        Input in;
+        if(!in.open(source)) return;
+        auto *v=in.ctx->streams[in.video];
+        int w=v->codecpar->width,h=v->codecpar->height;
+        AVRational guessed=av_guess_frame_rate(in.ctx,v,nullptr);
+        double raw=av_q2d(guessed);
+        if(w<1 || w>8192 || h<1 || h>8192 || margin>=h ||
+           !std::isfinite(raw) || raw<1 || raw>120) return;
+        int fps=static_cast<int>(std::llround(raw));
+        int rate=48000,channels=2;
+        for(unsigned i=0;i<in.ctx->nb_streams;++i) {
+            auto *p=in.ctx->streams[i]->codecpar;
+            if(p->codec_type==AVMEDIA_TYPE_AUDIO) {
+                if(p->sample_rate>=8000 && p->sample_rate<=96000) rate=p->sample_rate;
+                if(p->ch_layout.nb_channels==1) channels=1;
+                break;
+            }
+        }
+        std::vector<std::unique_ptr<CompositeLayer>> layers;
+        auto l=std::unique_ptr<CompositeLayer>(new CompositeLayer);
+        l->still=l->captions=true; l->font=font;
+        if(!subtitles::load(captions,l->cues)) return;
+        l->fontSize=static_cast<int>(size); l->rgb=static_cast<int>(rgb);
+        l->w=w; l->h=h-static_cast<int>(margin);
+        layers.push_back(std::move(l));
+        if(multilayerVideo(source,dest,w,h,fps,rate,channels,layers)) RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -2865,5 +2946,13 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"int","y");
     QUERY->add_arg(QUERY,"float","beginSeconds");
     QUERY->add_arg(QUERY,"float","endSeconds");
+    QUERY->add_sfun(QUERY,video_burn_subtitles,"int","burnSubtitles");
+    QUERY->add_arg(QUERY,"string","source");
+    QUERY->add_arg(QUERY,"string","captions");
+    QUERY->add_arg(QUERY,"string","destination");
+    QUERY->add_arg(QUERY,"string","font");
+    QUERY->add_arg(QUERY,"int","fontSize");
+    QUERY->add_arg(QUERY,"int","rgb");
+    QUERY->add_arg(QUERY,"int","bottomMargin");
     return QUERY->end_class(QUERY);
 }
