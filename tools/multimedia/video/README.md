@@ -42,3 +42,14 @@ if(VideoIO.encoderAvailable("vp9"))
 ```
 
 The six-argument overload accepts h264 (libx264/MP4), vp9 (libvpx-vp9/WebM), or ffv1 (MKV, quality 0 only). CRF quality ranges from 0 to 51 for compressed modes; lower values generally produce higher quality and larger files. CRF scales are not directly comparable between encoders. H.264 and VP9 use YUV420P, require even dimensions and do not guarantee exact RGB preservation even at CRF 0. The existing four-argument FFV1 API is unchanged. encoderAvailable reports whether the named encoder exists in the linked FFmpeg build, not whether a particular input can be encoded. All modes remain silent, offline, and blocking. Tests use FFmpeg and ffprobe CLI solely for independent verification. New checks remain unexecuted.
+
+### Combine video and audio
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.muxAudio("animation.mkv", "sound.wav", "movie.mkv") >>>;
+```
+
+Selects the best video stream from the first input and best audio stream from the second input using FFmpeg. Existing audio in the video input is not copied; additional streams are ignored. Copies compressed packets without re-encoding. Supported output containers: MKV, MP4, MOV and WebM, subject to codec compatibility (e.g. FFV1 and PCM in MKV; H.264 and AAC in MP4; VP9 and Opus in WebM). Returns 1 on success, 0 on failure. Requires a new destination file. Ordinary failures remove incomplete outputs. Packet timestamps are preserved subject to muxer time-base rounding and container rules; no independent start-time normalization, trimming, padding, resampling or synchronization correction is performed. If tracks differ in duration, both are retained in full. Intended for trusted local files and offline processing.
+
+Eight new smoke checks and independent exact RGB/PCM decode comparisons are included; not yet executed.
