@@ -93,3 +93,14 @@ The existing transcode API now copies all compatible audio streams while decodin
 audioTracks returns the number of audio streams in a readable video, zero for a silent video, or -1 on failure. extractAudio selects a zero-based audio ordinal (not a container stream ID), copies its packets into a new audio-only file and returns 1 on success or 0 on failure. Supported lowercase extensions: .mka (Matroska audio), .wav, .flac, .mp3, .m4a, .ogg and .opus, provided the existing codec is compatible with the target muxer. M4A is limited to AAC/ALAC, and FLAC, MP3 and Opus extensions require their corresponding codecs. No decoding, mixing, resampling or audio transcoding is performed. Stream metadata and timestamps are copied subject to container limitations; WAV and other formats cannot necessarily preserve original timing or language metadata. The destination must not exist. Ordinary failures remove incomplete outputs. Offline trusted local files only.
 
 Twelve new smoke checks and independent sample/metadata comparisons are included, pending execution.
+
+### Extract and convert audio
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.convertAudio("movie.mp4", "sound.wav", 0) >>>;
+```
+
+Decodes the selected zero-based audio track with FFmpeg and writes WAV, FLAC, AIFF (24-bit PCM), MP3 or Ogg Vorbis using libsndfile >= 1.2.0. Output format follows the lowercase extension. Preserves sample rate and channel count (1–8), subject to format/encoder restrictions; no resampling, mixing or explicit channel-layout remapping. Samples outside [-1,1] are clipped; PCM is quantized to 24 bits and compressed formats may be lossy. Decoded samples are written consecutively, without retaining original timestamps, gaps or language metadata. MP3 and Ogg support depends on libsndfile. No overwrite; ordinary failures remove incomplete outputs. Returns 1 on success, 0 on failure. Offline only. VideoIO now links libsndfile in addition to FFmpeg.
+
+Eight new smoke checks including AAC decode and independent PCM comparisons are pending execution.
