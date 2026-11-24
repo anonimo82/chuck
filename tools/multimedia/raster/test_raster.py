@@ -1,5 +1,6 @@
 """Run with Python 3 after building ChucK and RasterIO."""
 from pathlib import Path
+import os
 import struct
 import subprocess
 import tempfile
@@ -37,7 +38,7 @@ check(RasterIO.width("missing.png") == -1, "missing input");
 check(RasterIO.convert("input.png", "output.unknown") == 0, "unsupported output");
 """)
         result = subprocess.run(
-            [str(ROOT / "src/chuck"), "--silent", "--chugin-path:" + str(HERE), str(script)],
+            [os.environ.get("CHUCK_EXE", str(ROOT / "src/chuck")), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE)), str(script)],
             cwd=tmp, capture_output=True, text=True, timeout=30)
         log = result.stdout + result.stderr
         print(log)
