@@ -1798,3 +1798,58 @@ source.clear();
 check(!source.loaded() && source.frames()==0 && other.loaded());
 """,26,p)
     assert writer_pcm("videoaudio-memory.wav")==struct.pack("<hh",4096,-8192)*4000+struct.pack("<hh",2048,-4096)*4000
+
+    run("raster", """
+RasterImage image;
+int overlay[8];
+check(!image.fill(0,0,0,255));
+check(image.create(4,4));
+check(image.fill(0,0,0,255));
+check(image.fillRect(1,1,2,2,255,0,0,255));
+check(image.pixelAt(1,1,0)==255 && image.pixelAt(0,0,0)==0);
+check(!image.fillRect(3,3,2,2,0,0,0,255));
+check(image.line(0,0,3,3,0,255,0,255));
+check(image.pixelAt(2,2,1)==255 && image.pixelAt(1,2,0)==255);
+check(!image.line(-1,0,3,3,0,0,0,255));
+check(image.fillCircle(0,0,1,0,0,255,255));
+check(image.pixelAt(0,1,2)==255 && image.pixelAt(1,0,2)==255);
+check(image.pixelAt(1,1,1)==255);
+check(!image.fillCircle(0,0,-1,0,0,0,255));
+check(!image.fill(256,0,0,255));
+check(image.save("draw-primitives.png"));
+0.5 => image.red;
+check(image.crop(1,1,2,2));
+check(image.width()==2 && image.height()==2 && image.red()==0.5);
+check(!image.crop(1,1,2,2));
+check(image.resize(4,4));
+check(image.pixelAt(0,0,1)==255 && image.pixelAt(3,0,0)==255);
+check(image.pixelAt(0,3,0)==255 && image.pixelAt(3,3,1)==255);
+check(!image.resize(0,4));
+check(image.save("draw-resize.png"));
+image.reset();
+check(image.fill(0,0,255,255));
+255 => overlay[0]; 128 => overlay[3];
+255 => overlay[5]; 255 => overlay[7];
+check(image.composite(0,0,2,1,overlay,1.0));
+check(image.pixelAt(0,0,0)==128 && image.pixelAt(0,0,2)==127);
+check(image.pixelAt(1,0,1)==255);
+check(image.composite(-1,1,2,1,overlay,0.5));
+check(image.pixelAt(0,1,1)==128 && image.pixelAt(0,1,2)==128);
+check(!image.composite(0,0,2,1,overlay,2.0));
+256 => overlay[0];
+check(!image.composite(0,0,2,1,overlay,1.0));
+check(image.pixelAt(0,0,0)==128);
+check(image.save("draw-composite.png"));
+check(image.fill(0,0,0,0));
+255 => overlay[0];
+check(image.composite(0,0,2,1,overlay,1.0));
+check(image.pixelAt(0,0,0)==255 && image.pixelAt(0,0,3)==128);
+check(image.pixelAt(1,0,1)==255 && image.pixelAt(1,0,3)==255);
+""",37,p)
+    black=bytes((0,0,0))
+    green=bytes((0,255,0))
+    assert decoded("draw-primitives.png")==b"".join((blue[:3],blue[:3],black,black,
+        blue[:3],green,red[:3],black,black,red[:3],green,black,black,black,black,green))
+    halfred=bytes((128,0,0))
+    assert decoded("draw-resize.png")==((green*2+halfred*2)*2+(halfred*2+green*2)*2)
+    assert decoded("draw-composite.png")==bytes((128,0,127))+green+blue[:3]*2+bytes((0,128,128))+blue[:3]*11
