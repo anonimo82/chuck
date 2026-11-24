@@ -15,3 +15,20 @@ API:
 Outputs must not exist. The save operation preserves the supplied SVG text; it does not convert a ChuGL scene to vector graphics. No vector shape editing API, DOM import, EPS/PDF export or SVG animation support is provided. External relative resources may not resolve because SVG is loaded without a base URI. Use trusted local inputs; these operations are synchronous and not intended for real-time audio processing.
 
 Build and runtime validation are pending. Windows build is not provided yet.
+
+## Persistent VectorImage
+
+```chuck
+@import "VectorIO";
+VectorImage image;
+if(image.load("input.svg")) {
+    100.0 => image.x;
+    1.5 => image.scaleX;
+    1.5 => image.scaleY;
+    30.0 => image.rotation;
+    0.8 => image.opacity;
+    <<< image.render("output.png",1280,720) >>>;
+}
+```
+
+The SVG is parsed once and retained as a native librsvg handle. Each instance has independent controls. load(path) and setSvg(markup) replace the document and reset controls only on success; input limit 16 MiB. loaded(), clear(), reset(), render(path,width,height) operate on the current document. Six float getter/setter pairs: x/y (output-pixel translations, +/-32768, default 0), scaleX/scaleY (0.001–64, default 1), rotation (clockwise degrees, +/-1e9, default 0), opacity (0–1, default 1). Scale and rotation are around the center of the output viewport, then translation is applied. Invalid setters return NaN and preserve previous values. Cairo renders the SVG into a group before applying opacity, preserving correct compositing for overlapping shapes. Output is PNG on a transparent canvas, 1–4096 pixels per axis, clipped to the canvas, exclusive creation. No SVG DOM or individual shape editing yet; transforms are global and non-destructive. No dependency on KeyframeIO; any numeric source may drive setters. Synchronous offline operations, not real-time safe. Thirty new smoke checks plus independent RGBA assertions await execution.
