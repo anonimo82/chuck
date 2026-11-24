@@ -43,7 +43,53 @@ try {
     if (!$ChuckExe -or !(Test-Path $ChuckExe)) { throw "No compatible chuck.exe found. Supply -ChuckExe or install Visual Studio C++ Build Tools with v142 and Windows SDK." }
     $env:CHUCK_EXE = (Resolve-Path $ChuckExe).Path
     $env:CHUGIN_DIR = "$build/install/chugins"
+    # ChucK uses LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, which excludes PATH.
+    # Resolve the transitive PE import graph and stage MSYS2 DLLs in _deps.
+    $deps = Join-Path $env:CHUGIN_DIR "_deps"
+    New-Item -ItemType Directory -Force -Path $deps | Out-Null
+    $queue = New-Object 'System.Collections.Generic.Queue[string]'
+    $seen = @{}
+    Get-ChildItem -LiteralPath $env:CHUGIN_DIR -Filter "*.chug" -File | ForEach-Object { $queue.Enqueue($_.FullName) }
+    while ($queue.Count -gt 0) {
+        $file = $queue.Dequeue()
+        $imports = & "$bin/objdump.exe" -p $file
+        if ($LASTEXITCODE -ne 0) { throw "Cannot inspect DLL imports of $file" }
+        foreach ($line in $imports) {
+            if ($line -match '^\s*DLL Name:\s*(\S+\.dll)\s*
+    Run-Native "$bin/python.exe" @("$PSScriptRoot/raster/test_raster.py")
+    Run-Native "$bin/python.exe" @("$PSScriptRoot/audio/test_audio.py")
+    Run-Native "$bin/python.exe" @("$PSScriptRoot/test_multimedia.py")
+    Write-Host "All multimedia smoke tests passed."
+} finally { Stop-Transcript }
+) {
+                $name = $Matches[1]
+                if ($seen.ContainsKey($name)) { continue }
+                $seen[$name] = $true
+                $source = Join-Path $bin $name
+                if (Test-Path -LiteralPath $source -PathType Leaf) {
+                    Copy-Item -LiteralPath $source -Destination $deps -Force
+                    $queue.Enqueue($source)
+                    Write-Host "Staged dependency: $name"
+                } elseif (!(Test-Path (Join-Path "$env:SystemRoot/System32" $name)) -and $name -notmatch '^(api-ms-|ext-ms-)') {
+                    throw "Unresolved DLL dependency: $name (imported by $file)"
+                }
+            }
+        }
+    }
     Run-Native $env:CHUCK_EXE @("--version")
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $probe = & $env:CHUCK_EXE "--chugin-path-auto-load:$env:CHUGIN_DIR" --chugin-probe 2>&1
+        $probeExit = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previousPreference }
+    $probe | ForEach-Object { Write-Host $_ }
+    if ($probeExit -ne 0) { throw "Chugin probe failed: $probeExit" }
+    foreach ($module in @("RasterIO","VectorIO","ModelIO","AudioIO","MidiFileIO","VideoIO")) {
+        if (($probe -join "`n") -notmatch ([regex]::Escape("$module.chug") + '\s+\[OK\]')) {
+            throw "Chugin probe did not confirm $module"
+        }
+    }
     Run-Native "$bin/python.exe" @("$PSScriptRoot/raster/test_raster.py")
     Run-Native "$bin/python.exe" @("$PSScriptRoot/audio/test_audio.py")
     Run-Native "$bin/python.exe" @("$PSScriptRoot/test_multimedia.py")
