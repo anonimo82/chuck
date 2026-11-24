@@ -171,3 +171,13 @@ concatNormalized(firstClip, secondClip, destination, width, height, fps) decodes
 ```
 
 concatAV extends normalized video concatenation with a single PCM S16LE audio output at a requested sample rate (8000–96000 Hz) and mono or stereo channel count. Each input may contain one video and zero or one audio stream; additional streams are rejected. Audio is decoded and resampled with libswresample, anchored to the first video timestamp, trimmed or silence-padded to the rounded video duration. Missing audio becomes silence. Stable decoded formats and continuous timestamps are required. Audio is processed in a separate pass over each source, so inputs must remain unchanged and the muxer can buffer substantial video data (not suitable for unbounded clips or real-time use). The existing video-only API is unchanged. Seven smoke checks plus independent PCM and RGB checks are pending compilation and execution.
+
+### Linear audiovisual crossfade
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.crossfade("first.mp4", "second.webm", "transition.mkv",
+                     1920, 1080, 30, 48000, 2, 2.0) >>>;
+```
+
+crossfade uses the same normalization as concatAV, overlapping the tail of the first clip and the head of the second clip. The requested duration in seconds rounds to the nearest whole output frame; at least two and at most 1200 frames are required. Both clips must contain at least that many normalized frames. The target audio sample rate must be divisible by the target FPS for exact sample-grid alignment. Linear BGR byte blending and signed PCM sample blending use endpoint-inclusive ramps; no gamma correction or equal-power curve. Output duration is the sum of normalized clip durations minus the overlap. Missing audio is silence; only zero or one audio track per source is supported. The retained video tail is capped at 256 MiB and captured normalized audio at 128 MiB per clip; the muxer may additionally buffer encoded video. Offline only, no overwrite, ordinary failure removes incomplete output. Eight new smoke checks and independent PCM/RGB comparisons await execution.
