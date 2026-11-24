@@ -29,3 +29,7 @@ User-executed build-and-test.ps1 against source revision ee6474e8d8f134b936cd739
 ## Heterogeneous audiovisual concatenation Windows result — 2026-11-24
 
 User-executed build-and-test.ps1 against source revision 9f9f3efe337b734cc7d098f6629a026f7abbe1d2 (PRs #27–#28). ChucK 1.5.5.9 x64, API 10.2, MSYS2 UCRT64. All six Chugins loaded and all 194 smoke checks passed: RasterIO 8, VectorIO 4, ModelIO 6, AudioIO 7, MidiFileIO 5, VideoIO 164. All 18 new checks ran (11 normalized video concatenation and 7 audiovisual concatenation). Independent RGB, timestamp, PCM, sample-rate/channel-count and silence-padding assertions completed. Final script message: All multimedia smoke tests passed. Validation is limited to tested fixtures; multiple audio tracks, long-clip memory usage, broader codec combinations and other platforms remain outstanding.
+
+## Audiovisual transitions Windows result — 2026-11-24
+
+User-executed build-and-test.ps1 against source revision d32d24cb389d10d6b3da85c964ab7467ba8b5640 (PRs #29–#30). ChucK 1.5.5.9 x64, API 10.2, MSYS2 UCRT64. All six Chugins loaded and all 210 smoke checks passed: RasterIO 8, VectorIO 4, ModelIO 6, AudioIO 7, MidiFileIO 5, VideoIO 180. All 16 new checks ran (8 linear crossfade and 8 selectable transitions), including independent RGB and PCM comparisons and linear-mode compatibility. Final script message: All multimedia smoke tests passed. Validation remains limited to tested fixtures; memory limits, integer audio/video grid constraints, broader media combinations and other platforms remain outstanding.
