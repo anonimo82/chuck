@@ -891,6 +891,115 @@ bool overlayVideo(const std::string &base,const std::string &layer,const std::st
     return out.finish();
 }
 
+struct CompositeLayer {
+    std::string path;
+    int x=0,y=0,w=0,h=0;
+    double opacity=1;
+    bool still=false;
+    OverlayReader reader;
+    Frame pixels;
+};
+bool multilayerVideo(const std::string &base,const std::string &dest,int w,int h,int fps,
+                     int rate,int channels,std::vector<std::unique_ptr<CompositeLayer>> &layers) {
+    if(w<1 || h<1 || w>8192 || h>8192 || fps<1 || fps>120 ||
+       rate<8000 || rate>96000 || channels<1 || channels>2 ||
+       dest.size()<4 || dest.substr(dest.size()-4)!=".mkv" ||
+       layers.empty() || layers.size()>8) return false;
+    OverlayReader main;
+    if(!main.open(base)) return false;
+    int64_t pixelBudget=0;
+    for(auto &ptr:layers) {
+        auto &l=*ptr;
+        if(l.w<1 || l.h<1 || l.w>w || l.h>h || l.x<0 || l.y<0 ||
+           l.x>w-l.w || l.y>h-l.h || !std::isfinite(l.opacity) ||
+           l.opacity<0 || l.opacity>1 || !l.pixels.p) return false;
+        pixelBudget+=static_cast<int64_t>(l.w)*l.h*4;
+        if(pixelBudget>INT64_C(256)*1024*1024) return false;
+        l.pixels.p->width=l.w; l.pixels.p->height=l.h;
+        l.pixels.p->format=l.still?AV_PIX_FMT_BGRA:AV_PIX_FMT_BGR0;
+        if(av_frame_get_buffer(l.pixels.p,32)<0) return false;
+        if(l.still) {
+            if(!loadWatermark(l.path,l.pixels.p)) return false;
+        } else if(!l.reader.open(l.path)) return false;
+    }
+    const auto *encoder=avcodec_find_encoder_by_name("ffv1");
+    if(!encoder) return false;
+    Output out(dest);
+    Codec enc;
+    Frame canvas;
+    Packet packet;
+    if(!out.open("matroska") || !canvas.p || !packet.p) return false;
+    enc.ctx=avcodec_alloc_context3(encoder);
+    if(!enc.ctx) return false;
+    enc.ctx->width=w; enc.ctx->height=h; enc.ctx->pix_fmt=AV_PIX_FMT_BGR0;
+    enc.ctx->time_base=AVRational{1,fps}; enc.ctx->framerate=AVRational{fps,1};
+    enc.ctx->sample_aspect_ratio=AVRational{1,1};
+    if(out.ctx->oformat->flags&AVFMT_GLOBALHEADER) enc.ctx->flags|=AV_CODEC_FLAG_GLOBAL_HEADER;
+    if(avcodec_open2(enc.ctx,encoder,nullptr)<0) return false;
+    auto *video=avformat_new_stream(out.ctx,nullptr);
+    auto *audio=avformat_new_stream(out.ctx,nullptr);
+    if(!video || !audio || avcodec_parameters_from_context(video->codecpar,enc.ctx)<0) return false;
+    video->time_base=enc.ctx->time_base; video->avg_frame_rate=enc.ctx->framerate;
+    video->sample_aspect_ratio=enc.ctx->sample_aspect_ratio;
+    auto *p=audio->codecpar;
+    p->codec_type=AVMEDIA_TYPE_AUDIO; p->codec_id=AV_CODEC_ID_PCM_S16LE;
+    p->format=AV_SAMPLE_FMT_S16; p->sample_rate=rate;
+    p->bits_per_coded_sample=p->bits_per_raw_sample=16;
+    p->block_align=channels*2; p->bit_rate=static_cast<int64_t>(rate)*channels*16;
+    av_channel_layout_default(&p->ch_layout,channels);
+    audio->time_base=AVRational{1,rate};
+    out.ctx->max_interleave_delta=0;
+    if(avformat_write_header(out.ctx,nullptr)<0) return false;
+    canvas.p->width=w; canvas.p->height=h; canvas.p->format=AV_PIX_FMT_BGR0;
+    if(av_frame_get_buffer(canvas.p,32)<0) return false;
+    auto drain=[&](bool flush) {
+        for(;;) {
+            int ret=avcodec_receive_packet(enc.ctx,packet.p);
+            if(ret==AVERROR_EOF) return flush;
+            if(ret==AVERROR(EAGAIN)) return !flush;
+            if(ret<0) return false;
+            if(packet.p->duration<=0) packet.p->duration=1;
+            av_packet_rescale_ts(packet.p,enc.ctx->time_base,video->time_base);
+            packet.p->stream_index=video->index;
+            int written=av_interleaved_write_frame(out.ctx,packet.p);
+            av_packet_unref(packet.p);
+            if(written<0) return false;
+        }
+    };
+    int64_t count=0;
+    for(;;) {
+        bool active=false;
+        if(!main.at(count,fps,active)) return false;
+        if(!active) break;
+        if(count>=1000000 || !main.render(canvas.p)) return false;
+        for(auto &ptr:layers) {
+            auto &l=*ptr;
+            bool show=l.still;
+            if(!l.still && !l.reader.at(count,fps,show)) return false;
+            int alpha=static_cast<int>(std::llround(l.opacity*65535));
+            if(!show || !alpha) continue;
+            if(!l.still && !l.reader.render(l.pixels.p)) return false;
+            for(int row=0;row<l.h;++row) {
+                auto *d=canvas.p->data[0]+static_cast<size_t>(l.y+row)*canvas.p->linesize[0]+l.x*4;
+                auto *v=l.pixels.p->data[0]+static_cast<size_t>(row)*l.pixels.p->linesize[0];
+                for(int col=0;col<l.w;++col) {
+                    int pa=l.still?(alpha*v[col*4+3]+127)/255:alpha;
+                    for(int k=0;k<3;++k) {
+                        int j=col*4+k;
+                        d[j]=static_cast<uint8_t>((d[j]*(65535-pa)+v[j]*pa+32767)/65535);
+                    }
+                }
+            }
+        }
+        canvas.p->pts=count++; canvas.p->pict_type=AV_PICTURE_TYPE_NONE;
+        if(avcodec_send_frame(enc.ctx,canvas.p)<0 || !drain(false)) return false;
+    }
+    if(!count || avcodec_send_frame(enc.ctx,nullptr)<0 || !drain(true)) return false;
+    int64_t length=av_rescale_q(count,enc.ctx->time_base,AVRational{1,rate});
+    return normalizedAudio(base,main.audio,rate,channels,main.origin,main.stream->time_base,
+                               0,length,audio,out.ctx) && out.finish();
+}
+
 bool concatNormalized(const std::string &first, const std::string &secondClip,
                       const std::string &dest, int w, int h, int fps, int rate = 0, int channels = 0, int fade = 0,
                       const std::string &visual = "linear", const std::string &audioCurve = "linear") {
