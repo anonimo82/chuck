@@ -585,3 +585,35 @@ check(VideoIO.crossfade("trim-av.mkv", "generated.mkv", "fade-colors.mkv", 16, 1
     assert decoded("fade-colors.mkv") == expected_colors
     for name in ("fade-zero.mkv","fade-long.mkv","fade-grid.mkv","fade-missing.mkv"):
         assert not (p/name).exists(), name
+
+    # Three-frame transition: A, intermediate, B.
+    run("video", """
+check(VideoIO.transition("trim-av.mkv", "trim-av.mkv", "wipe-x.mkv", 16, 16, 4, 8000, 1, 0.75, "wipeLeft", "linear"));
+check(VideoIO.transition("trim-av.mkv", "trim-av.mkv", "wipe-y.mkv", 16, 16, 4, 8000, 1, 0.75, "wipeDown", "linear"));
+check(VideoIO.transition("trim-av.mkv", "trim-av.mkv", "dip-black.mkv", 16, 16, 4, 8000, 1, 0.75, "black", "linear"));
+check(VideoIO.transition("trim-av.mkv", "trim-av.mkv", "power.mkv", 16, 16, 4, 8000, 1, 1.0, "linear", "equalPower"));
+check(VideoIO.transition("trim-av.mkv", "trim-av.mkv", "linear-mode.mkv", 16, 16, 4, 8000, 1, 1.0, "linear", "linear"));
+check(!VideoIO.transition("trim-av.mkv", "trim-av.mkv", "bad-visual.mkv", 16, 16, 4, 8000, 1, 1.0, "unknown", "linear"));
+check(!VideoIO.transition("trim-av.mkv", "trim-av.mkv", "bad-curve.mkv", 16, 16, 4, 8000, 1, 1.0, "linear", "unknown"));
+check(!VideoIO.transition("trim-av.mkv", "trim-av.mkv", "power.mkv", 16, 16, 4, 8000, 1, 1.0, "linear", "equalPower"));
+""", 8, p)
+    # At overlap index 1, the old frame is blue and the new frame red.
+    row_red = red[:16*3]
+    row_blue = blue[:16*3]
+    mid_x = (row_red[:8*3]+row_blue[8*3:])*16
+    mid_y = red[:8*16*3]+blue[8*16*3:]
+    for name, middle in (("wipe-x.mkv",mid_x),("wipe-y.mkv",mid_y),("dip-black.mkv",bytes(stride))):
+        data=decoded(name)
+        assert len(data)==13*stride
+        assert data[6*stride:7*stride]==middle
+        assert data[5*stride:6*stride]==red
+        assert data[7*stride:8*stride]==blue
+    assert decoded("linear-mode.mkv")==decoded("fade.mkv")
+    assert audio_samples("linear-mode.mkv",0)==audio_samples("fade.mkv",0)
+    import math
+    def rounded(v):
+        return math.floor(v+0.5) if v>=0 else math.ceil(v-0.5)
+    expected_power=tuple(max(-32768,min(32767,rounded(a*math.cos(i/7999*math.pi/2)+b*math.sin(i/7999*math.pi/2)))) for i,(a,b) in enumerate(zip(x,y)))
+    assert shorts(audio_samples("power.mkv",0))==shorts(pcm)+expected_power+shorts(pcm2)
+    assert not (p/"bad-visual.mkv").exists()
+    assert not (p/"bad-curve.mkv").exists()

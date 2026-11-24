@@ -626,7 +626,8 @@ bool normalizedAudio(const std::string &source, int audioIndex, int rate, int ch
 }
 
 bool concatNormalized(const std::string &first, const std::string &secondClip,
-                      const std::string &dest, int w, int h, int fps, int rate = 0, int channels = 0, int fade = 0) {
+                      const std::string &dest, int w, int h, int fps, int rate = 0, int channels = 0, int fade = 0,
+                      const std::string &visual = "linear", const std::string &audioCurve = "linear") {
     if(w < 1 || h < 1 || w > 8192 || h > 8192 || fps < 1 || fps > 120 ||
        dest.size() < 4 || dest.substr(dest.size()-4) != ".mkv") return false;
     Input a, b;
@@ -643,6 +644,8 @@ bool concatNormalized(const std::string &first, const std::string &secondClip,
             audioIndices[c]=static_cast<int>(i);
         }
     }
+    if(visual != "linear" && visual != "wipeLeft" && visual != "wipeDown" && visual != "black") return false;
+    if(audioCurve != "linear" && audioCurve != "equalPower") return false;
     if(fade && (!rate || fade < 2 || fade > 1200 || static_cast<int64_t>(fade)*w*h*4 > INT64_C(256)*1024*1024 || rate%fps != 0)) return false;
     std::vector<std::vector<uint8_t>> tail;
     std::vector<uint8_t> audioTail;
@@ -763,8 +766,22 @@ bool concatNormalized(const std::string &first, const std::string &secondClip,
                         auto *d=mixed.p->data[0]+static_cast<size_t>(y)*mixed.p->linesize[0];
                         auto *src=scaled.p->data[0]+static_cast<size_t>(y)*scaled.p->linesize[0];
                         auto *old=tail[local].data()+static_cast<size_t>(y)*w*4;
-                        for(int x=0;x<w*4;++x)
-                            d[x]=static_cast<uint8_t>((old[x]*(fade-1-local)+src[x]*local+(fade-1)/2)/(fade-1));
+                        for(int x=0;x<w*4;++x) {
+                            if(visual == "wipeLeft") {
+                                const int64_t edge = (static_cast<int64_t>(w)*local)/(fade-1);
+                                d[x] = x/4 < edge ? src[x] : old[x];
+                            } else if(visual == "wipeDown") {
+                                const int64_t edge = (static_cast<int64_t>(h)*local)/(fade-1);
+                                d[x] = y < edge ? src[x] : old[x];
+                            } else if(visual == "black") {
+                                // Exact black midpoint for odd overlap lengths.
+                                const int64_t twice = 2*local, last = fade-1;
+                                const int64_t weight = std::abs(last-twice);
+                                d[x] = static_cast<uint8_t>(((twice <= last ? old[x] : src[x])*weight+last/2)/last);
+                            } else {
+                                d[x]=static_cast<uint8_t>((old[x]*(fade-1-local)+src[x]*local+(fade-1)/2)/(fade-1));
+                            }
+                        }
                     }
                     mixed.p->pts=total++; mixed.p->pict_type=AV_PICTURE_TYPE_NONE;
                     if(avcodec_send_frame(enc.ctx,mixed.p)<0 || !drainEncoder(false)) return false;
@@ -842,8 +859,15 @@ bool concatNormalized(const std::string &first, const std::string &secondClip,
                     size_t k=static_cast<size_t>(i*channels+ch)*2;
                     int16_t x,y;
                     std::memcpy(&x,audioTail.data()+k,2); std::memcpy(&y,pcm.data()+k,2);
-                    int16_t z=static_cast<int16_t>((static_cast<int64_t>(x)*(fadeSamples-1-i)+
+                    int16_t z;
+                    if(audioCurve == "equalPower") {
+                        double angle=static_cast<double>(i)/(fadeSamples-1)*1.57079632679489661923;
+                        auto value=std::llround(x*std::cos(angle)+y*std::sin(angle));
+                        z=static_cast<int16_t>(std::max<long long>(-32768,std::min<long long>(32767,value)));
+                    } else {
+                        z=static_cast<int16_t>((static_cast<int64_t>(x)*(fadeSamples-1-i)+
                                                    static_cast<int64_t>(y)*i)/(fadeSamples-1));
+                    }
                     std::memcpy(pcm.data()+k,&z,2);
                 }
                 if(!writePCM(pcm.data(),length,clipOffset*(rate/fps))) return false;
@@ -2064,6 +2088,25 @@ CK_DLL_SFUN(video_crossfade) {
                             static_cast<int>(std::llround(duration*fps)))) RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_transition) {
+    RETURN->v_int=0;
+    try {
+        auto first=GET_NEXT_STRING_SAFE(ARGS);
+        auto secondClip=GET_NEXT_STRING_SAFE(ARGS);
+        auto dest=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS), h=GET_NEXT_INT(ARGS), fps=GET_NEXT_INT(ARGS);
+        auto rate=GET_NEXT_INT(ARGS), channels=GET_NEXT_INT(ARGS);
+        auto duration=GET_NEXT_FLOAT(ARGS);
+        auto visual=GET_NEXT_STRING_SAFE(ARGS);
+        auto audioCurve=GET_NEXT_STRING_SAFE(ARGS);
+        if(w>=1 && w<=8192 && h>=1 && h<=8192 && fps>=1 && fps<=120 &&
+           rate>=8000 && rate<=96000 && channels>=1 && channels<=2 &&
+           std::isfinite(duration) && duration>0 && duration*fps<=1200 &&
+           std::llround(duration*fps)>=2 &&
+           concatNormalized(first,secondClip,dest,w,h,fps,rate,channels,
+                            static_cast<int>(std::llround(duration*fps)),visual,audioCurve)) RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -2174,5 +2217,17 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"int","sampleRate");
     QUERY->add_arg(QUERY,"int","channels");
     QUERY->add_arg(QUERY,"float","fadeSeconds");
+    QUERY->add_sfun(QUERY,video_transition,"int","transition");
+    QUERY->add_arg(QUERY,"string","firstClip");
+    QUERY->add_arg(QUERY,"string","secondClip");
+    QUERY->add_arg(QUERY,"string","destination");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","fps");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_arg(QUERY,"float","fadeSeconds");
+    QUERY->add_arg(QUERY,"string","visualMode");
+    QUERY->add_arg(QUERY,"string","audioCurve");
     return QUERY->end_class(QUERY);
 }
