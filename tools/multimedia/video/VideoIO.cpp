@@ -387,6 +387,114 @@ bool trim(const std::string &source, const std::string &dest, double start, doub
     return out.finish();
 }
 
+
+// Conservative two-clip concatenation. Require identical codec configuration
+// and non-reordered, fully timestamped packets with known positive durations.
+bool compatibleStreams(const AVStream *a, const AVStream *b) {
+    const auto *x = a->codecpar, *y = b->codecpar;
+    if(x->codec_type != y->codec_type || x->codec_id != y->codec_id ||
+       x->format != y->format || x->profile != y->profile || x->level != y->level ||
+       x->extradata_size != y->extradata_size ||
+       (x->extradata_size && std::memcmp(x->extradata, y->extradata, x->extradata_size) != 0))
+        return false;
+    if(x->codec_type == AVMEDIA_TYPE_VIDEO)
+        return x->width == y->width && x->height == y->height &&
+               av_cmp_q(a->sample_aspect_ratio, b->sample_aspect_ratio) == 0 &&
+               av_cmp_q(a->avg_frame_rate, b->avg_frame_rate) == 0 &&
+               x->color_range == y->color_range && x->color_space == y->color_space &&
+               x->color_primaries == y->color_primaries && x->color_trc == y->color_trc &&
+               x->field_order == y->field_order;
+    if(x->codec_type == AVMEDIA_TYPE_AUDIO)
+        return x->sample_rate == y->sample_rate &&
+               av_channel_layout_compare(&x->ch_layout, &y->ch_layout) == 0 &&
+               x->bits_per_coded_sample == y->bits_per_coded_sample &&
+               x->bits_per_raw_sample == y->bits_per_raw_sample &&
+               x->block_align == y->block_align &&
+               x->initial_padding == 0 && y->initial_padding == 0 &&
+               x->trailing_padding == 0 && y->trailing_padding == 0;
+    return false;
+}
+bool concatenate(const std::string &first, const std::string &second, const std::string &dest) {
+    Input a, b;
+    if(!a.open(first) || !b.open(second) || a.video != b.video ||
+       a.ctx->nb_streams != b.ctx->nb_streams) return false;
+    const auto dot = dest.find_last_of('.');
+    if(dot == std::string::npos) return false;
+    const auto ext = dest.substr(dot);
+    const char *format = ext == ".mkv" ? "matroska" : ext == ".mp4" ? "mp4" :
+                         ext == ".mov" ? "mov" : ext == ".webm" ? "webm" : nullptr;
+    if(!format) return false;
+    // A single video stream, plus any corresponding compatible audio streams.
+    for(unsigned i = 0; i < a.ctx->nb_streams; ++i) {
+        if(static_cast<int>(i) != a.video &&
+           a.ctx->streams[i]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) return false;
+        if(!compatibleStreams(a.ctx->streams[i], b.ctx->streams[i])) return false;
+    }
+    Output out(dest);
+    if(!out.open(format)) return false;
+    for(unsigned i = 0; i < a.ctx->nb_streams; ++i) {
+        auto *src = a.ctx->streams[i];
+        if(avformat_query_codec(out.ctx->oformat, src->codecpar->codec_id, FF_COMPLIANCE_NORMAL) <= 0)
+            return false;
+        auto *dst = avformat_new_stream(out.ctx, nullptr);
+        if(!dst || avcodec_parameters_copy(dst->codecpar, src->codecpar) < 0) return false;
+        dst->codecpar->codec_tag = 0;
+        dst->time_base = src->time_base;
+        dst->avg_frame_rate = src->avg_frame_rate;
+        dst->sample_aspect_ratio = src->sample_aspect_ratio;
+        dst->disposition = src->disposition;
+        if(av_dict_copy(&dst->metadata, src->metadata, 0) < 0) return false;
+    }
+    if(avformat_write_header(out.ctx, nullptr) < 0) return false;
+    const AVRational us{1, AV_TIME_BASE};
+    const int64_t maxSpan = INT64_C(1000000000000000);
+    int64_t offset = 0;
+    std::vector<int64_t> previous(a.ctx->nb_streams, AV_NOPTS_VALUE);
+    Packet packet;
+    if(!packet.p) return false;
+    Input *clips[] = {&a, &b};
+    for(auto *clip : clips) {
+        const int64_t origin = clip->ctx->start_time;
+        if(origin == AV_NOPTS_VALUE || origin < -maxSpan || origin > maxSpan) return false;
+        std::vector<bool> wrote(clip->ctx->nb_streams, false);
+        int64_t span = 0;
+        int ret;
+        while((ret = av_read_frame(clip->ctx, packet.p)) >= 0) {
+            auto *p = packet.p;
+            int i = p->stream_index;
+            if(i < 0 || static_cast<unsigned>(i) >= clip->ctx->nb_streams ||
+               p->pts == AV_NOPTS_VALUE || p->dts != p->pts || p->duration <= 0 ||
+               av_packet_get_side_data(p, AV_PKT_DATA_SKIP_SAMPLES, nullptr)) return false;
+            if(i == clip->video && !wrote[i] && !(p->flags & AV_PKT_FLAG_KEY)) return false;
+            auto tb = clip->ctx->streams[i]->time_base;
+            auto target = out.ctx->streams[i]->time_base;
+            int64_t absolute = av_rescale_q(p->pts, tb, us);
+            int64_t duration = av_rescale_q(p->duration, tb, us);
+            if(absolute < -maxSpan || absolute > maxSpan || duration <= 0 || duration > maxSpan)
+                return false;
+            int64_t relative = absolute - origin;
+            if(relative < 0 || relative > maxSpan || duration > maxSpan-relative) return false;
+            span = std::max(span, relative+duration);
+            int64_t timestamp = av_rescale_q(offset+relative, us, target);
+            if(previous[i] != AV_NOPTS_VALUE && timestamp <= previous[i]) return false;
+            previous[i] = timestamp;
+            p->pts = p->dts = timestamp;
+            p->duration = av_rescale_q(p->duration, tb, target);
+            if(p->duration <= 0) return false;
+            p->pos = -1;
+            int status = av_interleaved_write_frame(out.ctx, p);
+            av_packet_unref(p);
+            if(status < 0) return false;
+            wrote[i] = true;
+        }
+        if(ret != AVERROR_EOF || span <= 0) return false;
+        for(bool ok : wrote) if(!ok) return false;
+        // Offset by the longest actual packet span, not estimated file duration.
+        offset += span;
+    }
+    return out.finish();
+}
+
 // Merge the selected video and audio streams, retaining their packet timestamps.
 // No decoding, resampling, trimming or time stretching.
 bool muxAudio(const std::string &videoPath, const std::string &audioPath, const std::string &dest) {
@@ -1270,6 +1378,15 @@ CK_DLL_SFUN(video_trim) {
         if(trim(source, dest, start, end)) RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_concat) {
+    RETURN->v_int = 0;
+    try {
+        auto first = GET_NEXT_STRING_SAFE(ARGS);
+        auto second = GET_NEXT_STRING_SAFE(ARGS);
+        auto dest = GET_NEXT_STRING_SAFE(ARGS);
+        if(concatenate(first, second, dest)) RETURN->v_int = 1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -1340,5 +1457,9 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "string", "destination");
     QUERY->add_arg(QUERY, "float", "start");
     QUERY->add_arg(QUERY, "float", "end");
+    QUERY->add_sfun(QUERY, video_concat, "int", "concat");
+    QUERY->add_arg(QUERY, "string", "first");
+    QUERY->add_arg(QUERY, "string", "second");
+    QUERY->add_arg(QUERY, "string", "destination");
     return QUERY->end_class(QUERY);
 }
