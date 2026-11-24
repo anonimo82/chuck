@@ -212,3 +212,13 @@ overlay(baseClip, layerClip, destination, width, height, fps, x, y, layerWidth, 
 ```
 
 composite extends overlay with five parameters: keyRGB (packed 0xRRGGBB integer, or -1 to disable), tolerance, softness, baseGain and layerGain. The normalized Euclidean RGB distance is measured after scaling. Pixels within tolerance become transparent; the next softness interval linearly restores opacity. Tolerance and softness are nonnegative and their sum must not exceed one. This is a basic RGB key, without spill suppression or source alpha. Audio gains are linear amplitudes in [0,4]; normalized signed PCM samples are summed, rounded and saturated. The layer audio is limited to its visible video duration; missing audio is silence. The base controls output duration. Each captured PCM buffer is limited to 128 MiB; muxer buffering remains additional. The original overlay API is unchanged. Nine new smoke checks plus independent pixel and PCM comparisons await execution.
+
+### Static images, logos and watermarks
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.watermark("main.mp4", "logo.png", "branded.mkv",
+                      1280, 720, 30, 1000, 20, 240, 120, 0.8, 48000, 2) >>>;
+```
+
+watermark uses the same positional arguments as overlay, but the second input is a single static image decoded using FFmpeg (PNG, JPEG or BMP codec). The image is scaled once to the specified rectangle and displayed for the entire base video. Per-pixel alpha is multiplied by global opacity, preserving transparency in RGBA PNGs. Alpha blending uses straight RGB values and bilinear scaling, without gamma correction or premultiplied-alpha edge filtering. The base video controls duration; its audio is normalized to the requested sample rate and channel count, or silence if absent. Output is FFV1/BGR0 and PCM S16LE in MKV. Animated or multi-frame inputs are rejected. Existing overlay and composite APIs are unchanged. Nine smoke checks and independent RGB/PCM assertions await execution.
