@@ -727,6 +727,8 @@ struct AudioEncoder {
         int channels = dec.ctx->ch_layout.nb_channels;
         if(channels < 1 || channels > 2 || dec.ctx->sample_rate <= 0 ||
            dec.ctx->sample_fmt == AV_SAMPLE_FMT_NONE) return false;
+        if(dec.ctx->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
+            av_channel_layout_default(&dec.ctx->ch_layout, channels);
         av_channel_layout_default(&enc.ctx->ch_layout, channels);
         // Only canonical mono/stereo layouts are accepted in this initial API.
         if(av_channel_layout_compare(&dec.ctx->ch_layout, &enc.ctx->ch_layout) != 0) return false;
@@ -805,7 +807,9 @@ struct AudioEncoder {
             if(ret < 0) return false;
             auto *f = decoded.p;
             if(f->sample_rate != dec.ctx->sample_rate || f->format != dec.ctx->sample_fmt ||
-               av_channel_layout_compare(&f->ch_layout, &dec.ctx->ch_layout) != 0 ||
+               f->ch_layout.nb_channels != dec.ctx->ch_layout.nb_channels ||
+               (f->ch_layout.order != AV_CHANNEL_ORDER_UNSPEC &&
+                av_channel_layout_compare(&f->ch_layout, &dec.ctx->ch_layout) != 0) ||
                f->nb_samples <= 0 || f->nb_samples > 1048576) return false;
             int64_t pts = f->best_effort_timestamp;
             if(pts == AV_NOPTS_VALUE) return false;
