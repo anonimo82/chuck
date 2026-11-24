@@ -301,8 +301,7 @@ bool encodeSequence(const std::string &prefix, const std::string &dest, int coun
             if(!lossless) {
                 const auto crf = std::to_string(quality);
                 if(av_dict_set(&options, "crf", crf.c_str(), 0) < 0 ||
-                   (h264 && av_dict_set(&options, "preset", "medium", 0) < 0) ||
-                   (vp9 && av_dict_set(&options, "b", "0", 0) < 0)) {
+                   (h264 && av_dict_set(&options, "preset", "medium", 0) < 0)) {
                     av_dict_free(&options);
                     return false;
                 }
