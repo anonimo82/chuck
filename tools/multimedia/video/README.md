@@ -181,3 +181,13 @@ concatAV extends normalized video concatenation with a single PCM S16LE audio ou
 ```
 
 crossfade uses the same normalization as concatAV, overlapping the tail of the first clip and the head of the second clip. The requested duration in seconds rounds to the nearest whole output frame; at least two and at most 1200 frames are required. Both clips must contain at least that many normalized frames. The target audio sample rate must be divisible by the target FPS for exact sample-grid alignment. Linear BGR byte blending and signed PCM sample blending use endpoint-inclusive ramps; no gamma correction or equal-power curve. Output duration is the sum of normalized clip durations minus the overlap. Missing audio is silence; only zero or one audio track per source is supported. The retained video tail is capped at 256 MiB and captured normalized audio at 128 MiB per clip; the muxer may additionally buffer encoded video. Offline only, no overwrite, ordinary failure removes incomplete output. Eight new smoke checks and independent PCM/RGB comparisons await execution.
+
+### Selectable audiovisual transitions
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.transition("first.mp4", "second.webm", "transition.mkv",
+                      1280, 720, 30, 48000, 2, 1.0, "wipeLeft", "equalPower") >>>;
+```
+
+transition has the same parameters and constraints as crossfade, followed by a visual mode and an audio curve. Visual modes: "linear" (existing dissolve), "wipeLeft" (new image revealed from the left edge toward the right), "wipeDown" (top toward bottom), and "black" (first image fades to black, then second fades in; exact black midpoint when the overlap contains an odd number of frames). Audio curves: "linear" and "equalPower" (cosine/sine gains with saturation to signed 16-bit PCM to avoid overflow; correlated loud signals can clip). Unknown modes are rejected. Existing crossfade behavior is unchanged. Eight additional smoke checks and independent pixel/sample comparisons are pending execution, along with the eight checks from the preceding crossfade change.
