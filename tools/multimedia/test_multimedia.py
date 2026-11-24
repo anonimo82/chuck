@@ -1216,3 +1216,73 @@ check(model.z()==3.0);
 check(model.save("model-curve/out.obj"));
 """,5,p)
     check_model("model-curve",[(0,0,3),(1,0,3),(0,1,3)])
+
+    import wave
+    with wave.open(str(p/"buffer-input.wav"),"wb") as wav:
+        wav.setnchannels(2)
+        wav.setsampwidth(2)
+        wav.setframerate(8000)
+        wav.writeframes(struct.pack("<8h",8192,-8192,16384,-16384,4096,8192,0,0))
+    run("audio", """
+AudioBuffer a;
+AudioBuffer b;
+check(!a.loaded());
+check(a.frames()==0 && a.channels()==0 && a.sampleRate()==0);
+check(!a.save("buffer-empty.wav"));
+check(a.load("buffer-input.wav"));
+check(a.loaded() && !b.loaded());
+check(a.frames()==4 && a.channels()==2 && a.sampleRate()==8000);
+check(a.seconds()==0.0005);
+check(a.sampleAt(0,0)==0.25 && a.sampleAt(0,1)==-0.25);
+check(a.gain()==1.0 && a.balance()==0.0);
+2.0 => a.gain;
+0.5 => a.balance;
+check(a.valueAt(0,0)==0.25 && a.valueAt(0,1)==-0.5);
+check(a.sampleAt(0,0)==0.25);
+check(a.save("buffer-adjusted.wav"));
+check(!a.save("buffer-adjusted.wav"));
+check(!a.load("missing.wav"));
+check(a.loaded() && a.gain()==2.0);
+a.gain(-1.0);
+a.balance(2.0);
+check(a.gain()==2.0 && a.balance()==0.5);
+a.reset();
+check(a.gain()==1.0 && a.balance()==0.0);
+check(a.save("buffer-reset.wav"));
+check(a.setSample(0,0,0.75));
+check(a.sampleAt(0,0)==0.75);
+check(!a.setSample(4,0,0.5));
+check(!a.setSample(0,2,0.5));
+check(!a.setSample(0,0,2.0));
+2.0 => a.gain;
+check(a.valueAt(0,0)==1.0);
+check(b.load("buffer-input.wav"));
+check(b.sampleAt(0,0)==0.25 && b.gain()==1.0);
+a.clear();
+check(!a.loaded() && a.frames()==0 && b.loaded());
+check(!a.save("buffer-cleared.wav"));
+""",29,p)
+    def buffer_pcm(name):
+        data=subprocess.check_output(["ffmpeg","-v","error","-i",str(p/name),
+            "-f","s32le","-acodec","pcm_s32le","-"],timeout=30)
+        return struct.unpack("<"+"i"*(len(data)//4),data)
+    # PCM24 rounding permits one output least significant bit (256 in s32).
+    def check_buffer(name,expected):
+        actual=buffer_pcm(name)
+        assert len(actual)==len(expected),name
+        assert all(abs(a-b*65536)<=256 for a,b in zip(actual,expected)),(name,actual)
+    check_buffer("buffer-adjusted.wav",[8192,-16384,16384,-32768,4096,16384,0,0])
+    check_buffer("buffer-reset.wav",[8192,-8192,16384,-16384,4096,8192,0,0])
+    assert not (p/"buffer-empty.wav").exists() and not (p/"buffer-cleared.wav").exists()
+    run("audio", """
+@import "KeyframeIO";
+AudioBuffer audio;
+KeyframeCurve volume;
+check(audio.load("buffer-input.wav"));
+check(volume.add(0.0,0.0,"linear"));
+check(volume.add(2.0,2.0,"linear"));
+volume.valueAt(0.5) => audio.gain;
+check(audio.gain()==0.5);
+check(audio.save("buffer-curve.wav"));
+""",5,p)
+    check_buffer("buffer-curve.wav",[4096,-4096,8192,-8192,2048,4096,0,0])
