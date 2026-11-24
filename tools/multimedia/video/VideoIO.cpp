@@ -19,6 +19,9 @@ extern "C" {
 #include <memory>
 #include <string>
 #include <vector>
+#include <fstream>
+#include <sstream>
+#include <locale>
 namespace {
 struct Input {
     AVFormatContext *ctx = nullptr;
@@ -998,6 +1001,44 @@ bool multilayerVideo(const std::string &base,const std::string &dest,int w,int h
     int64_t length=av_rescale_q(count,enc.ctx->time_base,AVRational{1,rate});
     return normalizedAudio(base,main.audio,rate,channels,main.origin,main.stream->time_base,
                                0,length,audio,out.ctx) && out.finish();
+}
+
+
+bool readCompositeLayers(const std::string &manifest,
+                         std::vector<std::unique_ptr<CompositeLayer>> &layers) {
+    std::ifstream input(manifest,std::ios::binary);
+    if(!input) return false;
+    std::string line;
+    // Bound the manifest before parsing it.
+    input.seekg(0,std::ios::end);
+    auto size=input.tellg();
+    if(size<=0 || size>65536) return false;
+    input.seekg(0,std::ios::beg);
+    while(std::getline(input,line)) {
+        if(!line.empty() && line.back()=='\r') line.pop_back();
+        if(line.empty() || line[0]=='#') continue;
+        if(layers.size()>=8) return false;
+        std::istringstream fields(line);
+        std::string values[7];
+        for(auto &v:values) if(!std::getline(fields,v,'\t') || v.empty()) return false;
+        if(fields.peek()!=std::char_traits<char>::eof() || line.back()=='\t') return false;
+        auto l=std::unique_ptr<CompositeLayer>(new CompositeLayer);
+        if(values[0]=="image") l->still=true;
+        else if(values[0]!="video") return false;
+        l->path=values[1];
+        if(l->path.find('\0')!=std::string::npos) return false;
+        auto number=[](const std::string &str,auto &value) {
+            std::istringstream in(str);
+            in.imbue(std::locale::classic());
+            in >> std::noskipws >> value;
+            return !in.fail() && in.eof();
+        };
+        if(!number(values[2],l->x) || !number(values[3],l->y) ||
+           !number(values[4],l->w) || !number(values[5],l->h) ||
+           !number(values[6],l->opacity)) return false;
+        layers.push_back(std::move(l));
+    }
+    return input.eof() && !input.bad() && !layers.empty();
 }
 
 bool concatNormalized(const std::string &first, const std::string &secondClip,
@@ -2527,6 +2568,19 @@ CK_DLL_SFUN(video_watermark) {
            overlayVideo(base,layer,dest,w,h,fps,x,y,lw,lh,opacity,rate,channels,-1,0,0,1,0,true)) RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_multilayer) {
+    RETURN->v_int=0;
+    try {
+        auto base=GET_NEXT_STRING_SAFE(ARGS), manifest=GET_NEXT_STRING_SAFE(ARGS), dest=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS), h=GET_NEXT_INT(ARGS), fps=GET_NEXT_INT(ARGS);
+        auto rate=GET_NEXT_INT(ARGS), channels=GET_NEXT_INT(ARGS);
+        std::vector<std::unique_ptr<CompositeLayer>> layers;
+        if(w>=1 && w<=8192 && h>=1 && h<=8192 && fps>=1 && fps<=120 &&
+           rate>=8000 && rate<=96000 && channels>=1 && channels<=2 &&
+           readCompositeLayers(manifest,layers) &&
+           multilayerVideo(base,dest,w,h,fps,rate,channels,layers)) RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -2694,6 +2748,15 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"int","layerWidth");
     QUERY->add_arg(QUERY,"int","layerHeight");
     QUERY->add_arg(QUERY,"float","opacity");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_sfun(QUERY,video_multilayer,"int","multilayer");
+    QUERY->add_arg(QUERY,"string","baseClip");
+    QUERY->add_arg(QUERY,"string","manifest");
+    QUERY->add_arg(QUERY,"string","destination");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","fps");
     QUERY->add_arg(QUERY,"int","sampleRate");
     QUERY->add_arg(QUERY,"int","channels");
     return QUERY->end_class(QUERY);
