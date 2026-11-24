@@ -1463,3 +1463,69 @@ check(clip.blue()==0.5);
 check(clip.saveFrame("clip-object-curve.ppm"));
 """,6,p)
     assert clip_ppm("clip-object-curve.ppm")==bytes((0,0,128))*256
+
+    (p/"track-input.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nFirst\n\n2\n00:00:01,500 --> 00:00:03,000\nSecond\n\n",encoding="utf-8")
+    run("subtitle", """
+SubtitleTrack a;
+SubtitleTrack b;
+check(a.count()==0);
+check(!a.save("track-empty.srt"));
+check(a.load("track-input.srt"));
+check(a.count()==2 && b.count()==0);
+check(a.startTime(0)==1.0 && a.endTime(0)==2.0);
+check(a.text(0)=="First");
+check(a.startTime(99)==-1.0 && a.text(99)=="");
+check(a.textAt(0.5)=="");
+check(a.textAt(1.0)=="First");
+check(a.textAt(1.75)=="First\\nSecond");
+check(a.textAt(2.0)=="Second");
+check(a.textAt(3.0)=="");
+check(a.offset()==0.0 && a.timeScale()==1.0);
+0.5 => a.offset;
+2.0 => a.timeScale;
+check(a.offset()==0.5 && a.timeScale()==2.0);
+check(a.textAt(2.5)=="First");
+check(a.textAt(4.0)=="First\\nSecond");
+check(a.save("track-shifted.vtt"));
+check(!a.save("track-shifted.vtt"));
+check(a.startTime(0)==1.0);
+check(!a.load("missing.srt"));
+check(a.count()==2 && a.offset()==0.5);
+a.timeScale(0.0);
+check(a.timeScale()==2.0);
+-100.0 => a.offset;
+check(!a.save("track-negative.srt"));
+a.reset();
+check(a.offset()==0.0 && a.timeScale()==1.0);
+check(a.set(0,1000,2000,"Edited"));
+check(a.add(3000,4000,"Third"));
+check(a.count()==3 && a.text(2)=="Third");
+check(!a.add(2000,3000,"Out of order"));
+check(!a.set(0,2000,3000,"Out of order"));
+check(!a.add(4000,5000,"<markup>"));
+check(!a.add(5000,4000,"Invalid"));
+check(a.remove(1));
+check(a.count()==2 && a.text(1)=="Third");
+check(!a.remove(99));
+check(a.save("track-edited.srt"));
+check(b.load("track-input.srt"));
+check(b.text(0)=="First" && a.text(0)=="Edited");
+a.clear();
+check(a.count()==0 && b.count()==2);
+""",38,p)
+    assert (p/"track-shifted.vtt").read_bytes()==b"WEBVTT\n\n00:00:02.500 --> 00:00:04.500\nFirst\n\n00:00:03.500 --> 00:00:06.500\nSecond\n\n"
+    assert (p/"track-edited.srt").read_bytes()==b"1\n00:00:01,000 --> 00:00:02,000\nEdited\n\n2\n00:00:03,000 --> 00:00:04,000\nThird\n\n"
+    assert not (p/"track-empty.srt").exists() and not (p/"track-negative.srt").exists()
+    run("subtitle", """
+@import "KeyframeIO";
+SubtitleTrack captions;
+KeyframeCurve delay;
+check(captions.load("track-input.srt"));
+check(delay.add(0.0,0.0,"linear"));
+check(delay.add(2.0,2.0,"linear"));
+delay.valueAt(1.0) => captions.offset;
+check(captions.offset()==1.0);
+check(captions.textAt(2.0)=="First");
+check(captions.save("track-curve.srt"));
+""",6,p)
+    assert (p/"track-curve.srt").read_bytes()==b"1\n00:00:02,000 --> 00:00:03,000\nFirst\n\n2\n00:00:02,500 --> 00:00:04,000\nSecond\n\n"
