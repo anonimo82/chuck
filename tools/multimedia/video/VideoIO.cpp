@@ -6,6 +6,8 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
 #include <libavutil/mem.h>
+#include <libavutil/audio_fifo.h>
+#include <libswresample/swresample.h>
 }
 #include <cstdio>
 #include <sndfile.h>
@@ -699,14 +701,152 @@ bool encodeSequence(const std::string &prefix, const std::string &dest, int coun
 
 // Transcode one video stream and copy compatible audio streams.
 // Reject unsupported extra streams instead of silently discarding them.
+
+// Audio transcoder for continuous mono/stereo tracks. The first presentation
+// timestamp anchors the sample clock; reject discontinuities instead of hiding them.
+struct AudioEncoder {
+    Codec dec, enc;
+    Frame decoded, converted, pending;
+    Packet packet;
+    SwrContext *swr = nullptr;
+    AVAudioFifo *fifo = nullptr;
+    AVStream *src = nullptr, *dst = nullptr;
+    AVFormatContext *output = nullptr;
+    int64_t nextPts = AV_NOPTS_VALUE, firstPts = AV_NOPTS_VALUE, inputSamples = 0;
+    ~AudioEncoder() { swr_free(&swr); if(fifo) av_audio_fifo_free(fifo); }
+    bool open(AVStream *source, AVFormatContext *out, bool opus, int kbps) {
+        src = source; output = out;
+        const auto *decoder = avcodec_find_decoder(src->codecpar->codec_id);
+        const auto *encoder = avcodec_find_encoder_by_name(opus ? "libopus" : "aac");
+        if(!decoder || !encoder || !decoded.p || !converted.p || !pending.p || !packet.p) return false;
+        dec.ctx = avcodec_alloc_context3(decoder);
+        enc.ctx = avcodec_alloc_context3(encoder);
+        if(!dec.ctx || !enc.ctx || avcodec_parameters_to_context(dec.ctx, src->codecpar) < 0) return false;
+        dec.ctx->pkt_timebase = src->time_base;
+        if(avcodec_open2(dec.ctx, decoder, nullptr) < 0) return false;
+        int channels = dec.ctx->ch_layout.nb_channels;
+        if(channels < 1 || channels > 2 || dec.ctx->sample_rate <= 0 ||
+           dec.ctx->sample_fmt == AV_SAMPLE_FMT_NONE) return false;
+        av_channel_layout_default(&enc.ctx->ch_layout, channels);
+        // Only canonical mono/stereo layouts are accepted in this initial API.
+        if(av_channel_layout_compare(&dec.ctx->ch_layout, &enc.ctx->ch_layout) != 0) return false;
+        enc.ctx->sample_rate = 48000;
+        enc.ctx->sample_fmt = opus ? AV_SAMPLE_FMT_FLT : AV_SAMPLE_FMT_FLTP;
+        enc.ctx->time_base = AVRational{1,48000};
+        enc.ctx->bit_rate = static_cast<int64_t>(kbps) * 1000;
+        if(out->oformat->flags & AVFMT_GLOBALHEADER) enc.ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+        if(avcodec_open2(enc.ctx, encoder, nullptr) < 0 || enc.ctx->frame_size <= 0) return false;
+        if(swr_alloc_set_opts2(&swr, &enc.ctx->ch_layout, enc.ctx->sample_fmt, enc.ctx->sample_rate,
+                              &dec.ctx->ch_layout, dec.ctx->sample_fmt, dec.ctx->sample_rate, 0, nullptr) < 0 ||
+           !swr || swr_init(swr) < 0) return false;
+        fifo = av_audio_fifo_alloc(enc.ctx->sample_fmt, channels, enc.ctx->frame_size);
+        if(!fifo) return false;
+        dst = avformat_new_stream(out, nullptr);
+        if(!dst || avcodec_parameters_from_context(dst->codecpar, enc.ctx) < 0) return false;
+        dst->time_base = enc.ctx->time_base;
+        dst->disposition = src->disposition;
+        return av_dict_copy(&dst->metadata, src->metadata, 0) >= 0;
+    }
+    bool drainEncoder(bool flush) {
+        for(;;) {
+            int ret = avcodec_receive_packet(enc.ctx, packet.p);
+            if(ret == AVERROR_EOF) return flush;
+            if(ret == AVERROR(EAGAIN)) return !flush;
+            if(ret < 0) return false;
+            av_packet_rescale_ts(packet.p, enc.ctx->time_base, dst->time_base);
+            packet.p->stream_index = dst->index;
+            int written = av_interleaved_write_frame(output, packet.p);
+            av_packet_unref(packet.p);
+            if(written < 0) return false;
+        }
+    }
+    bool prepare(AVFrame *f, int n) {
+        av_frame_unref(f);
+        f->nb_samples = n;
+        f->format = enc.ctx->sample_fmt;
+        f->sample_rate = enc.ctx->sample_rate;
+        return av_channel_layout_copy(&f->ch_layout, &enc.ctx->ch_layout) >= 0 &&
+               av_frame_get_buffer(f, 0) >= 0;
+    }
+    bool emit(bool last) {
+        const int block = enc.ctx->frame_size;
+        while(av_audio_fifo_size(fifo) >= block || (last && av_audio_fifo_size(fifo) > 0)) {
+            const int n = std::min(block, av_audio_fifo_size(fifo));
+            // AAC and libopus support small final frames; otherwise pad explicitly.
+            const int size = n < block && !(enc.ctx->codec->capabilities & AV_CODEC_CAP_SMALL_LAST_FRAME)
+                ? block : n;
+            if(!prepare(pending.p, size) ||
+               av_audio_fifo_read(fifo, reinterpret_cast<void **>(pending.p->extended_data), n) != n)
+                return false;
+            if(size > n && av_samples_set_silence(pending.p->extended_data, n, size-n,
+                enc.ctx->ch_layout.nb_channels, enc.ctx->sample_fmt) < 0) return false;
+            pending.p->pts = nextPts;
+            nextPts += size;
+            if(avcodec_send_frame(enc.ctx, pending.p) < 0 || !drainEncoder(false)) return false;
+        }
+        return true;
+    }
+    bool resample(const uint8_t **data, int n) {
+        int capacity = swr_get_out_samples(swr, n);
+        if(capacity < 0 || capacity > 2097152) return false;
+        if(capacity == 0) return true;
+        if(!prepare(converted.p, capacity)) return false;
+        int got = swr_convert(swr, converted.p->extended_data, capacity, data, n);
+        if(got < 0) return false;
+        if(got && av_audio_fifo_write(fifo, reinterpret_cast<void **>(converted.p->extended_data), got) != got)
+            return false;
+        return emit(false);
+    }
+    bool drainDecoder(bool flush) {
+        for(;;) {
+            int ret = avcodec_receive_frame(dec.ctx, decoded.p);
+            if(ret == AVERROR_EOF) return flush;
+            if(ret == AVERROR(EAGAIN)) return !flush;
+            if(ret < 0) return false;
+            auto *f = decoded.p;
+            if(f->sample_rate != dec.ctx->sample_rate || f->format != dec.ctx->sample_fmt ||
+               av_channel_layout_compare(&f->ch_layout, &dec.ctx->ch_layout) != 0 ||
+               f->nb_samples <= 0 || f->nb_samples > 1048576) return false;
+            int64_t pts = f->best_effort_timestamp;
+            if(pts == AV_NOPTS_VALUE) return false;
+            if(firstPts == AV_NOPTS_VALUE) {
+                firstPts = pts;
+                nextPts = av_rescale_q(pts, src->time_base, enc.ctx->time_base);
+            }
+            // Allow container timestamp quantization (at least two milliseconds).
+            double elapsed = (static_cast<double>(pts) - static_cast<double>(firstPts)) * av_q2d(src->time_base);
+            double expected = static_cast<double>(inputSamples) / dec.ctx->sample_rate;
+            if(std::abs(elapsed - expected) > std::max(0.002, 2.0 * av_q2d(src->time_base)))
+                return false;
+            const uint8_t *planes[2] = {f->extended_data[0], nullptr};
+            if(av_sample_fmt_is_planar(dec.ctx->sample_fmt) && dec.ctx->ch_layout.nb_channels == 2)
+                planes[1] = f->extended_data[1];
+            if(!resample(planes, f->nb_samples)) return false;
+            inputSamples += f->nb_samples;
+            av_frame_unref(f);
+        }
+    }
+    bool push(AVPacket *p) {
+        return avcodec_send_packet(dec.ctx, p) >= 0 && drainDecoder(false);
+    }
+    bool finish() {
+        if(avcodec_send_packet(dec.ctx, nullptr) < 0 || !drainDecoder(true) ||
+           firstPts == AV_NOPTS_VALUE) return false;
+        // The flush capacity is an upper bound for the remaining resampled samples.
+        if(!resample(nullptr, 0) || !emit(true)) return false;
+        return avcodec_send_frame(enc.ctx, nullptr) >= 0 && drainEncoder(true);
+    }
+};
+
 bool transcode(const std::string &source, const std::string &dest,
-               int w, int h, const std::string &mode, int quality) {
+               int w, int h, const std::string &mode, int quality, int audioKbps = 0) {
     const bool ffv1 = mode == "ffv1", h264 = mode == "h264", vp9 = mode == "vp9";
     const char *container = ffv1 ? "matroska" : h264 ? "mp4" : vp9 ? "webm" : nullptr;
     const std::string ext = ffv1 ? ".mkv" : h264 ? ".mp4" : ".webm";
     if(!container || dest.size() < ext.size() || dest.substr(dest.size()-ext.size()) != ext ||
        w < 1 || h < 1 || w > 8192 || h > 8192 || quality < 0 || quality > 51 ||
        (ffv1 && quality != 0) || (!ffv1 && ((w & 1) || (h & 1)))) return false;
+    if(audioKbps && (ffv1 || audioKbps < 32 || audioKbps > 256)) return false;
     Input in;
     if(!in.open(source)) return false;
     for(unsigned i = 0; i < in.ctx->nb_streams; ++i) {
@@ -753,9 +893,17 @@ bool transcode(const std::string &source, const std::string &dest,
     dst->sample_aspect_ratio = enc.ctx->sample_aspect_ratio;
     std::vector<int> mapping(in.ctx->nb_streams, -1);
     mapping[in.video] = dst->index;
+    std::vector<std::unique_ptr<AudioEncoder>> audioEncoders(in.ctx->nb_streams);
     for(unsigned i = 0; i < in.ctx->nb_streams; ++i) {
         if(static_cast<int>(i) == in.video) continue;
         auto *audio = in.ctx->streams[i];
+        if(audioKbps) {
+            auto encoder = std::make_unique<AudioEncoder>();
+            if(!encoder->open(audio, out.ctx, vp9, audioKbps)) return false;
+            mapping[i] = encoder->dst->index;
+            audioEncoders[i] = std::move(encoder);
+            continue;
+        }
         if(avformat_query_codec(out.ctx->oformat, audio->codecpar->codec_id, FF_COMPLIANCE_NORMAL) <= 0)
             return false;
         auto *copy = avformat_new_stream(out.ctx, nullptr);
@@ -823,6 +971,10 @@ bool transcode(const std::string &source, const std::string &dest,
             int sent = avcodec_send_packet(dec.ctx, inputPacket.p);
             av_packet_unref(inputPacket.p);
             if(sent < 0 || !drainDecoder(false)) return false;
+        } else if(audioEncoders[i]) {
+            bool ok = audioEncoders[i]->push(inputPacket.p);
+            av_packet_unref(inputPacket.p);
+            if(!ok) return false;
         } else {
             auto *packet = inputPacket.p;
             auto *audio = out.ctx->streams[mapping[i]];
@@ -837,6 +989,7 @@ bool transcode(const std::string &source, const std::string &dest,
     if(ret != AVERROR_EOF || avcodec_send_packet(dec.ctx, nullptr) < 0 ||
        !drainDecoder(true) || previous == AV_NOPTS_VALUE ||
        avcodec_send_frame(enc.ctx, nullptr) < 0 || !drainEncoder(true)) return false;
+    for(auto &audio : audioEncoders) if(audio && !audio->finish()) return false;
     return out.finish();
 }
 
@@ -990,6 +1143,22 @@ CK_DLL_SFUN(video_convert_audio) {
            convertAudio(in, dest, static_cast<int>(track))) RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_transcode_av) {
+    RETURN->v_int = 0;
+    try {
+        auto source = GET_NEXT_STRING_SAFE(ARGS);
+        auto dest = GET_NEXT_STRING_SAFE(ARGS);
+        auto w = GET_NEXT_INT(ARGS);
+        auto h = GET_NEXT_INT(ARGS);
+        auto mode = GET_NEXT_STRING_SAFE(ARGS);
+        auto quality = GET_NEXT_INT(ARGS);
+        auto kbps = GET_NEXT_INT(ARGS);
+        if(w >= 1 && w <= 8192 && h >= 1 && h <= 8192 && quality >= 0 && quality <= 51 &&
+           kbps >= 32 && kbps <= 256 && (mode == "h264" || mode == "vp9") &&
+           transcode(source, dest, static_cast<int>(w), static_cast<int>(h), mode,
+                     static_cast<int>(quality), static_cast<int>(kbps))) RETURN->v_int = 1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -1047,5 +1216,13 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "string", "source");
     QUERY->add_arg(QUERY, "string", "destination");
     QUERY->add_arg(QUERY, "int", "track");
+    QUERY->add_sfun(QUERY, video_transcode_av, "int", "transcodeAV");
+    QUERY->add_arg(QUERY, "string", "source");
+    QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_arg(QUERY, "int", "width");
+    QUERY->add_arg(QUERY, "int", "height");
+    QUERY->add_arg(QUERY, "string", "codec");
+    QUERY->add_arg(QUERY, "int", "quality");
+    QUERY->add_arg(QUERY, "int", "audioKbps");
     return QUERY->end_class(QUERY);
 }
