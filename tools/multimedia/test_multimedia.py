@@ -1595,3 +1595,82 @@ check(image.save("memory-video-blue.png"));
 """,11,p)
     assert decoded("memory-video-frame.png")==bytes((0,255,0))+red[3:]
     assert decoded("memory-video-blue.png")==bytes((0,0,128))*256
+
+    # Incremental writer with raster synthesis and decoder -> raster -> encoder exchange.
+    run("video", """
+@import "RasterIO";
+VideoWriter writer;
+RasterImage image;
+VideoClip clip;
+int pixels[1024];
+int bad[4];
+check(!writer.active());
+check(writer.frames()==0);
+check(!writer.appendFrame(pixels));
+check(!writer.finish());
+check(!writer.open("writer-invalid.mp4",16,16,2));
+check(!writer.open("writer-invalid.mkv",0,16,2));
+check(writer.open("writer-created.mkv",16,16,2));
+check(writer.active());
+check(!writer.open("writer-other.mkv",16,16,2));
+check(!writer.appendFrame(bad));
+check(!writer.appendFrame(pixels));
+check(writer.frames()==0);
+check(image.create(16,16));
+for(0 => int y; y<16; y++)
+    for(0 => int x; x<16; x++) image.setPixel(x,y,255,0,0,255);
+check(image.exportPixels(pixels));
+check(writer.appendFrame(pixels));
+check(writer.frames()==1);
+for(0 => int y; y<16; y++)
+    for(0 => int x; x<16; x++) image.setPixel(x,y,0,0,255,255);
+check(image.exportPixels(pixels));
+256 => pixels[0];
+check(!writer.appendFrame(pixels));
+check(writer.frames()==1);
+0 => pixels[0];
+check(writer.appendFrame(pixels));
+check(writer.frames()==2);
+check(writer.finish());
+check(!writer.active() && writer.frames()==0);
+check(!writer.open("writer-created.mkv",16,16,2));
+check(writer.open("writer-empty.mkv",16,16,2));
+check(!writer.finish());
+check(writer.open("writer-abort.mkv",16,16,2));
+check(writer.appendFrame(pixels));
+writer.abort();
+check(!writer.active());
+check(clip.load("generated.mkv"));
+check(writer.open("writer-processed.mkv",16,16,2));
+0.5 => clip.red;
+check(clip.exportPixels(pixels));
+check(image.importPixels(16,16,pixels));
+check(image.setPixel(0,0,0,255,0,255));
+check(image.exportPixels(pixels));
+check(writer.appendFrame(pixels));
+check(clip.next()==1);
+check(clip.exportPixels(pixels));
+check(writer.appendFrame(pixels));
+check(writer.finish());
+""",40,p)
+    assert decoded("writer-created.mkv")==red+blue
+    assert decoded("writer-processed.mkv")==bytes((0,255,0))+bytes((128,0,0))*255+blue
+    assert not any((p/name).exists() for name in ("writer-invalid.mp4","writer-invalid.mkv",
+        "writer-other.mkv","writer-empty.mkv","writer-abort.mkv"))
+    run("video", """
+VideoWriter a;
+VideoWriter b;
+int pixels[1024];
+for(0 => int i; i<256; i++) 255 => pixels[4*i+3];
+check(a.open("writer-a.mkv",16,16,4));
+check(b.open("writer-b.mkv",16,16,4));
+check(a.appendFrame(pixels));
+check(b.appendFrame(pixels));
+check(a.frames()==1 && b.frames()==1);
+check(a.appendFrame(pixels));
+check(a.finish());
+check(b.active() && b.frames()==1);
+check(b.finish());
+""",9,p)
+    assert decoded("writer-a.mkv")==bytes(16*16*3*2)
+    assert decoded("writer-b.mkv")==bytes(16*16*3)
