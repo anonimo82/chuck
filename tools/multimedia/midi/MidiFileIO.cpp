@@ -78,6 +78,7 @@ CK_DLL_SFUN(midi_note) {
 namespace {
 struct MidiState {
     std::unique_ptr<smf::MidiFile> file;
+    bool generated=false;
     int transpose=0;
     double velocity=1;
     void reset() { transpose=0; velocity=1; }
@@ -86,6 +87,7 @@ struct MidiState {
         if(!load(*next,path)) return false;
         next->absoluteTicks();
         file=std::move(next);
+        generated=false;
         reset();
         return true;
     }
@@ -214,7 +216,125 @@ CK_DLL_MFUN(midi_sequence_reset) {
     if(auto *p=midiState(SELF,API)) p->reset();
 }
 CK_DLL_MFUN(midi_sequence_clear) {
-    if(auto *p=midiState(SELF,API)) { p->file.reset(); p->reset(); }
+    if(auto *p=midiState(SELF,API)) { p->file.reset(); p->generated=false; p->reset(); }
+}
+
+
+namespace {
+bool midiTrack(MidiState *p,t_CKINT t) {
+    return p && p->file && p->generated && t>=0 && t<p->file->getTrackCount();
+}
+bool midiTick(t_CKINT t) { return t>=0 && t<=0x0fffffff; }
+bool midiChannel(t_CKINT c) { return c>=0 && c<=15; }
+bool midiByte(t_CKINT v) { return v>=0 && v<=127; }
+// Transactional edits. Bound generated sequences to one million events.
+template<class Edit>
+bool midiEdit(MidiState *p,size_t added,Edit edit) {
+    if(!p || !p->file || !p->generated) return false;
+    size_t total=0;
+    for(int t=0;t<p->file->getTrackCount();++t) total+=(*p->file)[t].size();
+    if(total>1000000 || added>1000000-total) return false;
+    auto copy=std::make_unique<smf::MidiFile>(*p->file);
+    edit(*copy);
+    copy->sortTracks();
+    p->file=std::move(copy);
+    return true;
+}
+}
+CK_DLL_MFUN(midi_sequence_create) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API);
+        auto tpq=GET_NEXT_INT(ARGS); auto bpm=GET_NEXT_FLOAT(ARGS);
+        if(!p || tpq<1 || tpq>32767 || !std::isfinite(bpm) || bpm<4 || bpm>1000) return;
+        auto next=std::make_unique<smf::MidiFile>();
+        next->setTicksPerQuarterNote(static_cast<int>(tpq));
+        next->addTempo(0,0,bpm);
+        next->sortTracks();
+        p->file=std::move(next); p->generated=true; p->reset(); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_add_track) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=midiState(SELF,API);
+        if(!p || !p->file || !p->generated || p->file->getTrackCount()>=256) return;
+        int index=p->file->getTrackCount();
+        if(midiEdit(p,0,[](smf::MidiFile &m){m.addTrack();})) RETURN->v_int=index;
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_add_note) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API);
+        auto track=GET_NEXT_INT(ARGS),tick=GET_NEXT_INT(ARGS),length=GET_NEXT_INT(ARGS);
+        auto channel=GET_NEXT_INT(ARGS),pitch=GET_NEXT_INT(ARGS),velocity=GET_NEXT_INT(ARGS);
+        if(!midiTrack(p,track)||!midiTick(tick)||length<1||length>0x0fffffff-tick||
+           !midiChannel(channel)||!midiByte(pitch)||velocity<1||velocity>127) return;
+        RETURN->v_int=midiEdit(p,2,[&](smf::MidiFile &m){
+            m.addNoteOn(track,tick,channel,pitch,velocity);
+            m.addNoteOff(track,tick+length,channel,pitch,0);
+        });
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_add_chord) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API);
+        auto track=GET_NEXT_INT(ARGS),tick=GET_NEXT_INT(ARGS),length=GET_NEXT_INT(ARGS),channel=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        auto velocity=GET_NEXT_INT(ARGS);
+        if(!midiTrack(p,track)||!midiTick(tick)||length<1||length>0x0fffffff-tick||
+           !midiChannel(channel)||!a||velocity<1||velocity>127) return;
+        auto n=API->object->array_int_size(a);
+        if(n<1||n>128) return;
+        bool seen[128]={};
+        std::vector<int> pitches;
+        for(t_CKINT i=0;i<n;++i) {
+            auto v=API->object->array_int_get_idx(a,i);
+            if(!midiByte(v)||seen[v]) return;
+            seen[v]=true; pitches.push_back(v);
+        }
+        RETURN->v_int=midiEdit(p,pitches.size()*2,[&](smf::MidiFile &m){
+            for(int pitch:pitches) {
+                m.addNoteOn(track,tick,channel,pitch,velocity);
+                m.addNoteOff(track,tick+length,channel,pitch,0);
+            }
+        });
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_add_cc) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API);
+        auto track=GET_NEXT_INT(ARGS),tick=GET_NEXT_INT(ARGS),channel=GET_NEXT_INT(ARGS);
+        auto controller=GET_NEXT_INT(ARGS),value=GET_NEXT_INT(ARGS);
+        if(!midiTrack(p,track)||!midiTick(tick)||!midiChannel(channel)||!midiByte(controller)||!midiByte(value)) return;
+        RETURN->v_int=midiEdit(p,1,[&](smf::MidiFile &m){m.addController(track,tick,channel,controller,value);});
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_add_program) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API);
+        auto track=GET_NEXT_INT(ARGS),tick=GET_NEXT_INT(ARGS),channel=GET_NEXT_INT(ARGS),program=GET_NEXT_INT(ARGS);
+        if(!midiTrack(p,track)||!midiTick(tick)||!midiChannel(channel)||!midiByte(program)) return;
+        RETURN->v_int=midiEdit(p,1,[&](smf::MidiFile &m){m.addPatchChange(track,tick,channel,program);});
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_add_tempo) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API);
+        auto tick=GET_NEXT_INT(ARGS); auto bpm=GET_NEXT_FLOAT(ARGS);
+        if(!midiTrack(p,0)||!midiTick(tick)||!std::isfinite(bpm)||bpm<4||bpm>1000) return;
+        // No ambiguous duplicate tempo changes at the same tick.
+        for(int i=0;i<(*p->file)[0].size();++i) {
+            auto &e=(*p->file)[0][i];
+            if(e.tick==tick && e.size()>=2 && e[0]==0xff && e[1]==0x51) return;
+        }
+        RETURN->v_int=midiEdit(p,1,[&](smf::MidiFile &m){m.addTempo(0,tick,bpm);});
+    } catch(...) {}
 }
 
 CK_DLL_QUERY(MidiFileIO) {
@@ -270,5 +390,37 @@ CK_DLL_QUERY(MidiFileIO) {
     QUERY->add_arg(QUERY,"float","value");
     QUERY->add_mfun(QUERY,midi_sequence_reset,"void","reset");
     QUERY->add_mfun(QUERY,midi_sequence_clear,"void","clear");
+    QUERY->add_mfun(QUERY,midi_sequence_create,"int","create");
+    QUERY->add_arg(QUERY,"int","ticksPerQuarter");
+    QUERY->add_arg(QUERY,"float","bpm");
+    QUERY->add_mfun(QUERY,midi_sequence_add_track,"int","addTrack");
+    QUERY->add_mfun(QUERY,midi_sequence_add_note,"int","addNote");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","tick");
+    QUERY->add_arg(QUERY,"int","length");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","pitch");
+    QUERY->add_arg(QUERY,"int","velocity");
+    QUERY->add_mfun(QUERY,midi_sequence_add_chord,"int","addChord");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","tick");
+    QUERY->add_arg(QUERY,"int","length");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int[]","pitches");
+    QUERY->add_arg(QUERY,"int","velocity");
+    QUERY->add_mfun(QUERY,midi_sequence_add_cc,"int","addCC");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","tick");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","controller");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,midi_sequence_add_program,"int","addProgram");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","tick");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","program");
+    QUERY->add_mfun(QUERY,midi_sequence_add_tempo,"int","addTempo");
+    QUERY->add_arg(QUERY,"int","tick");
+    QUERY->add_arg(QUERY,"float","bpm");
     return QUERY->end_class(QUERY);
 }
