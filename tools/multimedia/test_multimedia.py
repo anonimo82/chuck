@@ -237,3 +237,28 @@ check(!VideoIO.transcode("multi-audio.mkv", "incompatible.webm", 32, 24, "vp9", 
     assert audio_samples("multi-preserved.mkv", 1) == pcm2
     assert decoded("multi-preserved.mkv") == decoded("resized.mkv")
     assert not (p / "incompatible.webm").exists()
+
+    # Audio extraction preserves the selected stream rather than mixing tracks.
+    (p / "existing.wav").write_bytes(b"sentinel")
+    run("video", """
+check(VideoIO.audioTracks("multi-audio.mkv") == 2);
+check(VideoIO.audioTracks("generated.mkv") == 0);
+check(VideoIO.audioTracks("missing.mkv") == -1);
+check(VideoIO.extractAudio("multi-audio.mkv", "italian.wav", 0));
+check(VideoIO.extractAudio("multi-audio.mkv", "english.mka", 1));
+check(!VideoIO.extractAudio("multi-audio.mkv", "existing.wav", 0));
+check(!VideoIO.extractAudio("multi-audio.mkv", "invalid-track.wav", 2));
+check(!VideoIO.extractAudio("multi-audio.mkv", "negative-track.wav", -1));
+check(!VideoIO.extractAudio("generated.mkv", "silent.wav", 0));
+check(!VideoIO.extractAudio("multi-audio.mkv", "wrong-codec.mp3", 0));
+check(!VideoIO.extractAudio("missing.mkv", "missing-audio-output.wav", 0));
+check(!VideoIO.extractAudio("multi-audio.mkv", "wrong-extension.bin", 0));
+""", 12, p)
+    assert audio_samples("italian.wav", 0) == pcm
+    assert audio_samples("english.mka", 0) == pcm2
+    assert len(audio_tracks("english.mka")) == 1
+    assert audio_tracks("english.mka")[0]["tags"]["language"] == "eng"
+    assert (p / "existing.wav").read_bytes() == b"sentinel"
+    for name in ("invalid-track.wav", "negative-track.wav", "silent.wav", "wrong-codec.mp3",
+                 "missing-audio-output.wav", "wrong-extension.bin"):
+        assert not (p / name).exists(), name
