@@ -35,14 +35,22 @@ std::string format(const std::string &path) {
     if(ext == "tga") return "TGA";
     return "";
 }
+void report(MagickWand *w, const char *stage) {
+    ExceptionType severity;
+    char *message = MagickGetException(w, &severity);
+    std::fprintf(stderr, "[RasterIO] %s: %s\n", stage, message ? message : "unknown error");
+    if(message) MagickRelinquishMemory(message);
+}
 bool read(MagickWand *w, const std::string &path) {
     const auto fmt = format(path);
     if(fmt.empty() || !w) return false;
     // Explicit format and FILE* avoid ImageMagick filename pseudo-protocols.
     std::unique_ptr<FILE, decltype(&fclose)> f(fopen(path.c_str(), "rb"), fclose);
-    return f && MagickSetFormat(w, fmt.c_str()) != MagickFalse
-             && MagickReadImageFile(w, f.get()) != MagickFalse
-             && MagickSetIteratorIndex(w, 0) != MagickFalse;
+    if(!f) { std::fprintf(stderr, "[RasterIO] cannot open %s\n", path.c_str()); return false; }
+    if(MagickSetFormat(w, fmt.c_str()) == MagickFalse) { report(w, "set format"); return false; }
+    if(MagickReadImageFile(w, f.get()) == MagickFalse) { report(w, "decode"); return false; }
+    if(MagickSetIteratorIndex(w, 0) == MagickFalse) { report(w, "select frame"); return false; }
+    return true;
 }
 }
 CK_DLL_SFUN(raster_width) {
@@ -70,10 +78,10 @@ CK_DLL_SFUN(raster_convert) {
         if(fmt.empty()) return;
         auto w = makeWand();
         if(!read(w.get(), source)) return;
-        if(MagickSetImageFormat(w.get(), fmt.c_str()) == MagickFalse) return;
+        if(MagickSetImageFormat(w.get(), fmt.c_str()) == MagickFalse) { report(w.get(), "output format"); return; }
         size_t size = 0;
         unsigned char *blob = MagickGetImageBlob(w.get(), &size);
-        if(!blob) return;
+        if(!blob) { report(w.get(), "encode"); return; }
         std::unique_ptr<unsigned char, decltype(&MagickRelinquishMemory)> data(blob, MagickRelinquishMemory);
         // Exclusive creation: never overwrite an existing file.
         FILE *out = mediaio::openNew(dest.c_str());
