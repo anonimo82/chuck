@@ -86,3 +86,38 @@ check(!VideoIO.encodeSequence("seq", "wrong.mp4", 2, 2));
     for name in ("invalid.mkv", "missing.mkv", "zero.mkv", "bad-rate.mkv", "wrong.mp4"):
         assert not (p / name).exists(), name
     assert decoded("generated.mkv") == red + blue
+
+    # Optional encoders: availability is determined by the linked FFmpeg build.
+    for mode, ext, quality, codec in (("h264", "mp4", 23, "h264"), ("vp9", "webm", 32, "vp9")):
+        target = "compressed." + ext
+        run("video", f"""
+if(VideoIO.encoderAvailable("{mode}")) {{
+    check(VideoIO.encodeSequence("seq", "{target}", 2, 2, "{mode}", {quality}));
+    check(VideoIO.width("{target}") == 16);
+    check(VideoIO.height("{target}") == 16);
+    check(!VideoIO.encodeSequence("seq", "{target}", 2, 2, "{mode}", {quality}));
+}} else {{
+    <<< "SKIP encoder {mode} unavailable" >>>;
+    check(!VideoIO.encodeSequence("seq", "{target}", 2, 2, "{mode}", {quality}));
+    check(!VideoIO.encoderAvailable("{mode}"));
+    check(!VideoIO.encodeSequence("seq", "wrong.bin", 2, 2, "{mode}", {quality}));
+    check(!VideoIO.encodeSequence("seq", "{target}", 2, 2, "{mode}", -1));
+}}
+""", 4, p)
+        if (p / target).exists():
+            actual = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", str(p / target)], timeout=30).decode().strip()
+            assert actual == codec, actual
+            pixels = decoded(target)
+            assert len(pixels) == len(red + blue)
+            # Lossy RGB conversion: check color dominance and frame order.
+            n = len(red)
+            assert pixels[0] > 200 and pixels[2] < 50
+            assert pixels[n] < 50 and pixels[n + 2] > 200
+    run("video", """
+check(!VideoIO.encoderAvailable("unknown"));
+check(!VideoIO.encodeSequence("seq", "bad-codec.mkv", 2, 2, "unknown", 20));
+check(!VideoIO.encodeSequence("seq", "bad-quality.mp4", 2, 2, "h264", 52));
+check(!VideoIO.encodeSequence("seq", "bad-container.webm", 2, 2, "h264", 23));
+""", 4, p)
+    for name in ("bad-codec.mkv", "bad-quality.mp4", "bad-container.webm"):
+        assert not (p / name).exists(), name
