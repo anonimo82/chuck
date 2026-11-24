@@ -81,3 +81,15 @@ Nine additional smoke checks, byte-level frame checks and lossless reconstructio
 ### Transcoding with audio preservation
 
 The existing transcode API now copies all compatible audio streams while decoding, resizing and encoding the video. Audio codec parameters, language metadata, dispositions and packet timestamps are copied, subject to destination container rules and timestamp rounding. Audio is not resampled, re-encoded, trimmed or independently synchronized. For example, FFV1/PCM into MKV is supported; PCM into WebM is rejected rather than discarded. Compatibility is checked conservatively using avformat_query_codec. Chapter and arbitrary container metadata preservation is not guaranteed. Tests for two independent PCM tracks and language tags are included but have not yet been executed.
+
+### Extract individual audio tracks
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.audioTracks("movie.mkv") >>>;
+<<< VideoIO.extractAudio("movie.mkv", "sound.mka", 0) >>>;
+```
+
+audioTracks returns the number of audio streams in a readable video, zero for a silent video, or -1 on failure. extractAudio selects a zero-based audio ordinal (not a container stream ID), copies its packets into a new audio-only file and returns 1 on success or 0 on failure. Supported lowercase extensions: .mka (Matroska audio), .wav, .flac, .mp3, .m4a, .ogg and .opus, provided the existing codec is compatible with the target muxer. M4A is limited to AAC/ALAC, and FLAC, MP3 and Opus extensions require their corresponding codecs. No decoding, mixing, resampling or audio transcoding is performed. Stream metadata and timestamps are copied subject to container limitations; WAV and other formats cannot necessarily preserve original timing or language metadata. The destination must not exist. Ordinary failures remove incomplete outputs. Offline trusted local files only.
+
+Twelve new smoke checks and independent sample/metadata comparisons are included, pending execution.
