@@ -4,6 +4,9 @@
 #include "../subtitle/subtitle_io.h"
 #include "../keyframe/keyframe.h"
 #include <array>
+#include <limits>
+#include <new>
+#include <cstdint>
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -2865,6 +2868,145 @@ CK_DLL_SFUN(video_animate_overlay) {
     } catch(...) {}
 }
 
+
+namespace {
+struct VideoClipState {
+    std::unique_ptr<OverlayReader> reader;
+    int64_t index=0;
+    std::array<double,4> controls{{1,1,1,0}};
+    void reset() { controls={{1,1,1,0}}; }
+    bool open(const std::string &path) {
+        auto next=std::make_unique<OverlayReader>();
+        if(!next->open(path)) return false;
+        reader=std::move(next); index=0; reset();
+        return true;
+    }
+    int advance() {
+        if(!reader) return -1;
+        if(reader->eof) return 0;
+        // Read ahead before committing the new current frame.
+        Frame future;
+        if(!future.p || !reader->read(future.p)) {
+            // Decoder state after an error cannot be retried safely.
+            reader.reset(); index=0; return -1;
+        }
+        std::swap(reader->current.p,reader->next.p);
+        std::swap(reader->next.p,future.p);
+        ++index;
+        return 1;
+    }
+    bool save(const std::string &path,int w,int h) {
+        if(!reader || w<1 || h<1 || w>8192 || h>8192 ||
+           static_cast<int64_t>(w)*h>16777216) return false;
+        Frame image;
+        if(!image.p) return false;
+        image.p->width=w; image.p->height=h; image.p->format=AV_PIX_FMT_BGR0;
+        if(av_frame_get_buffer(image.p,32)<0 || !reader->render(image.p)) return false;
+        for(int y=0;y<h;++y) {
+            auto *row=image.p->data[0]+static_cast<size_t>(y)*image.p->linesize[0];
+            for(int x=0;x<w;++x) for(int c=0;c<3;++c) {
+                double v=row[x*4+c]*controls[2-c]+255*controls[3];
+                row[x*4+c]=static_cast<uint8_t>(std::lround(std::max(0.0,std::min(255.0,v))));
+            }
+        }
+        return writeFramePPM(image.p,path);
+    }
+};
+t_CKUINT videoClipOffset=0;
+VideoClipState *clipState(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<VideoClipState *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,videoClipOffset)));
+}
+double clipNaN() { return std::numeric_limits<double>::quiet_NaN(); }
+double clipGet(VideoClipState *p,size_t i) { return p?p->controls[i]:clipNaN(); }
+double clipSet(VideoClipState *p,size_t i,double v) {
+    if(!p || !std::isfinite(v) || (i<3 && (v<0 || v>4)) ||
+       (i==3 && (v< -1 || v>1))) return clipNaN();
+    return p->controls[i]=v;
+}
+}
+CK_DLL_CTOR(video_clip_ctor) {
+    static_assert(sizeof(t_CKUINT)>=sizeof(uintptr_t),"ChucK integer must hold native pointer");
+    OBJ_MEMBER_UINT(SELF,videoClipOffset)=0;
+    OBJ_MEMBER_UINT(SELF,videoClipOffset)=reinterpret_cast<uintptr_t>(new(std::nothrow) VideoClipState);
+}
+CK_DLL_DTOR(video_clip_dtor) {
+    delete clipState(SELF,API);
+    OBJ_MEMBER_UINT(SELF,videoClipOffset)=0;
+}
+CK_DLL_MFUN(video_clip_load) {
+    RETURN->v_int=0;
+    try {
+        auto *p=clipState(SELF,API);
+        auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(p && p->open(path)) RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_clip_loaded) {
+    auto *p=clipState(SELF,API);
+    RETURN->v_int=p && p->reader;
+}
+CK_DLL_MFUN(video_clip_next) {
+    RETURN->v_int=-1;
+    try { if(auto *p=clipState(SELF,API)) RETURN->v_int=p->advance(); } catch(...) {}
+}
+CK_DLL_MFUN(video_clip_index) {
+    auto *p=clipState(SELF,API);
+    RETURN->v_int=p && p->reader?p->index:-1;
+}
+CK_DLL_MFUN(video_clip_time) {
+    auto *p=clipState(SELF,API);
+    RETURN->v_float=-1;
+    if(p && p->reader) {
+        auto &r=*p->reader;
+        RETURN->v_float=(r.current.p->best_effort_timestamp-r.origin)*av_q2d(r.stream->time_base);
+    }
+}
+CK_DLL_MFUN(video_clip_width) {
+    auto *p=clipState(SELF,API);
+    RETURN->v_int=p && p->reader?p->reader->current.p->width:0;
+}
+CK_DLL_MFUN(video_clip_height) {
+    auto *p=clipState(SELF,API);
+    RETURN->v_int=p && p->reader?p->reader->current.p->height:0;
+}
+CK_DLL_MFUN(video_clip_eof) {
+    auto *p=clipState(SELF,API);
+    RETURN->v_int=p && p->reader && p->reader->eof;
+}
+CK_DLL_MFUN(video_clip_save) {
+    RETURN->v_int=0;
+    try {
+        auto *p=clipState(SELF,API);
+        auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(p && p->reader && p->save(path,p->reader->current.p->width,p->reader->current.p->height))
+            RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_clip_save_scaled) {
+    RETURN->v_int=0;
+    try {
+        auto *p=clipState(SELF,API);
+        auto path=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        if(p && w>=1 && w<=8192 && h>=1 && h<=8192 &&
+           p->save(path,static_cast<int>(w),static_cast<int>(h))) RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_clip_reset) {
+    if(auto *p=clipState(SELF,API)) p->reset();
+}
+CK_DLL_MFUN(video_clip_clear) {
+    if(auto *p=clipState(SELF,API)) { p->reader.reset(); p->index=0; p->reset(); }
+}
+CK_DLL_MFUN(video_clip_get_red) { RETURN->v_float=clipGet(clipState(SELF,API),0); }
+CK_DLL_MFUN(video_clip_set_red) { RETURN->v_float=clipSet(clipState(SELF,API),0,GET_NEXT_FLOAT(ARGS)); }
+CK_DLL_MFUN(video_clip_get_green) { RETURN->v_float=clipGet(clipState(SELF,API),1); }
+CK_DLL_MFUN(video_clip_set_green) { RETURN->v_float=clipSet(clipState(SELF,API),1,GET_NEXT_FLOAT(ARGS)); }
+CK_DLL_MFUN(video_clip_get_blue) { RETURN->v_float=clipGet(clipState(SELF,API),2); }
+CK_DLL_MFUN(video_clip_set_blue) { RETURN->v_float=clipSet(clipState(SELF,API),2,GET_NEXT_FLOAT(ARGS)); }
+CK_DLL_MFUN(video_clip_get_brightness) { RETURN->v_float=clipGet(clipState(SELF,API),3); }
+CK_DLL_MFUN(video_clip_set_brightness) { RETURN->v_float=clipSet(clipState(SELF,API),3,GET_NEXT_FLOAT(ARGS)); }
+
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -3070,5 +3212,40 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_arg(QUERY,"int","fps");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"VideoClip","Object");
+    videoClipOffset=QUERY->add_mvar(QUERY,"int","@videoClipNative",FALSE);
+    if(videoClipOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,video_clip_ctor);
+    QUERY->add_dtor(QUERY,video_clip_dtor);
+    QUERY->add_mfun(QUERY,video_clip_load,"int","load");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,video_clip_loaded,"int","loaded");
+    QUERY->add_mfun(QUERY,video_clip_next,"int","next");
+    QUERY->add_mfun(QUERY,video_clip_index,"int","frameIndex");
+    QUERY->add_mfun(QUERY,video_clip_time,"float","timeSeconds");
+    QUERY->add_mfun(QUERY,video_clip_width,"int","width");
+    QUERY->add_mfun(QUERY,video_clip_height,"int","height");
+    QUERY->add_mfun(QUERY,video_clip_eof,"int","eof");
+    QUERY->add_mfun(QUERY,video_clip_save,"int","saveFrame");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,video_clip_save_scaled,"int","saveFrame");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_mfun(QUERY,video_clip_reset,"void","reset");
+    QUERY->add_mfun(QUERY,video_clip_clear,"void","clear");
+    QUERY->add_mfun(QUERY,video_clip_get_red,"float","red");
+    QUERY->add_mfun(QUERY,video_clip_set_red,"float","red");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,video_clip_get_green,"float","green");
+    QUERY->add_mfun(QUERY,video_clip_set_green,"float","green");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,video_clip_get_blue,"float","blue");
+    QUERY->add_mfun(QUERY,video_clip_set_blue,"float","blue");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,video_clip_get_brightness,"float","brightness");
+    QUERY->add_mfun(QUERY,video_clip_set_brightness,"float","brightness");
+    QUERY->add_arg(QUERY,"float","value");
     return QUERY->end_class(QUERY);
 }
