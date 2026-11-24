@@ -1286,3 +1286,115 @@ check(audio.gain()==0.5);
 check(audio.save("buffer-curve.wav"));
 """,5,p)
     check_buffer("buffer-curve.wav",[4096,-4096,8192,-8192,2048,4096,0,0])
+
+    # Independent SMF fixture: tempo, note-on, note-off, controller, end-of-track.
+    midi_track=bytes.fromhex("00 ff 51 03 07 a1 20 00 90 3c 64 83 60 80 3c 20 00 b0 07 50 00 ff 2f 00")
+    (p/"sequence-input.mid").write_bytes(b"MThd"+struct.pack(">IHHH",6,0,1,480)+
+        b"MTrk"+struct.pack(">I",len(midi_track))+midi_track)
+    run("midi", """
+MidiSequence a;
+MidiSequence b;
+check(!a.loaded());
+check(a.tracks()==-1 && a.ticksPerQuarter()==-1);
+check(!a.save("sequence-empty.mid"));
+check(a.load("sequence-input.mid"));
+check(a.loaded() && !b.loaded());
+check(a.tracks()==1 && a.events(0)==5);
+check(a.ticksPerQuarter()==480);
+check(a.tickAt(0,1)==0 && a.tickAt(0,2)==480);
+check(a.sizeAt(0,1)==3);
+check(a.byteAt(0,1,0)==144 && a.byteAt(0,1,1)==60 && a.byteAt(0,1,2)==100);
+check(a.byteAt(0,99,0)==-1 && a.byteAt(0,1,3)==-1);
+check(a.transpose()==0 && a.velocityGain()==1.0);
+12 => a.transpose;
+0.5 => a.velocityGain;
+check(a.transpose()==12 && a.velocityGain()==0.5);
+check(a.save("sequence-adjusted.mid"));
+check(!a.save("sequence-adjusted.mid"));
+check(a.byteAt(0,1,1)==60 && a.byteAt(0,1,2)==100);
+check(!a.load("missing.mid"));
+check(a.loaded() && a.transpose()==12);
+a.transpose(200);
+a.velocityGain(0.0);
+check(a.transpose()==12 && a.velocityGain()==0.5);
+127 => a.transpose;
+check(!a.save("sequence-overflow.mid"));
+a.reset();
+check(a.transpose()==0 && a.velocityGain()==1.0);
+check(a.setVelocity(0,1,80));
+check(a.byteAt(0,1,2)==80);
+check(!a.setVelocity(0,2,80));
+check(!a.setVelocity(0,1,0));
+check(a.save("sequence-edited.mid"));
+check(b.load("sequence-input.mid"));
+check(b.byteAt(0,1,2)==100 && a.byteAt(0,1,2)==80);
+a.clear();
+check(!a.loaded() && b.loaded());
+check(!a.save("sequence-cleared.mid"));
+""",30,p)
+    # Parse the actual exported SMF independently (including running status).
+    def smf_events(path):
+        data=(p/path).read_bytes()
+        assert data[:4]==b"MThd" and struct.unpack_from(">H",data,12)[0]==480
+        pos=8+struct.unpack_from(">I",data,4)[0]
+        assert data[pos:pos+4]==b"MTrk"
+        end=pos+8+struct.unpack_from(">I",data,pos+4)[0]
+        pos+=8
+        tick=0
+        running=None
+        events=[]
+        def vlq():
+            nonlocal pos
+            v=0
+            for _ in range(4):
+                b=data[pos]
+                pos+=1
+                v=(v<<7)|(b&127)
+                if b<128:
+                    return v
+            raise AssertionError("invalid VLQ")
+        while pos<end:
+            tick+=vlq()
+            status=data[pos]
+            if status>=128:
+                pos+=1
+                running=status if status<240 else None
+            else:
+                status=running
+            assert status is not None
+            if status==255:
+                kind=data[pos]
+                pos+=1
+                size=vlq()
+                msg=(status,kind,*data[pos:pos+size])
+            else:
+                size=1 if status&240 in (192,208) else 2
+                msg=(status,*data[pos:pos+size])
+            pos+=size
+            events.append((tick,msg))
+        assert pos==end
+        return events
+    baseline=smf_events("sequence-input.mid")
+    expected=list(baseline)
+    expected[1]=(0,(144,72,50))
+    expected[2]=(480,(128,72,32))
+    assert smf_events("sequence-adjusted.mid")==expected
+    expected=list(baseline)
+    expected[1]=(0,(144,60,80))
+    assert smf_events("sequence-edited.mid")==expected
+    assert not any((p/name).exists() for name in ("sequence-empty.mid","sequence-overflow.mid","sequence-cleared.mid"))
+    run("midi", """
+@import "KeyframeIO";
+MidiSequence sequence;
+KeyframeCurve pitch;
+check(sequence.load("sequence-input.mid"));
+check(pitch.add(0.0,0.0,"linear"));
+check(pitch.add(2.0,12.0,"linear"));
+(pitch.valueAt(1.0) $ int) => sequence.transpose;
+check(sequence.transpose()==6);
+check(sequence.save("sequence-curve.mid"));
+""",5,p)
+    expected=list(baseline)
+    expected[1]=(0,(144,66,100))
+    expected[2]=(480,(128,66,32))
+    assert smf_events("sequence-curve.mid")==expected
