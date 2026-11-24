@@ -495,6 +495,133 @@ bool concatenate(const std::string &first, const std::string &second, const std:
     return out.finish();
 }
 
+
+// Join video-only clips into a single constant-frame-rate FFV1 stream.
+// Sample-and-hold on each clip's presentation timeline; no intermediate files.
+bool concatNormalized(const std::string &first, const std::string &secondClip,
+                      const std::string &dest, int w, int h, int fps) {
+    if(w < 1 || h < 1 || w > 8192 || h > 8192 || fps < 1 || fps > 120 ||
+       dest.size() < 4 || dest.substr(dest.size()-4) != ".mkv") return false;
+    Input a, b;
+    if(!a.open(first) || !b.open(secondClip) ||
+       a.ctx->nb_streams != 1 || b.ctx->nb_streams != 1) return false;
+    const auto *encoder = avcodec_find_encoder_by_name("ffv1");
+    if(!encoder) return false;
+    Output out(dest);
+    if(!out.open("matroska")) return false;
+    Codec enc;
+    enc.ctx = avcodec_alloc_context3(encoder);
+    if(!enc.ctx) return false;
+    enc.ctx->width = w;
+    enc.ctx->height = h;
+    enc.ctx->pix_fmt = AV_PIX_FMT_BGR0;
+    enc.ctx->time_base = AVRational{1,fps};
+    enc.ctx->framerate = AVRational{fps,1};
+    enc.ctx->sample_aspect_ratio = AVRational{1,1};
+    if(out.ctx->oformat->flags & AVFMT_GLOBALHEADER) enc.ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    if(avcodec_open2(enc.ctx, encoder, nullptr) < 0) return false;
+    auto *dst = avformat_new_stream(out.ctx, nullptr);
+    if(!dst || avcodec_parameters_from_context(dst->codecpar, enc.ctx) < 0) return false;
+    dst->time_base = enc.ctx->time_base;
+    dst->avg_frame_rate = enc.ctx->framerate;
+    dst->sample_aspect_ratio = enc.ctx->sample_aspect_ratio;
+    if(avformat_write_header(out.ctx, nullptr) < 0) return false;
+    Frame scaled;
+    Packet encoded;
+    if(!scaled.p || !encoded.p) return false;
+    scaled.p->format = enc.ctx->pix_fmt;
+    scaled.p->width = w;
+    scaled.p->height = h;
+    if(av_frame_get_buffer(scaled.p, 32) < 0) return false;
+    int64_t total = 0;
+    auto drainEncoder = [&](bool flush) {
+        for(;;) {
+            int ret = avcodec_receive_packet(enc.ctx, encoded.p);
+            if(ret == AVERROR_EOF) return flush;
+            if(ret == AVERROR(EAGAIN)) return !flush;
+            if(ret < 0) return false;
+            if(encoded.p->duration <= 0) encoded.p->duration = 1;
+            av_packet_rescale_ts(encoded.p, enc.ctx->time_base, dst->time_base);
+            encoded.p->stream_index = dst->index;
+            int status = av_interleaved_write_frame(out.ctx, encoded.p);
+            av_packet_unref(encoded.p);
+            if(status < 0) return false;
+        }
+    };
+    Input *clips[] = {&a, &b};
+    for(auto *clip : clips) {
+        auto *stream = clip->ctx->streams[clip->video];
+        const auto *decoder = avcodec_find_decoder(stream->codecpar->codec_id);
+        if(!decoder) return false;
+        Codec dec;
+        dec.ctx = avcodec_alloc_context3(decoder);
+        Frame frame;
+        Packet packet;
+        Scale scale;
+        if(!dec.ctx || !frame.p || !packet.p ||
+           avcodec_parameters_to_context(dec.ctx, stream->codecpar) < 0) return false;
+        dec.ctx->pkt_timebase = stream->time_base;
+        if(avcodec_open2(dec.ctx, decoder, nullptr) < 0) return false;
+        int64_t origin = AV_NOPTS_VALUE, previous = AV_NOPTS_VALUE, duration = 0, local = 0;
+        const int64_t bound = INT64_C(1000000000000000);
+        auto emitUntil = [&](int64_t boundary) {
+            if(boundary <= origin || boundary > bound) return false;
+            // Emit for grid times strictly before boundary (ceiling count).
+            int64_t limit = av_rescale_q_rnd(boundary-origin, stream->time_base,
+                                              enc.ctx->time_base, AV_ROUND_UP);
+            if(limit < local || limit > 1000000 || total + (limit-local) > 1000000)
+                return false;
+            while(local < limit) {
+                scaled.p->pts = total++;
+                scaled.p->pict_type = AV_PICTURE_TYPE_NONE;
+                if(avcodec_send_frame(enc.ctx, scaled.p) < 0 || !drainEncoder(false))
+                    return false;
+                ++local;
+            }
+            return true;
+        };
+        auto drain = [&](bool flush) {
+            for(;;) {
+                int ret = avcodec_receive_frame(dec.ctx, frame.p);
+                if(ret == AVERROR_EOF) return flush;
+                if(ret == AVERROR(EAGAIN)) return !flush;
+                if(ret < 0) return false;
+                auto *f = frame.p;
+                int64_t pts = f->best_effort_timestamp;
+                if(pts == AV_NOPTS_VALUE || pts < -bound || pts > bound ||
+                   (previous != AV_NOPTS_VALUE && pts <= previous) ||
+                   f->width < 1 || f->height < 1 || f->width > 8192 || f->height > 8192)
+                    return false;
+                if(origin == AV_NOPTS_VALUE) origin = pts;
+                else if(!emitUntil(pts)) return false;
+                scale.p = sws_getCachedContext(scale.p, f->width, f->height,
+                    static_cast<AVPixelFormat>(f->format), w, h, enc.ctx->pix_fmt,
+                    SWS_BILINEAR, nullptr, nullptr, nullptr);
+                if(!scale.p || av_frame_make_writable(scaled.p) < 0 ||
+                   sws_scale(scale.p, f->data, f->linesize, 0, f->height,
+                             scaled.p->data, scaled.p->linesize) != h) return false;
+                previous = pts;
+#if LIBAVUTIL_VERSION_MAJOR >= 58
+                duration = f->duration;
+#else
+                duration = f->pkt_duration;
+#endif
+                av_frame_unref(f);
+            }
+        };
+        int ret;
+        while((ret = av_read_frame(clip->ctx, packet.p)) >= 0) {
+            int sent = avcodec_send_packet(dec.ctx, packet.p);
+            av_packet_unref(packet.p);
+            if(sent < 0 || !drain(false)) return false;
+        }
+        if(ret != AVERROR_EOF || avcodec_send_packet(dec.ctx, nullptr) < 0 ||
+           !drain(true) || previous == AV_NOPTS_VALUE || duration <= 0 ||
+           duration > bound || !emitUntil(previous+duration) || local == 0) return false;
+    }
+    return avcodec_send_frame(enc.ctx, nullptr) >= 0 && drainEncoder(true) && out.finish();
+}
+
 // Merge the selected video and audio streams, retaining their packet timestamps.
 // No decoding, resampling, trimming or time stretching.
 bool muxAudio(const std::string &videoPath, const std::string &audioPath, const std::string &dest) {
@@ -1657,6 +1784,20 @@ CK_DLL_SFUN(video_trim_av) {
             RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_concat_normalized) {
+    RETURN->v_int = 0;
+    try {
+        auto first = GET_NEXT_STRING_SAFE(ARGS);
+        auto secondClip = GET_NEXT_STRING_SAFE(ARGS);
+        auto dest = GET_NEXT_STRING_SAFE(ARGS);
+        auto w = GET_NEXT_INT(ARGS);
+        auto h = GET_NEXT_INT(ARGS);
+        auto fps = GET_NEXT_INT(ARGS);
+        if(w >= 1 && w <= 8192 && h >= 1 && h <= 8192 && fps >= 1 && fps <= 120 &&
+           concatNormalized(first, secondClip, dest, static_cast<int>(w),
+                            static_cast<int>(h), static_cast<int>(fps))) RETURN->v_int = 1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -1741,5 +1882,12 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "string", "destination");
     QUERY->add_arg(QUERY, "int", "firstFrame");
     QUERY->add_arg(QUERY, "int", "frameCount");
+    QUERY->add_sfun(QUERY, video_concat_normalized, "int", "concatNormalized");
+    QUERY->add_arg(QUERY, "string", "firstClip");
+    QUERY->add_arg(QUERY, "string", "secondClip");
+    QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_arg(QUERY, "int", "width");
+    QUERY->add_arg(QUERY, "int", "height");
+    QUERY->add_arg(QUERY, "int", "fps");
     return QUERY->end_class(QUERY);
 }
