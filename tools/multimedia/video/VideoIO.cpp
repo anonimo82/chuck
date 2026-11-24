@@ -2,6 +2,8 @@
 #include "chuck_dl.h"
 #include "../file_compat.h"
 #include "../subtitle/subtitle_io.h"
+#include "../keyframe/keyframe.h"
+#include <array>
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -957,6 +959,75 @@ bool renderTitle(AVFrame *dest,const std::string &text,const std::string &font,i
     return true;
 }
 
+
+struct OverlayAnimation {
+    std::array<keyframes::Curve,6> curves;
+    bool load(const std::string &path) {
+        std::ifstream in(path,std::ios::binary);
+        if(!in) return false;
+        in.seekg(0,std::ios::end);
+        auto size=in.tellg();
+        if(size<=0 || size>8*1024*1024) return false;
+        in.seekg(0,std::ios::beg);
+        const std::array<std::string,6> names{{"x","y","width","height","rotation","opacity"}};
+        std::string line;
+        while(std::getline(in,line)) {
+            if(!line.empty() && line.back()=='\r') line.pop_back();
+            if(line.empty() || line[0]=='#') continue;
+            std::istringstream fields(line);
+            fields.imbue(std::locale::classic());
+            std::string name,mode,extra;
+            double time,value;
+            keyframes::Mode m;
+            if(!(fields>>name>>time>>value>>mode) || (fields>>extra) ||
+               !keyframes::mode(mode,m) || !std::isfinite(value)) return false;
+            auto it=std::find(names.begin(),names.end(),name);
+            if(it==names.end()) return false;
+            size_t i=it-names.begin();
+            if((i<2 && std::abs(value)>32768) ||
+               ((i==2 || i==3) && (value<1 || value>8192)) ||
+               (i==4 && std::abs(value)>1e9) ||
+               (i==5 && (value<0 || value>1)) ||
+               !curves[i].append(time,value,m)) return false;
+        }
+        if(!in.eof() || in.bad()) return false;
+        for(const auto &c:curves) if(c.keys.empty()) return false;
+        return true;
+    }
+    bool blend(AVFrame *canvas,const AVFrame *image,double time) const {
+        std::array<double,6> v;
+        for(size_t i=0;i<v.size();++i) if(!curves[i].sample(time,v[i])) return false;
+        if(v[5]==0) return true;
+        // Positive degrees rotate clockwise in image coordinates, around rectangle center.
+        double a=std::remainder(v[4],360.0)*3.14159265358979323846/180.0;
+        double c=std::cos(a),s=std::sin(a);
+        double cx=v[0]+v[2]/2,cy=v[1]+v[3]/2;
+        double ex=(std::abs(c)*v[2]+std::abs(s)*v[3])/2;
+        double ey=(std::abs(s)*v[2]+std::abs(c)*v[3])/2;
+        int x0=std::max(0,static_cast<int>(std::floor(cx-ex)));
+        int y0=std::max(0,static_cast<int>(std::floor(cy-ey)));
+        int x1=std::min(canvas->width,static_cast<int>(std::ceil(cx+ex)));
+        int y1=std::min(canvas->height,static_cast<int>(std::ceil(cy+ey)));
+        int alpha=static_cast<int>(std::llround(v[5]*65535));
+        for(int y=y0;y<y1;++y) {
+            auto *d=canvas->data[0]+static_cast<size_t>(y)*canvas->linesize[0];
+            for(int x=x0;x<x1;++x) {
+                double dx=x+0.5-cx,dy=y+0.5-cy;
+                double u=(c*dx+s*dy)/v[2]+0.5;
+                double z=(-s*dx+c*dy)/v[3]+0.5;
+                if(u<0 || u>=1 || z<0 || z>=1) continue;
+                int ix=std::min(image->width-1,static_cast<int>(u*image->width));
+                int iy=std::min(image->height-1,static_cast<int>(z*image->height));
+                auto *p=image->data[0]+static_cast<size_t>(iy)*image->linesize[0]+ix*4;
+                int pa=(alpha*p[3]+127)/255;
+                for(int k=0;k<3;++k)
+                    d[x*4+k]=static_cast<uint8_t>((d[x*4+k]*(65535-pa)+p[k]*pa+32767)/65535);
+            }
+        }
+        return true;
+    }
+};
+
 struct CompositeLayer {
     std::string path;
     int x=0,y=0,w=0,h=0;
@@ -964,6 +1035,7 @@ struct CompositeLayer {
     bool still=false;
     bool title=false;
     bool captions=false;
+    std::unique_ptr<OverlayAnimation> animation;
     std::vector<subtitles::Cue> cues;
     size_t nextCue=0;
     std::vector<size_t> activeCues;
@@ -985,8 +1057,8 @@ bool multilayerVideo(const std::string &base,const std::string &dest,int w,int h
     int64_t pixelBudget=0;
     for(auto &ptr:layers) {
         auto &l=*ptr;
-        if(l.w<1 || l.h<1 || l.w>w || l.h>h || l.x<0 || l.y<0 ||
-           l.x>w-l.w || l.y>h-l.h || !std::isfinite(l.opacity) ||
+        if(l.w<1 || l.h<1 || l.w>8192 || l.h>8192 ||
+           (!l.animation && (l.w>w || l.h>h || l.x<0 || l.y<0 || l.x>w-l.w || l.y>h-l.h)) || !std::isfinite(l.opacity) ||
            l.opacity<0 || l.opacity>1 || !l.pixels.p) return false;
         pixelBudget+=static_cast<int64_t>(l.w)*l.h*4;
         if(pixelBudget>INT64_C(256)*1024*1024) return false;
@@ -1056,6 +1128,10 @@ bool multilayerVideo(const std::string &base,const std::string &dest,int w,int h
             auto &l=*ptr;
             double seconds=static_cast<double>(count)/fps;
             if(seconds<l.begin || seconds>=l.end) continue;
+            if(l.animation) {
+                if(!l.animation->blend(canvas.p,l.pixels.p,seconds)) return false;
+                continue;
+            }
             bool show=l.still;
             if(l.captions) {
                 // Exact rational timestamp comparison, with half-open cue intervals.
@@ -2757,6 +2833,38 @@ CK_DLL_SFUN(video_burn_subtitles) {
         if(multilayerVideo(source,dest,w,h,fps,rate,channels,layers)) RETURN->v_int=1;
     } catch(...) {}
 }
+
+CK_DLL_SFUN(video_animate_overlay) {
+    RETURN->v_int=0;
+    try {
+        auto source=GET_NEXT_STRING_SAFE(ARGS), image=GET_NEXT_STRING_SAFE(ARGS);
+        auto manifest=GET_NEXT_STRING_SAFE(ARGS), dest=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS), h=GET_NEXT_INT(ARGS), fps=GET_NEXT_INT(ARGS);
+        if(w<1 || w>8192 || h<1 || h>8192 || fps<1 || fps>120) return;
+        Input in,mark;
+        if(!in.open(source) || !mark.open(image)) return;
+        auto *p=mark.ctx->streams[mark.video]->codecpar;
+        if(p->width<1 || p->width>8192 || p->height<1 || p->height>8192) return;
+        int rate=48000,channels=2;
+        for(unsigned i=0;i<in.ctx->nb_streams;++i) {
+            auto *a=in.ctx->streams[i]->codecpar;
+            if(a->codec_type==AVMEDIA_TYPE_AUDIO) {
+                if(a->sample_rate>=8000 && a->sample_rate<=96000) rate=a->sample_rate;
+                if(a->ch_layout.nb_channels==1) channels=1;
+                break;
+            }
+        }
+        std::vector<std::unique_ptr<CompositeLayer>> layers;
+        auto l=std::unique_ptr<CompositeLayer>(new CompositeLayer);
+        l->still=true; l->path=image; l->w=p->width; l->h=p->height;
+        l->animation=std::make_unique<OverlayAnimation>();
+        if(!l->animation->load(manifest)) return;
+        layers.push_back(std::move(l));
+        if(multilayerVideo(source,dest,static_cast<int>(w),static_cast<int>(h),
+                           static_cast<int>(fps),rate,channels,layers)) RETURN->v_int=1;
+    } catch(...) {}
+}
+
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -2954,5 +3062,13 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"int","fontSize");
     QUERY->add_arg(QUERY,"int","rgb");
     QUERY->add_arg(QUERY,"int","bottomMargin");
+    QUERY->add_sfun(QUERY,video_animate_overlay,"int","animateOverlay");
+    QUERY->add_arg(QUERY,"string","source");
+    QUERY->add_arg(QUERY,"string","imageFile");
+    QUERY->add_arg(QUERY,"string","animationFile");
+    QUERY->add_arg(QUERY,"string","destination");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","fps");
     return QUERY->end_class(QUERY);
 }
