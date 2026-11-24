@@ -5,10 +5,29 @@ Start-Transcript -Path $log -Force
 try {
     if (-not [Environment]::Is64BitOperatingSystem) { throw "Windows x64 required." }
     if (!(Test-Path "$MsysRoot\usr\bin\bash.exe")) {
-        if (!(Get-Command winget -ErrorAction SilentlyContinue)) { throw "Install MSYS2 from https://www.msys2.org/ first." }
-        if ($MsysRoot -ne "C:\msys64") { throw "Install MSYS2 at the specified custom path first." }
-        & winget install --id MSYS2.MSYS2 --exact --accept-package-agreements --accept-source-agreements
-        if ($LASTEXITCODE -ne 0) { throw "MSYS2 installation failed: $LASTEXITCODE" }
+        # Use the official stable release directly, also on systems without winget.
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/msys2/msys2-installer/releases/latest" -Headers @{"User-Agent"="ChucK-Multimedia-Setup"}
+        $asset = $release.assets | Where-Object { $_.name -match '^msys2-x86_64-\d{8}\.exe$' } | Select-Object -First 1
+        if (!$asset) { throw "Official MSYS2 x64 installer not found." }
+        $checksum = $release.assets | Where-Object { $_.name -eq ($asset.name + ".sha256") } | Select-Object -First 1
+        if (!$checksum) { throw "Official MSYS2 checksum not found." }
+        $temp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $temp | Out-Null
+        try {
+            $installer = Join-Path $temp $asset.name
+            $hashfile = Join-Path $temp $checksum.name
+            Write-Host "Downloading official MSYS2 installer..."
+            Invoke-WebRequest -UseBasicParsing -Uri $asset.browser_download_url -OutFile $installer
+            Invoke-WebRequest -UseBasicParsing -Uri $checksum.browser_download_url -OutFile $hashfile
+            $expected = [regex]::Match((Get-Content $hashfile -Raw), '(?i)\b[a-f0-9]{64}\b').Value
+            if (!$expected -or (Get-FileHash -Algorithm SHA256 $installer).Hash -ne $expected) { throw "MSYS2 installer checksum mismatch." }
+            $target = $MsysRoot.Replace('\','/')
+            $process = Start-Process -FilePath $installer -ArgumentList @('in','--confirm-command','--accept-messages','--root',('"' + $target + '"')) -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "MSYS2 installation failed: $($process.ExitCode)" }
+        } finally {
+            Remove-Item -LiteralPath $temp -Recurse -Force
+        }
     }
     $bash = "$MsysRoot\usr\bin\bash.exe"
     if (!(Test-Path $bash)) { throw "MSYS2 not found at $MsysRoot" }
