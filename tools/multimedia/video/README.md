@@ -252,3 +252,28 @@ title renders plain UTF-8 text once using Pango/Cairo, at the given pixel size, 
 ```
 
 Uses the same strict plain UTF-8 SRT/WebVTT parser as SubtitleIO. The final argument is the bottom margin in pixels. Cues are active on the half-open millisecond interval [start,end), evaluated on the normalized output frame grid. Simultaneous cues are joined by newlines in file order, horizontally centered, bottom aligned in the available region, with a black outline and antialiasing. Text wraps and clips when it exceeds the available canvas. Combined active text is limited to 16384 bytes. Glyphs are rendered again only when the visible text changes. Output resolution, integer FPS selection and audio normalization follow title(); one FFV1/PCM MKV encoding pass, no temporary images, no overwrite. Nine additional smoke checks and independent frame/audio comparisons await execution.
+
+### Animated image overlays
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.animateOverlay("base.mp4","overlay.png","animation.tsv","result.mkv",1280,720,30) >>>;
+```
+
+The whitespace-separated animation manifest has four columns: parameter, time in seconds, value, outgoing interpolation. All six scalar curves are required; rows may be interleaved but times within each curve must strictly increase. For example:
+
+```text
+x 0 100 smooth
+x 5 800 linear
+y 0 200 linear
+width 0 320 linear
+height 0 180 linear
+rotation 0 0 linear
+rotation 5 360 linear
+opacity 0 0 linear
+opacity 1 1 step
+opacity 4 1 linear
+opacity 5 0 linear
+```
+
+Uses the shared KeyframeIO engine, including endpoint holds and five interpolation modes. X/Y describe the unrotated rectangle's top-left in output pixels; width/height are in [1,8192], x/y in [-32768,32768], rotation is clockwise degrees around rectangle center (absolute limit 1e9), opacity in [0,1]. Pixel-center inverse mapping uses nearest-neighbor sampling of the original static PNG/JPEG/BMP, preserving per-pixel alpha; off-canvas pixels are clipped. No video layer animation or high-quality resampling yet. The manifest is limited to 8 MiB and 100000 keys per curve. Output FFV1/PCM MKV, base determines duration, audio normalized as for title(), no overwrite. Eleven smoke checks plus independent exact pixel/PCM comparisons await execution.
