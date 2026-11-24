@@ -527,3 +527,30 @@ check(!VideoIO.concatNormalized("trim-source.mkv", "different.mp4", "bad-norm.mp
     for name in ("bad-norm-size.mkv", "bad-norm-fps.mkv", "bad-norm-audio.mkv",
                  "bad-norm-source.mkv", "bad-norm.mp4"):
         assert not (p / name).exists(), name
+
+    # Heterogeneous AV: normalize different rates and channel counts; preserve
+    # the clip boundary and insert silence when the second clip has no audio.
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(p / "different.mp4"),
+                    "-i", str(p / "trim-audio.wav"), "-map", "0:v:0", "-map", "1:a:0",
+                    "-c:v", "copy", "-c:a", "pcm_s16le", "-ar", "16000", "-ac", "2",
+                    "-t", "1", str(p / "different-av.mkv")], check=True, timeout=30)
+    run("video", """
+check(VideoIO.concatAV("trim-av.mkv", "different-av.mkv", "normalized-av.mkv", 16, 16, 4, 16000, 2));
+check(VideoIO.concatAV("trim-av.mkv", "different.mp4", "normalized-silent.mkv", 16, 16, 4, 8000, 1));
+check(VideoIO.concatAV("different.mp4", "trim-av.mkv", "normalized-leading.mkv", 16, 16, 4, 8000, 1));
+check(!VideoIO.concatAV("trim-av.mkv", "different-av.mkv", "normalized-av.mkv", 16, 16, 4, 16000, 2));
+check(!VideoIO.concatAV("multi-audio.mkv", "different.mp4", "bad-av-multi.mkv", 16, 16, 4, 16000, 2));
+check(!VideoIO.concatAV("trim-av.mkv", "different.mp4", "bad-av-rate.mkv", 16, 16, 4, 0, 1));
+check(!VideoIO.concatAV("trim-av.mkv", "different.mp4", "bad-av-channels.mkv", 16, 16, 4, 8000, 3));
+""", 7, p)
+    assert decoded("normalized-av.mkv") == high
+    tracks = audio_tracks("normalized-av.mkv")
+    assert len(tracks) == 1 and tracks[0]["codec_name"] == "pcm_s16le"
+    assert tracks[0]["sample_rate"] == "16000" and tracks[0]["channels"] == 2
+    audio = audio_samples("normalized-av.mkv", 0)
+    assert len(audio) == 3 * 16000 * 4
+    assert any(audio[:2*16000*4]) and any(audio[2*16000*4:])
+    assert audio_samples("normalized-silent.mkv", 0) == pcm + pcm2 + bytes(16000)
+    assert audio_samples("normalized-leading.mkv", 0) == bytes(16000) + pcm + pcm2
+    for name in ("bad-av-multi.mkv", "bad-av-rate.mkv", "bad-av-channels.mkv"):
+        assert not (p / name).exists(), name
