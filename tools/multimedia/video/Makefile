@@ -2,7 +2,7 @@ CXX ?= c++
 PKG_CONFIG ?= pkg-config
 CORE := ../../../src/core
 CXXFLAGS += -std=c++17 -O2 -fPIC -D__CHUCK_CHUGIN__ -I$(CORE)
-AV_PACKAGES := libavformat libavcodec libavutil libswscale sndfile
+AV_PACKAGES := libavformat libavcodec libavutil libswscale libswresample sndfile
 AV_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(AV_PACKAGES))
 AV_LIBS := $(shell $(PKG_CONFIG) --libs $(AV_PACKAGES))
 ifeq ($(shell uname -s),Darwin)
