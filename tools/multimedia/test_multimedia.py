@@ -980,3 +980,44 @@ check(!RasterIO.animate("raster-anim.png","raster-curve.tsv","raster-bad",3,0));
     assert not (p/"collision000000.png").exists()
     assert (p/"collision000001.png").read_bytes()==b"keep"
     assert not list(p.glob("raster-bad*.png"))
+
+    run("keyframe", """
+KeyframeCurve a;
+KeyframeCurve b;
+check(a.count()==0);
+check(a.add(0.0,10.0,"linear"));
+check(a.add(2.0,30.0,"smooth"));
+check(a.valueAt(1.0)==20.0);
+check(b.count()==0);
+check(!a.add(2.0,40.0,"linear"));
+check(a.count()==2);
+check(a.set(1,2.0,50.0,"linear"));
+check(a.valueAt(1.0)==30.0);
+check(!a.set(1,0.0,99.0,"linear"));
+check(a.valueAt(1.0)==30.0);
+check(b.load("curve.tsv"));
+check(b.count()==4);
+check(b.valueAt(2.5)==33.125);
+check(!b.load("duplicate.tsv"));
+check(b.count()==4);
+check(b.valueAt(2.5)==33.125);
+check(b.remove(1));
+check(b.count()==3);
+check(b.valueAt(2.0)==30.0);
+check(!b.remove(99));
+check(a.count()==2);
+a.clear();
+check(a.count()==0);
+check(b.count()==3);
+""",24,p)
+    # Exercise a second resident curve and reuse it after clearing.
+    (p/"resident.tsv").write_bytes(b"0 10 linear\n2 30 linear\n")
+    run("keyframe", """
+KeyframeCurve resident;
+check(resident.load("resident.tsv"));
+check(resident.valueAt(1.0)==20.0);
+resident.clear();
+check(resident.add(0.0,1.0,"step"));
+check(resident.add(1.0,2.0,"linear"));
+check(resident.valueAt(0.5)==1.0);
+""",5,p)
