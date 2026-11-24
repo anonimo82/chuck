@@ -277,3 +277,21 @@ opacity 5 0 linear
 ```
 
 Uses the shared KeyframeIO engine, including endpoint holds and five interpolation modes. X/Y describe the unrotated rectangle's top-left in output pixels; width/height are in [1,8192], x/y in [-32768,32768], rotation is clockwise degrees around rectangle center (absolute limit 1e9), opacity in [0,1]. Pixel-center inverse mapping uses nearest-neighbor sampling of the original static PNG/JPEG/BMP, preserving per-pixel alpha; off-canvas pixels are clipped. No video layer animation or high-quality resampling yet. The manifest is limited to 8 MiB and 100000 keys per curve. Output FFV1/PCM MKV, base determines duration, audio normalized as for title(), no overwrite. Eleven smoke checks plus independent exact pixel/PCM comparisons await execution.
+
+## Persistent VideoClip
+
+```chuck
+@import "VideoIO";
+VideoClip clip;
+if(clip.load("input.mkv")) {
+    do {
+        <<< clip.frameIndex(), clip.timeSeconds() >>>;
+        0.8 => clip.red;
+        clip.saveFrame("frame" + clip.frameIndex() + ".ppm");
+    } while(clip.next() == 1);
+}
+```
+
+VideoClip retains a native decoder and two decoded frames (current and lookahead), rather than loading the full video into memory. load(path) selects the first decoded frame, resets controls, and replaces existing state only on success. next() returns 1 for a new frame, 0 at end (last frame remains available), -1 on error. A decoder error invalidates the loaded state. eof() means the current frame is the last decoded frame. frameIndex() is zero-based; timeSeconds() is the current presentation timestamp relative to the first frame. Both return -1 when unloaded. width()/height() report current decoded dimensions, or zero when unloaded. clear() releases the decoder, reset() resets controls without rewinding. Reload to rewind. One video stream and at most one audio stream are accepted, with strictly increasing known presentation timestamps. Audio is not exposed by this class.
+
+red/green/blue float getter/setters [0,4] default 1 and brightness [-1,1] default 0 affect only exported pixels. Invalid setters return NaN and preserve previous values. saveFrame(path) writes RGB8 P6 PPM at source dimensions; saveFrame(path,width,height) stretches with bilinear resampling. Dimensions 1–8192, maximum 16 megapixels. Each frame uses original decoded pixels; color adjustments do not accumulate. Output is always PPM regardless of filename extension, exclusive creation. No random seek, playback UGen, live display, or incremental video encoder yet. Synchronous offline operations, no real-time guarantee. Numeric setters can be driven by KeyframeCurve without a native dependency. 37 new smoke checks plus exact PPM pixel comparisons await execution.
