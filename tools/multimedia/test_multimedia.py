@@ -884,3 +884,60 @@ check(!KeyframeIO.valid("bad-number.tsv"));
 check(!KeyframeIO.valid("descending.tsv"));
 check(KeyframeIO.count("missing-curve.tsv")==-1);
 """,24,p)
+
+    # A native 16x16 RGBA watermark has transparent, half-alpha and opaque stripes.
+    # Create a separate asymmetric 2x1 opaque image to test exact nearest-neighbor rotation.
+    (p/"anim.png").write_bytes(b"\x89PNG\r\n\x1a\n"+
+        png_chunk(b"IHDR",struct.pack(">IIBBBBB",2,1,8,6,0,0,0))+
+        png_chunk(b"IDAT",zlib.compress(b"\0\x00\xff\x00\xff\xff\xff\x00\xff"))+
+        png_chunk(b"IEND",b""))
+    static_curve="x 0 2 linear\ny 0 2 linear\nwidth 0 4 linear\nheight 0 2 linear\nrotation 0 0 linear\nopacity 0 1 linear\n"
+    moving_curve=static_curve.replace("x 0 2 linear\n","x 0 2 linear\nx 1 6 linear\n").replace("opacity 0 1 linear\n","opacity 0 0 linear\nopacity 1 1 linear\n")
+    rotate_curve=static_curve.replace("rotation 0 0 linear","rotation 0 90 linear")
+    scale_curve=static_curve.replace("width 0 4 linear","width 0 4 linear\nwidth 1 8 linear")
+    for name,curve in (("anim-static",static_curve),("anim-moving",moving_curve),
+        ("anim-rotate",rotate_curve),("anim-scale",scale_curve),
+        ("anim-invalid",static_curve.replace("opacity 0 1","opacity 0 2")),
+        ("anim-incomplete",static_curve.replace("rotation 0 0 linear\n","")),
+        ("anim-duplicate",static_curve+"x 0 4 linear\n"),
+        ("anim-clipped",static_curve.replace("x 0 2","x 0 -2"))):
+        (p/(name+".tsv")).write_text(curve,encoding="utf-8")
+    run("video", """
+check(VideoIO.animateOverlay("trim-av.mkv","anim.png","anim-static.tsv","animated-static.mkv",16,16,4));
+check(VideoIO.animateOverlay("trim-av.mkv","anim.png","anim-moving.tsv","animated-moving.mkv",16,16,4));
+check(VideoIO.animateOverlay("trim-av.mkv","anim.png","anim-rotate.tsv","animated-rotate.mkv",16,16,4));
+check(VideoIO.animateOverlay("trim-av.mkv","anim.png","anim-scale.tsv","animated-scale.mkv",16,16,4));
+check(VideoIO.animateOverlay("trim-av.mkv","anim.png","anim-clipped.tsv","animated-clipped.mkv",16,16,4));
+check(!VideoIO.animateOverlay("trim-av.mkv","anim.png","anim-static.tsv","animated-static.mkv",16,16,4));
+check(!VideoIO.animateOverlay("trim-av.mkv","anim.png","anim-invalid.tsv","anim-bad.mkv",16,16,4));
+check(!VideoIO.animateOverlay("trim-av.mkv","anim.png","anim-incomplete.tsv","anim-bad.mkv",16,16,4));
+check(!VideoIO.animateOverlay("trim-av.mkv","anim.png","anim-duplicate.tsv","anim-bad.mkv",16,16,4));
+check(!VideoIO.animateOverlay("trim-av.mkv","missing.png","anim-static.tsv","anim-bad.mkv",16,16,4));
+check(!VideoIO.animateOverlay("trim-av.mkv","anim.png","anim-static.tsv","anim-bad.mkv",16,16,0));
+""",11,p)
+    def anim_pixel(data,frame,x,y):
+        i=frame*stride+(y*16+x)*3
+        return data[i:i+3]
+    green=bytes((0,255,0))
+    yellow=bytes((255,255,0))
+    # Exact expected full-frame RGB for unrotated integer rectangles.
+    for name in ("animated-static","animated-moving","animated-scale","animated-clipped","animated-rotate"):
+        data=decoded(name+".mkv")
+        assert len(data)==len(original),name
+        assert audio_samples(name+".mkv",0)==pcm+pcm2,name
+        for frame in range(8):
+            for yy in range(16):
+                for xx in range(16):
+                    base=anim_pixel(original,frame,xx,yy)
+                    x=2+min(frame,4) if name=="animated-moving" else -2 if name=="animated-clipped" else 2
+                    width=4+min(frame,4) if name=="animated-scale" else 4
+                    alpha=int(min(frame,4)*65535/4+0.5) if name=="animated-moving" else 65535
+                    color=None
+                    if name=="animated-rotate":
+                        if 3<=xx<5 and 1<=yy<5:
+                            color=green if yy<3 else yellow
+                    elif x<=xx<x+width and 2<=yy<4:
+                        color=green if (xx-x+0.5)<width/2 else yellow
+                    expected=base if color is None else bytes((b*(65535-alpha)+c*alpha+32767)//65535 for b,c in zip(base,color))
+                    assert anim_pixel(data,frame,xx,yy)==expected,(name,frame,xx,yy)
+    assert not (p/"anim-bad.mkv").exists()
