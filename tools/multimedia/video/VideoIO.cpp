@@ -1159,6 +1159,90 @@ struct PCMTrim {
     }
 };
 
+
+// Decode compressed audio to native-rate interleaved S16, then reuse the
+// continuous PCM sample clock and range writer. No sample-rate conversion.
+struct DecodedTrim {
+    Codec dec;
+    Frame frame, converted;
+    SwrContext *swr = nullptr;
+    AVStream *src = nullptr, *dst = nullptr;
+    AVFormatContext *out = nullptr;
+    PCMTrim *range = nullptr;
+    ~DecodedTrim() { swr_free(&swr); }
+    bool setup(AVStream *input, AVStream *output, AVFormatContext *format,
+               PCMTrim &pcm, int64_t begin, int64_t end, AVRational videoTB) {
+        src = input; dst = output; out = format; range = &pcm;
+        const auto *codec = avcodec_find_decoder(src->codecpar->codec_id);
+        if(!codec || !frame.p || !converted.p) return false;
+        dec.ctx = avcodec_alloc_context3(codec);
+        if(!dec.ctx || avcodec_parameters_to_context(dec.ctx, src->codecpar) < 0) return false;
+        dec.ctx->pkt_timebase = src->time_base;
+        if(avcodec_open2(dec.ctx, codec, nullptr) < 0 || dec.ctx->sample_rate <= 0 ||
+           dec.ctx->sample_rate > 384000 || dec.ctx->ch_layout.nb_channels < 1 ||
+           dec.ctx->ch_layout.nb_channels > 8 || dec.ctx->sample_fmt == AV_SAMPLE_FMT_NONE)
+            return false;
+        if(dec.ctx->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
+            av_channel_layout_default(&dec.ctx->ch_layout, dec.ctx->ch_layout.nb_channels);
+        auto *p = dst->codecpar;
+        p->codec_type = AVMEDIA_TYPE_AUDIO;
+        p->codec_id = AV_CODEC_ID_PCM_S16LE;
+        p->format = AV_SAMPLE_FMT_S16;
+        p->sample_rate = dec.ctx->sample_rate;
+        p->bits_per_coded_sample = p->bits_per_raw_sample = 16;
+        p->block_align = dec.ctx->ch_layout.nb_channels * 2;
+        p->bit_rate = static_cast<int64_t>(p->sample_rate) * p->block_align * 8;
+        if(av_channel_layout_copy(&p->ch_layout, &dec.ctx->ch_layout) < 0 ||
+           !pcm.setup(p, begin, end, videoTB)) return false;
+        dst->time_base = AVRational{1,p->sample_rate};
+        if(swr_alloc_set_opts2(&swr, &p->ch_layout, AV_SAMPLE_FMT_S16, p->sample_rate,
+                             &dec.ctx->ch_layout, dec.ctx->sample_fmt, dec.ctx->sample_rate,
+                             0, nullptr) < 0 || !swr || swr_init(swr) < 0) return false;
+        return true;
+    }
+    bool drain(bool flush) {
+        for(;;) {
+            int ret = avcodec_receive_frame(dec.ctx, frame.p);
+            if(ret == AVERROR_EOF) return flush;
+            if(ret == AVERROR(EAGAIN)) return !flush;
+            if(ret < 0) return false;
+            auto *f = frame.p;
+            if(f->sample_rate != dec.ctx->sample_rate || f->format != dec.ctx->sample_fmt ||
+               f->ch_layout.nb_channels != dec.ctx->ch_layout.nb_channels ||
+               (f->ch_layout.order != AV_CHANNEL_ORDER_UNSPEC &&
+                av_channel_layout_compare(&f->ch_layout, &dec.ctx->ch_layout) != 0) ||
+               f->nb_samples <= 0 || f->nb_samples > 1048576 ||
+               f->best_effort_timestamp == AV_NOPTS_VALUE) return false;
+            auto *c = converted.p;
+            av_frame_unref(c);
+            c->nb_samples = f->nb_samples;
+            c->format = AV_SAMPLE_FMT_S16;
+            c->sample_rate = dec.ctx->sample_rate;
+            if(av_channel_layout_copy(&c->ch_layout, &dec.ctx->ch_layout) < 0 ||
+               av_frame_get_buffer(c, 0) < 0) return false;
+            const uint8_t *planes[8] = {};
+            int nplanes = av_sample_fmt_is_planar(dec.ctx->sample_fmt)
+                ? dec.ctx->ch_layout.nb_channels : 1;
+            for(int i = 0; i < nplanes; ++i) planes[i] = f->extended_data[i];
+            int got = swr_convert(swr, c->extended_data, c->nb_samples, planes, f->nb_samples);
+            if(got != f->nb_samples || swr_get_delay(swr, dec.ctx->sample_rate) != 0) return false;
+            // PCMTrim only reads this packet; do not transfer ownership of frame data.
+            AVPacket view{};
+            view.data = c->data[0];
+            view.size = got * range->bytes;
+            view.pts = view.dts = f->best_effort_timestamp;
+            if(!range->push(&view, src, dst, out)) return false;
+            av_frame_unref(f);
+        }
+    }
+    bool push(AVPacket *p) {
+        return avcodec_send_packet(dec.ctx, p) >= 0 && drain(false);
+    }
+    bool finish() {
+        return avcodec_send_packet(dec.ctx, nullptr) >= 0 && drain(true);
+    }
+};
+
 bool transcode(const std::string &source, const std::string &dest,
                int w, int h, const std::string &mode, int quality, int audioKbps = 0,
                int64_t firstFrame = 0, int64_t frameCount = 0, bool trimAudio = false) {
@@ -1178,6 +1262,7 @@ bool transcode(const std::string &source, const std::string &dest,
     if(trimAudio && (!cutting || !ffv1 || !frameInterval(source, firstFrame, frameCount,
                                                         cutBegin, cutEnd, cutTB))) return false;
     std::vector<PCMTrim> pcm(in.ctx->nb_streams);
+    std::vector<std::unique_ptr<DecodedTrim>> decodedAudio(in.ctx->nb_streams);
     if(cutting && w == 0 && h == 0) {
         w = in.ctx->streams[in.video]->codecpar->width;
         h = in.ctx->streams[in.video]->codecpar->height;
@@ -1232,6 +1317,17 @@ bool transcode(const std::string &source, const std::string &dest,
     for(unsigned i = 0; i < in.ctx->nb_streams; ++i) {
         if(static_cast<int>(i) == in.video) continue;
         auto *audio = in.ctx->streams[i];
+        if(trimAudio && audio->codecpar->codec_id != AV_CODEC_ID_PCM_S16LE) {
+            auto *target = avformat_new_stream(out.ctx, nullptr);
+            auto decoder = std::make_unique<DecodedTrim>();
+            if(!target || !decoder->setup(audio, target, out.ctx, pcm[i], cutBegin, cutEnd, cutTB))
+                return false;
+            target->disposition = audio->disposition;
+            if(av_dict_copy(&target->metadata, audio->metadata, 0) < 0) return false;
+            mapping[i] = target->index;
+            decodedAudio[i] = std::move(decoder);
+            continue;
+        }
         if(trimAudio && !pcm[i].setup(audio->codecpar, cutBegin, cutEnd, cutTB)) return false;
         if(audioKbps) {
             auto encoder = std::make_unique<AudioEncoder>();
@@ -1317,7 +1413,8 @@ bool transcode(const std::string &source, const std::string &dest,
             av_packet_unref(inputPacket.p);
             if(sent < 0 || !drainDecoder(false)) return false;
         } else if(trimAudio) {
-            bool ok = pcm[i].push(inputPacket.p, in.ctx->streams[i], out.ctx->streams[mapping[i]], out.ctx);
+            bool ok = decodedAudio[i] ? decodedAudio[i]->push(inputPacket.p) :
+                pcm[i].push(inputPacket.p, in.ctx->streams[i], out.ctx->streams[mapping[i]], out.ctx);
             av_packet_unref(inputPacket.p);
             if(!ok) return false;
         } else if(audioEncoders[i]) {
@@ -1343,6 +1440,7 @@ bool transcode(const std::string &source, const std::string &dest,
        avcodec_send_frame(enc.ctx, nullptr) < 0 || !drainEncoder(true)) return false;
     if(trimAudio) {
         if(ret != AVERROR_EOF) return false;
+        for(auto &audio : decodedAudio) if(audio && !audio->finish()) return false;
         for(unsigned i = 0; i < pcm.size(); ++i)
             if(static_cast<int>(i) != in.video && pcm[i].written != pcm[i].stop-pcm[i].start) return false;
     }
