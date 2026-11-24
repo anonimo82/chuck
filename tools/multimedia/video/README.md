@@ -222,3 +222,13 @@ composite extends overlay with five parameters: keyRGB (packed 0xRRGGBB integer,
 ```
 
 watermark uses the same positional arguments as overlay, but the second input is a single static image decoded using FFmpeg (PNG, JPEG or BMP codec). The image is scaled once to the specified rectangle and displayed for the entire base video. Per-pixel alpha is multiplied by global opacity, preserving transparency in RGBA PNGs. Alpha blending uses straight RGB values and bilinear scaling, without gamma correction or premultiplied-alpha edge filtering. The base video controls duration; its audio is normalized to the requested sample rate and channel count, or silence if absent. Output is FFV1/BGR0 and PCM S16LE in MKV. Animated or multi-frame inputs are rejected. Existing overlay and composite APIs are unchanged. Nine smoke checks and independent RGB/PCM assertions await execution.
+
+### Ordered multilayer compositing
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.multilayer("main.mp4", "layers.tsv", "composite.mkv",
+                       1280, 720, 30, 48000, 2) >>>;
+```
+
+The UTF-8 text manifest has seven tab-separated fields per line: type (image or video), local path, x, y, width, height, opacity. Paths are resolved relative to the process working directory, not the manifest; spaces are allowed, tabs/newlines are not. Empty lines and lines beginning with # are ignored. CRLF and LF are supported; use no UTF-8 BOM. First row is drawn first, last row on top. Maximum eight layers and 64 KiB manifest; the sum of target layer pixel buffers is limited to 256 MiB, excluding decoder and muxer buffers. Image layers retain alpha and are displayed throughout; video layers start at their first presentation frame and disappear at EOF. The base controls duration and audio, with other audio ignored. One output encoding pass and no temporary files. No overwrite. Output FFV1/PCM MKV. Chroma key, per-layer audio mixing, and temporal keyframes are not yet exposed in the multilayer API. Eight smoke checks and independent RGB/PCM assertions await execution.
