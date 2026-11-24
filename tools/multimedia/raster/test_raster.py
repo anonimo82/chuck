@@ -45,8 +45,10 @@ check(RasterIO.convert("input.png", "output.unknown") == 0, "unsupported output"
         print(log)
         if result.returncode or "FAIL" in log or log.count("PASS") != 8:
             raise SystemExit("RasterIO smoke test failed")
-        if (tmp / "output.bmp").read_bytes()[:2] != b"BM":
-            raise SystemExit("Invalid BMP signature")
+        header = (tmp / "output.bmp").read_bytes()[:16]
+        if header[:2] != b"BM":
+            raise SystemExit(f"Invalid BMP signature: {header.hex()}")
+        print("BMP signature verified")
 
 if __name__ == "__main__":
     main()
