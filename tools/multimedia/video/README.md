@@ -64,3 +64,16 @@ Eight new smoke checks and independent exact RGB/PCM decode comparisons are incl
 The six arguments select source, new destination, width, height, codec, and CRF quality. Codec/container pairs match encodeSequence: FFV1/MKV (quality 0), H.264/MP4 and VP9/WebM (quality 0–51). Dimensions must be 1–8192, and even for H.264 and VP9. The implementation decodes and scales frames directly in memory, preserving strictly increasing presentation timestamps subject to output muxer rounding. It stretches to the requested dimensions and outputs square pixels; no aspect-ratio correction, rotation handling, color management, or frame rate conversion is provided. FFV1 is lossless relative to its encoded BGR0 frames, not necessarily the original source pixels after scaling or color conversion. Only single-stream video inputs are accepted: audio, subtitles and additional streams cause rejection rather than silent loss. No overwrite; partial outputs are removed on ordinary failures. Returns 1 on success, 0 on failure. Offline only.
 
 Fourteen added smoke checks and independent decoded pixel checks are pending execution.
+
+### Extract a sequence of frames
+
+```chuck
+@import "VideoIO";
+VideoIO.extractSequence("movie.mkv", "frame", 0, 120) => int count;
+if(count > 0)
+    <<< VideoIO.encodeSequence("frame", "rebuilt.mkv", count, 30) >>>;
+```
+
+extractSequence(source, prefix, start, limit) decodes the selected video stream sequentially, skips the first start decoded frames (zero-based), then writes up to limit RGB8 P6 PPM images named prefix000000.ppm, prefix000001.ppm, etc. Existing files are never overwritten. Returns the actual number written (possibly zero at end of stream), or -1 on failure. On ordinary failure, it attempts to remove only files created by that invocation; a filesystem cleanup failure or process interruption can leave files behind. Limit: 1–100000; start: 0–2147483647; frame dimensions: up to 8192 per axis. Output directories must already exist. Audio and original timing metadata are not exported; reconstruction uses the caller's chosen constant frame rate. RGB conversion can reduce precision or discard alpha from the source. Offline only, with trusted local inputs.
+
+Nine additional smoke checks, byte-level frame checks and lossless reconstruction comparison are included; execution pending.
