@@ -672,3 +672,46 @@ check(!VideoIO.composite("trim-av.mkv", "overlay-blue.mkv", "keyed.mkv", 16, 16,
     assert shorts(audio_samples("mixed-clipped.mkv",0))==tuple(max(-32768,min(32767,v*8)) for v in shorts(pcm+pcm2))
     for name in ("bad-key.mkv","bad-softness.mkv","bad-gain.mkv"):
         assert not (p/name).exists(),name
+
+    # Construct an exact RGBA PNG using the Python standard library.
+    import zlib
+    def png_chunk(kind,data):
+        return struct.pack(">I",len(data))+kind+data+struct.pack(">I",zlib.crc32(kind+data)&0xffffffff)
+    rgba_row=bytes((0,255,0,0))*4+bytes((0,255,0,128))*4+bytes((0,255,0,255))*8
+    (p/"mark.png").write_bytes(b"\x89PNG\r\n\x1a\n"+
+        png_chunk(b"IHDR",struct.pack(">IIBBBBB",16,16,8,6,0,0,0))+
+        png_chunk(b"IDAT",zlib.compress((b"\0"+rgba_row)*16))+
+        png_chunk(b"IEND",b""))
+    run("video", """
+check(VideoIO.watermark("trim-av.mkv", "mark.png", "marked.mkv", 16, 16, 4, 0, 0, 16, 16, 1.0, 8000, 1));
+check(VideoIO.watermark("trim-av.mkv", "mark.png", "marked-half.mkv", 16, 16, 4, 0, 0, 16, 16, 0.5, 8000, 1));
+check(VideoIO.watermark("trim-av.mkv", "mark.png", "marked-zero.mkv", 16, 16, 4, 0, 0, 16, 16, 0.0, 8000, 1));
+check(VideoIO.watermark("trim-source.mkv", "mark.png", "marked-small.mkv", 16, 16, 4, 4, 4, 8, 8, 1.0, 8000, 1));
+check(!VideoIO.watermark("trim-av.mkv", "mark.png", "marked.mkv", 16, 16, 4, 0, 0, 16, 16, 1.0, 8000, 1));
+check(!VideoIO.watermark("trim-av.mkv", "missing.png", "mark-missing.mkv", 16, 16, 4, 0, 0, 16, 16, 1.0, 8000, 1));
+check(!VideoIO.watermark("trim-av.mkv", "trim-source.mkv", "mark-video.mkv", 16, 16, 4, 0, 0, 16, 16, 1.0, 8000, 1));
+check(!VideoIO.watermark("trim-av.mkv", "mark.png", "mark-bounds.mkv", 16, 16, 4, 4, 4, 16, 16, 1.0, 8000, 1));
+check(!VideoIO.watermark("trim-av.mkv", "mark.png", "mark-alpha.mkv", 16, 16, 4, 0, 0, 16, 16, -0.1, 8000, 1));
+""",9,p)
+    for name,global_alpha in (("marked.mkv",65535),("marked-half.mkv",32768),("marked-zero.mkv",0)):
+        expected=bytearray(original)
+        for frame in range(8):
+            for yy in range(16):
+                for xx in range(16):
+                    a=(global_alpha*(0 if xx<4 else 128 if xx<8 else 255)+127)//255
+                    for ch in range(3):
+                        j=frame*stride+(yy*16+xx)*3+ch
+                        expected[j]=(expected[j]*(65535-a)+(255 if ch==1 else 0)*a+32767)//65535
+        assert decoded(name)==expected,name
+        assert audio_samples(name,0)==pcm+pcm2
+    small=decoded("marked-small.mkv")
+    assert len(small)==len(original)
+    for frame in range(8):
+        for yy in range(16):
+            for xx in range(16):
+                j=frame*stride+(yy*16+xx)*3
+                if not (4<=yy<12 and 4<=xx<12):
+                    assert small[j:j+3]==original[j:j+3]
+    assert audio_samples("marked-small.mkv",0)==bytes(32000)
+    for name in ("mark-missing.mkv","mark-video.mkv","mark-bounds.mkv","mark-alpha.mkv"):
+        assert not (p/name).exists(),name
