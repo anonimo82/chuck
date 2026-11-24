@@ -12,7 +12,7 @@ endif
 
 all: RasterIO.chug
 
-RasterIO.chug: RasterIO.cpp
+RasterIO.chug: RasterIO.cpp ../keyframe/keyframe.h ../file_compat.h
 	$(CXX) $(CXXFLAGS) $(MAGICK_CFLAGS) $(SHARED) -o $@ $< $(MAGICK_LIBS)
 
 clean:

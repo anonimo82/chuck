@@ -8,7 +8,7 @@ CHUCK = HERE.parents[1] / "src/chuck"
 
 def run(module, script, expected, directory):
     path = directory / "test.ck"
-    name = {"vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO"}[module]
+    name = {"vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO", "raster": "RasterIO"}[module]
     path.write_text(f'@import "{name}";\n' + 'fun void check(int ok) { if(ok) <<< "PASS" >>>; else <<< "FAIL" >>>; }\n' + script, encoding="utf-8")
     r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
     log = r.stdout + r.stderr
@@ -941,3 +941,42 @@ check(!VideoIO.animateOverlay("trim-av.mkv","anim.png","anim-static.tsv","anim-b
                     expected=base if color is None else bytes((b*(65535-alpha)+c*alpha+32767)//65535 for b,c in zip(base,color))
                     assert anim_pixel(data,frame,xx,yy)==expected,(name,frame,xx,yy)
     assert not (p/"anim-bad.mkv").exists()
+
+    # Independent RGBA fixture, including a partially transparent pixel.
+    (p/"raster-anim.png").write_bytes(b"\x89PNG\r\n\x1a\n"+
+        png_chunk(b"IHDR",struct.pack(">IIBBBBB",2,1,8,6,0,0,0))+
+        png_chunk(b"IDAT",zlib.compress(b"\0\x64\x32\x00\xff\x14\x28\x3c\x80"))+
+        png_chunk(b"IEND",b""))
+    (p/"raster-curve.tsv").write_text("red 0 1 linear\nred 1 2 linear\nopacity 0 1 linear\nopacity 1 0.5 linear\nbrightness 0 0 linear\nbrightness 1 0.1 linear\n",encoding="utf-8")
+    (p/"raster-invalid.tsv").write_text("opacity 0 2 linear\n",encoding="utf-8")
+    (p/"raster-duplicate.tsv").write_text("red 0 1 linear\nred 0 2 linear\n",encoding="utf-8")
+    (p/"raster-identity.tsv").write_text("red 0 1 linear\n",encoding="utf-8")
+    (p/"collision000001.png").write_bytes(b"keep")
+    run("raster", """
+check(RasterIO.animate("raster-anim.png","raster-curve.tsv","raster-frame",3,2));
+check(RasterIO.animate("raster-anim.png","raster-identity.tsv","raster-id",1,2));
+check(!RasterIO.animate("raster-anim.png","raster-curve.tsv","raster-frame",3,2));
+check(!RasterIO.animate("raster-anim.png","raster-curve.tsv","collision",3,2));
+check(!RasterIO.animate("raster-anim.png","raster-invalid.tsv","raster-bad",3,2));
+check(!RasterIO.animate("raster-anim.png","raster-duplicate.tsv","raster-bad",3,2));
+check(!RasterIO.animate("missing.png","raster-curve.tsv","raster-bad",3,2));
+check(!RasterIO.animate("raster-anim.png","raster-curve.tsv","raster-bad",0,2));
+check(!RasterIO.animate("raster-anim.png","raster-curve.tsv","raster-bad",3,0));
+""",9,p)
+    def rgba_png(name):
+        return subprocess.check_output(["ffmpeg","-v","error","-i",str(p/name),
+            "-frames:v","1","-f","rawvideo","-pix_fmt","rgba","-"],timeout=30)
+    source_rgba=bytes((100,50,0,255,20,40,60,128))
+    assert rgba_png("raster-id000000.png")==source_rgba
+    for i in range(3):
+        t=i/2
+        expected=bytearray()
+        for j in (0,4):
+            for c in range(3):
+                v=source_rgba[j+c]*(1+t if c==0 else 1)+255*0.1*t
+                expected.append(int(min(255,v)+0.5))
+            expected.append(int(source_rgba[j+3]*(1-0.5*t)+0.5))
+        assert rgba_png(f"raster-frame{i:06d}.png")==expected,i
+    assert not (p/"collision000000.png").exists()
+    assert (p/"collision000001.png").read_bytes()==b"keep"
+    assert not list(p.glob("raster-bad*.png"))
