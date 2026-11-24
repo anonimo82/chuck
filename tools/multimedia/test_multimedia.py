@@ -1143,3 +1143,76 @@ check(image.x()==4.0);
 check(image.render("vector-curve.png",16,16));
 """,5,p)
     assert rgba_png("vector-curve.png")==vector_rect(6,4,10,6)
+
+    # Export transformed scene and independently inspect OBJ world-space vertices.
+    run("model", """
+Model3D a;
+Model3D b;
+check(!a.loaded());
+check(a.meshes()==-1 && a.vertices()==-1);
+check(!a.save("model-empty/out.obj"));
+check(a.load("triangle.obj"));
+check(a.loaded() && !b.loaded());
+check(a.meshes()==1 && a.vertices()==3);
+check(a.x()==0.0 && a.y()==0.0 && a.z()==0.0);
+check(a.rotationX()==0.0 && a.rotationY()==0.0 && a.rotationZ()==0.0);
+check(a.scaleX()==1.0 && a.scaleY()==1.0 && a.scaleZ()==1.0);
+check(a.save("model-original/out.obj"));
+check(!a.save("model-original/out.obj"));
+2.0 => a.x;
+3.0 => a.y;
+4.0 => a.z;
+check(a.x()==2.0 && a.y()==3.0 && a.z()==4.0);
+check(a.save("model-translated/out.obj"));
+check(!a.load("missing.obj"));
+check(a.loaded() && a.x()==2.0);
+a.reset();
+2.0 => a.scaleX;
+3.0 => a.scaleY;
+4.0 => a.scaleZ;
+check(a.save("model-scaled/out.obj"));
+a.scaleX(0.0);
+check(a.scaleX()==2.0);
+a.reset();
+90.0 => a.rotationZ;
+check(a.save("model-rotated/out.obj"));
+a.reset();
+90.0 => a.rotationX;
+check(a.save("model-rotated-x/out.obj"));
+a.reset();
+90.0 => a.rotationY;
+check(a.save("model-rotated-y/out.obj"));
+check(b.load("triangle.obj"));
+check(b.rotationY()==0.0 && a.rotationY()==90.0);
+check(b.save("model-independent/out.obj"));
+a.clear();
+check(!a.loaded() && b.loaded());
+check(!a.save("model-cleared/out.obj"));
+""",24,p)
+    def obj_vertices(path):
+        return sorted(tuple(round(float(v),5)+0.0 for v in line.split()[1:4])
+                      for line in (p/path).read_text(encoding="utf-8").splitlines()
+                      if line.startswith("v "))
+    def check_model(directory,expected):
+        assert obj_vertices(directory+"/out.obj")==sorted(expected),directory
+    triangle=[(0,0,0),(1,0,0),(0,1,0)]
+    check_model("model-original",triangle)
+    check_model("model-translated",[(2,3,4),(3,3,4),(2,4,4)])
+    check_model("model-scaled",[(0,0,0),(2,0,0),(0,3,0)])
+    check_model("model-rotated",[(0,0,0),(0,1,0),(-1,0,0)])
+    check_model("model-rotated-x",[(0,0,0),(1,0,0),(0,0,1)])
+    check_model("model-rotated-y",[(0,0,0),(0,0,-1),(0,1,0)])
+    check_model("model-independent",triangle)
+    assert not (p/"model-empty").exists() and not (p/"model-cleared").exists()
+    run("model", """
+@import "KeyframeIO";
+Model3D model;
+KeyframeCurve motion;
+check(model.load("triangle.obj"));
+check(motion.add(0.0,0.0,"linear"));
+check(motion.add(2.0,6.0,"linear"));
+motion.valueAt(1.0) => model.z;
+check(model.z()==3.0);
+check(model.save("model-curve/out.obj"));
+""",5,p)
+    check_model("model-curve",[(0,0,3),(1,0,3),(0,1,3)])
