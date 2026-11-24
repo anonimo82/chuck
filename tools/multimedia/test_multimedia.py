@@ -749,3 +749,28 @@ check(!VideoIO.multilayer("trim-av.mkv", "missing-layer.tsv", "missing-layer.mkv
         assert audio_samples(name,0)==pcm+pcm2
     for name in ("empty.mkv","bad-layers.mkv","too-many.mkv","missing-layer.mkv"):
         assert not (p/name).exists(),name
+
+    # Text uses system fonts, so test visibility and timing rather than font-specific pixels.
+    run("video", """
+check(VideoIO.title("trim-av.mkv", "title.mkv", "A", "Sans Bold", 12, 16777215, 0, 0, 0.5, 1.5));
+check(VideoIO.title("trim-av.mkv", "title-color.mkv", "A", "Sans Bold", 12, 65280, 0, 0, 0.5, 1.5));
+check(VideoIO.title("trim-av.mkv", "title-outside.mkv", "A", "Sans", 12, 16777215, 0, 0, 3.0, 4.0));
+check(VideoIO.title("trim-source.mkv", "title-utf8.mkv", "Città", "Sans", 10, 16777215, 0, 0, 0.0, 2.0));
+check(!VideoIO.title("trim-av.mkv", "title.mkv", "A", "Sans", 12, 16777215, 0, 0, 0.0, 1.0));
+check(!VideoIO.title("trim-av.mkv", "title-empty.mkv", "", "Sans", 12, 16777215, 0, 0, 0.0, 1.0));
+check(!VideoIO.title("trim-av.mkv", "title-time.mkv", "A", "Sans", 12, 16777215, 0, 0, 1.0, 1.0));
+check(!VideoIO.title("trim-av.mkv", "title-position.mkv", "A", "Sans", 12, 16777215, 16, 0, 0.0, 1.0));
+check(!VideoIO.title("trim-av.mkv", "title-size.mkv", "A", "Sans", 0, 16777215, 0, 0, 0.0, 1.0));
+""",9,p)
+    for name in ("title.mkv","title-color.mkv"):
+        data=decoded(name)
+        assert len(data)==len(original)
+        for frame in range(8):
+            lo,hi=frame*stride,(frame+1)*stride
+            assert (data[lo:hi]!=original[lo:hi])==(2<=frame<6), (name,frame)
+        assert audio_samples(name,0)==pcm+pcm2
+    assert decoded("title.mkv")!=decoded("title-color.mkv")
+    assert decoded("title-outside.mkv")==original
+    assert decoded("title-utf8.mkv")!=original
+    for name in ("title-empty.mkv","title-time.mkv","title-position.mkv","title-size.mkv"):
+        assert not (p/name).exists(),name

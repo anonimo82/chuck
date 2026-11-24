@@ -9,6 +9,8 @@ extern "C" {
 #include <libavutil/audio_fifo.h>
 #include <libswresample/swresample.h>
 }
+#include <cairo.h>
+#include <pango/pangocairo.h>
 #include <cstdio>
 #include <sndfile.h>
 #include <algorithm>
@@ -894,11 +896,61 @@ bool overlayVideo(const std::string &base,const std::string &layer,const std::st
     return out.finish();
 }
 
+
+bool renderTitle(AVFrame *dest,const std::string &text,const std::string &font,int size,int rgb) {
+    if(text.empty() || text.size()>16384 || font.empty() || font.size()>256 ||
+       !g_utf8_validate(text.data(),static_cast<gssize>(text.size()),nullptr) ||
+       !g_utf8_validate(font.data(),static_cast<gssize>(font.size()),nullptr) ||
+       size<1 || size>512 || rgb<0 || rgb>0xffffff) return false;
+    // Cairo ARGB32 is native endian and premultiplied; convert to straight BGRA.
+    std::unique_ptr<cairo_surface_t,decltype(&cairo_surface_destroy)> surface(
+        cairo_image_surface_create(CAIRO_FORMAT_ARGB32,dest->width,dest->height),cairo_surface_destroy);
+    if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return false;
+    std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
+    if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return false;
+    auto *layout=pango_cairo_create_layout(cr.get());
+    if(!layout) return false;
+    auto *desc=pango_font_description_from_string(font.c_str());
+    if(!desc) { g_object_unref(layout); return false; }
+    pango_font_description_set_absolute_size(desc,size*PANGO_SCALE);
+    pango_layout_set_font_description(layout,desc);
+    pango_font_description_free(desc);
+    pango_layout_set_text(layout,text.data(),static_cast<int>(text.size()));
+    pango_layout_set_width(layout,dest->width*PANGO_SCALE);
+    pango_layout_set_wrap(layout,PANGO_WRAP_WORD_CHAR);
+    cairo_set_source_rgb(cr.get(),((rgb>>16)&255)/255.0,((rgb>>8)&255)/255.0,(rgb&255)/255.0);
+    pango_cairo_show_layout(cr.get(),layout);
+    g_object_unref(layout);
+    if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return false;
+    cairo_surface_flush(surface.get());
+    auto *src=cairo_image_surface_get_data(surface.get());
+    int stride=cairo_image_surface_get_stride(surface.get());
+    if(!src) return false;
+    for(int y=0;y<dest->height;++y) {
+        auto *d=dest->data[0]+static_cast<size_t>(y)*dest->linesize[0];
+        for(int x=0;x<dest->width;++x) {
+            uint32_t pixel;
+            std::memcpy(&pixel,src+static_cast<size_t>(y)*stride+x*4,4);
+            unsigned a=pixel>>24;
+            d[x*4+3]=static_cast<uint8_t>(a);
+            for(int k=0;k<3;++k) {
+                unsigned c=(pixel>>(k*8))&255;
+                d[x*4+k]=a?static_cast<uint8_t>(std::min(255u,(c*255+a/2)/a)):0;
+            }
+        }
+    }
+    return true;
+}
+
 struct CompositeLayer {
     std::string path;
     int x=0,y=0,w=0,h=0;
     double opacity=1;
     bool still=false;
+    bool title=false;
+    std::string font;
+    int fontSize=48,rgb=0xffffff;
+    double begin=0,end=1e15;
     OverlayReader reader;
     Frame pixels;
 };
@@ -922,7 +974,9 @@ bool multilayerVideo(const std::string &base,const std::string &dest,int w,int h
         l.pixels.p->format=l.still?AV_PIX_FMT_BGRA:AV_PIX_FMT_BGR0;
         if(av_frame_get_buffer(l.pixels.p,32)<0) return false;
         if(l.still) {
-            if(!loadWatermark(l.path,l.pixels.p)) return false;
+            if(l.title) {
+                if(!renderTitle(l.pixels.p,l.path,l.font,l.fontSize,l.rgb)) return false;
+            } else if(!loadWatermark(l.path,l.pixels.p)) return false;
         } else if(!l.reader.open(l.path)) return false;
     }
     const auto *encoder=avcodec_find_encoder_by_name("ffv1");
@@ -977,6 +1031,8 @@ bool multilayerVideo(const std::string &base,const std::string &dest,int w,int h
         if(count>=1000000 || !main.render(canvas.p)) return false;
         for(auto &ptr:layers) {
             auto &l=*ptr;
+            double seconds=static_cast<double>(count)/fps;
+            if(seconds<l.begin || seconds>=l.end) continue;
             bool show=l.still;
             if(!l.still && !l.reader.at(count,fps,show)) return false;
             int alpha=static_cast<int>(std::llround(l.opacity*65535));
@@ -2581,6 +2637,45 @@ CK_DLL_SFUN(video_multilayer) {
            multilayerVideo(base,dest,w,h,fps,rate,channels,layers)) RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_title) {
+    RETURN->v_int=0;
+    try {
+        auto source=GET_NEXT_STRING_SAFE(ARGS), dest=GET_NEXT_STRING_SAFE(ARGS);
+        auto content=GET_NEXT_STRING_SAFE(ARGS), font=GET_NEXT_STRING_SAFE(ARGS);
+        auto size=GET_NEXT_INT(ARGS), rgb=GET_NEXT_INT(ARGS);
+        auto x=GET_NEXT_INT(ARGS), y=GET_NEXT_INT(ARGS);
+        auto begin=GET_NEXT_FLOAT(ARGS), end=GET_NEXT_FLOAT(ARGS);
+        if(size<1 || size>512 || rgb<0 || rgb>0xffffff || x<0 || y<0 ||
+           x>8191 || y>8191 || !std::isfinite(begin) || !std::isfinite(end) ||
+           begin<0 || end<=begin) return;
+        Input in;
+        if(!in.open(source)) return;
+        auto *v=in.ctx->streams[in.video];
+        int w=v->codecpar->width,h=v->codecpar->height;
+        AVRational guessed=av_guess_frame_rate(in.ctx,v,nullptr);
+        double raw=av_q2d(guessed);
+        if(w<1 || w>8192 || h<1 || h>8192 || x>=w || y>=h ||
+           !std::isfinite(raw) || raw<1 || raw>120) return;
+        int fps=static_cast<int>(std::llround(raw));
+        int rate=48000,channels=2;
+        for(unsigned i=0;i<in.ctx->nb_streams;++i) {
+            auto *p=in.ctx->streams[i]->codecpar;
+            if(p->codec_type==AVMEDIA_TYPE_AUDIO) {
+                if(p->sample_rate>=8000 && p->sample_rate<=96000) rate=p->sample_rate;
+                if(p->ch_layout.nb_channels==1) channels=1;
+                break;
+            }
+        }
+        std::vector<std::unique_ptr<CompositeLayer>> layers;
+        auto l=std::unique_ptr<CompositeLayer>(new CompositeLayer);
+        l->still=l->title=true; l->path=content; l->font=font;
+        l->fontSize=static_cast<int>(size); l->rgb=static_cast<int>(rgb);
+        l->x=static_cast<int>(x); l->y=static_cast<int>(y);
+        l->w=w-l->x; l->h=h-l->y; l->begin=begin; l->end=end;
+        layers.push_back(std::move(l));
+        if(multilayerVideo(source,dest,w,h,fps,rate,channels,layers)) RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -2759,5 +2854,16 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"int","fps");
     QUERY->add_arg(QUERY,"int","sampleRate");
     QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_sfun(QUERY,video_title,"int","title");
+    QUERY->add_arg(QUERY,"string","source");
+    QUERY->add_arg(QUERY,"string","destination");
+    QUERY->add_arg(QUERY,"string","content");
+    QUERY->add_arg(QUERY,"string","font");
+    QUERY->add_arg(QUERY,"int","fontSize");
+    QUERY->add_arg(QUERY,"int","rgb");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"float","beginSeconds");
+    QUERY->add_arg(QUERY,"float","endSeconds");
     return QUERY->end_class(QUERY);
 }
