@@ -441,7 +441,7 @@ check(VideoIO.trimAV("trim-av.mkv", "exact-tail.mkv", 3, 1));
 check(VideoIO.trimAV("trim-source.mkv", "exact-silent.mkv", 1, 2));
 check(!VideoIO.trimAV("trim-av.mkv", "exact-av.mkv", 0, 1));
 check(!VideoIO.trimAV("trim-av.mkv", "bad-av-range.mkv", 3, 2));
-check(!VideoIO.trimAV("aac-video.mkv", "bad-av-codec.mkv", 0, 1));
+check(!VideoIO.trimAV("trim-av.mkv", "bad-av-codec.mkv", 0, 100));
 check(!VideoIO.trimAV("trim-av.mkv", "bad-av-count.mkv", 0, 0));
 check(!VideoIO.trimAV("missing.mkv", "bad-av-source.mkv", 0, 1));
 """, 9, p)
@@ -456,3 +456,38 @@ check(!VideoIO.trimAV("missing.mkv", "bad-av-source.mkv", 0, 1));
     assert [x["tags"]["language"] for x in audio_tracks("exact-multi.mkv")] == ["ita", "eng"]
     for name in ("bad-av-range.mkv", "bad-av-codec.mkv", "bad-av-count.mkv", "bad-av-source.mkv"):
         assert not (p / name).exists(), name
+
+    # Compressed audio: encode a two-second fixture with video and continuous
+    # audio. Compare a middle interval to independently decoded S16 samples.
+    for codec, encoder, rate in (("aac", "aac", 8000),
+                                 ("mp3", "libmp3lame", 8000),
+                                 ("opus", "libopus", 48000)):
+        encoders = subprocess.check_output(["ffmpeg", "-hide_banner", "-encoders"],
+                                           stderr=subprocess.STDOUT, timeout=30).decode()
+        if encoder not in encoders:
+            print("SKIP compressed trim encoder", encoder)
+            continue
+        source = "trim-" + codec + ".mkv"
+        target = "cut-" + codec + ".mkv"
+        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(p / "trim-source.mkv"),
+                        "-i", str(p / "trim-audio.wav"), "-map", "0:v:0", "-map", "1:a:0",
+                        "-c:v", "copy", "-c:a", encoder, "-ar", str(rate), str(p / source)],
+                       check=True, timeout=30)
+        run("video", f"""
+check(VideoIO.trimAV("{source}", "{target}", 1, 2));
+check(!VideoIO.trimAV("{source}", "{target}", 1, 2));
+""", 2, p)
+        assert decoded(target) == blue + red
+        track = audio_tracks(target)[0]
+        assert track["codec_name"] == "pcm_s16le" and int(track["sample_rate"]) == rate
+        def first_pts(selector):
+            frames = json.loads(subprocess.check_output(["ffprobe", "-v", "error",
+                "-select_streams", selector, "-show_frames", "-of", "json", str(p / source)],
+                timeout=30))["frames"]
+            return float(frames[0]["best_effort_timestamp_time"])
+        import math
+        start_sample = math.ceil((first_pts("v:0") + 0.5)*rate - 1e-7) - round(first_pts("a:0")*rate)
+        reference = audio_samples(source, 0)
+        actual = audio_samples(target, 0)
+        assert start_sample >= 0 and len(actual) == rate * 2
+        assert actual == reference[start_sample*2:(start_sample+rate)*2]
