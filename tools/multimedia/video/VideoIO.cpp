@@ -3037,6 +3037,138 @@ CK_DLL_MFUN(video_clip_export_pixels) {
     } catch(...) {}
 }
 
+
+namespace {
+struct VideoWriterState {
+    // Output retains a reference to path, which must outlive it.
+    std::string path;
+    Output out;
+    Codec codec;
+    Frame frame;
+    Packet packet;
+    AVStream *stream=nullptr;
+    int64_t count=0;
+    explicit VideoWriterState(const std::string &p):path(p),out(path) {}
+    bool open(int w,int h,int fps) {
+        if(path.size()<4 || path.substr(path.size()-4)!=".mkv" ||
+           !frame.p || !packet.p) return false;
+        const auto *encoder=avcodec_find_encoder_by_name("ffv1");
+        if(!encoder || !out.open("matroska")) return false;
+        codec.ctx=avcodec_alloc_context3(encoder);
+        if(!codec.ctx) return false;
+        codec.ctx->width=w; codec.ctx->height=h;
+        codec.ctx->pix_fmt=AV_PIX_FMT_BGR0;
+        codec.ctx->time_base=AVRational{1,fps};
+        codec.ctx->framerate=AVRational{fps,1};
+        if(out.ctx->oformat->flags & AVFMT_GLOBALHEADER)
+            codec.ctx->flags|=AV_CODEC_FLAG_GLOBAL_HEADER;
+        if(avcodec_open2(codec.ctx,encoder,nullptr)<0) return false;
+        stream=avformat_new_stream(out.ctx,nullptr);
+        if(!stream || avcodec_parameters_from_context(stream->codecpar,codec.ctx)<0) return false;
+        stream->time_base=codec.ctx->time_base;
+        stream->avg_frame_rate=codec.ctx->framerate;
+        frame.p->format=codec.ctx->pix_fmt;
+        frame.p->width=w; frame.p->height=h;
+        return av_frame_get_buffer(frame.p,32)>=0 && avformat_write_header(out.ctx,nullptr)>=0;
+    }
+    bool drain(bool flushing) {
+        for(;;) {
+            int ret=avcodec_receive_packet(codec.ctx,packet.p);
+            if(ret==AVERROR_EOF) return flushing;
+            if(ret==AVERROR(EAGAIN)) return !flushing;
+            if(ret<0) return false;
+            av_packet_rescale_ts(packet.p,codec.ctx->time_base,stream->time_base);
+            packet.p->stream_index=stream->index;
+            int written=av_interleaved_write_frame(out.ctx,packet.p);
+            av_packet_unref(packet.p);
+            if(written<0) return false;
+        }
+    }
+    // 0: rejected input, 1: success, -1: fatal writer error.
+    int append(Chuck_DL_Api::ArrayInt a,CK_DL_API API) {
+        int w=codec.ctx->width,h=codec.ctx->height;
+        auto n=static_cast<t_CKINT>(static_cast<int64_t>(w)*h*4);
+        if(!a || count>=1000000 || API->object->array_int_size(a)!=n) return 0;
+        // Validate the entire input before changing the encoder state.
+        for(t_CKINT i=0;i<n;++i) {
+            auto v=API->object->array_int_get_idx(a,i);
+            if(v<0 || v>255 || (i%4==3 && v!=255)) return 0;
+        }
+        if(av_frame_make_writable(frame.p)<0) return -1;
+        for(int y=0;y<h;++y) {
+            auto *dst=frame.p->data[0]+static_cast<size_t>(y)*frame.p->linesize[0];
+            for(int x=0;x<w;++x) {
+                auto i=static_cast<t_CKINT>((static_cast<int64_t>(y)*w+x)*4);
+                dst[x*4]=API->object->array_int_get_idx(a,i+2);
+                dst[x*4+1]=API->object->array_int_get_idx(a,i+1);
+                dst[x*4+2]=API->object->array_int_get_idx(a,i);
+                dst[x*4+3]=0;
+            }
+        }
+        frame.p->pts=count;
+        if(avcodec_send_frame(codec.ctx,frame.p)<0 || !drain(false)) return -1;
+        ++count; return 1;
+    }
+    bool finish() {
+        return count>0 && avcodec_send_frame(codec.ctx,nullptr)>=0 && drain(true) && out.finish();
+    }
+};
+struct VideoWriterHolder {
+    std::unique_ptr<VideoWriterState> writer;
+};
+t_CKUINT videoWriterOffset=0;
+VideoWriterHolder *writerState(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<VideoWriterHolder *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,videoWriterOffset)));
+}
+}
+CK_DLL_CTOR(video_writer_ctor) {
+    OBJ_MEMBER_UINT(SELF,videoWriterOffset)=0;
+    OBJ_MEMBER_UINT(SELF,videoWriterOffset)=reinterpret_cast<uintptr_t>(new(std::nothrow) VideoWriterHolder);
+}
+CK_DLL_DTOR(video_writer_dtor) {
+    delete writerState(SELF,API);
+    OBJ_MEMBER_UINT(SELF,videoWriterOffset)=0;
+}
+CK_DLL_MFUN(video_writer_open) {
+    RETURN->v_int=0;
+    try {
+        auto *p=writerState(SELF,API);
+        auto path=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),fps=GET_NEXT_INT(ARGS);
+        if(!p || p->writer || w<1 || h<1 || w>8192 || h>8192 ||
+           w*h>16777216 || fps<1 || fps>120) return;
+        auto next=std::make_unique<VideoWriterState>(path);
+        if(next->open(w,h,fps)) { p->writer=std::move(next); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_writer_append) {
+    RETURN->v_int=0;
+    auto *p=writerState(SELF,API);
+    auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+    if(!p || !p->writer) return;
+    try {
+        int ret=p->writer->append(a,API);
+        if(ret<0) p->writer.reset();
+        RETURN->v_int=ret==1;
+    } catch(...) { p->writer.reset(); }
+}
+CK_DLL_MFUN(video_writer_finish) {
+    RETURN->v_int=0;
+    auto *p=writerState(SELF,API);
+    if(!p || !p->writer) return;
+    try { RETURN->v_int=p->writer->finish(); } catch(...) {}
+    p->writer.reset();
+}
+CK_DLL_MFUN(video_writer_abort) {
+    if(auto *p=writerState(SELF,API)) p->writer.reset();
+}
+CK_DLL_MFUN(video_writer_active) {
+    auto *p=writerState(SELF,API); RETURN->v_int=p && p->writer;
+}
+CK_DLL_MFUN(video_writer_frames) {
+    auto *p=writerState(SELF,API); RETURN->v_int=p && p->writer?p->writer->count:0;
+}
+
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -3279,5 +3411,22 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"float","value");
     QUERY->add_mfun(QUERY,video_clip_export_pixels,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"VideoWriter","Object");
+    videoWriterOffset=QUERY->add_mvar(QUERY,"int","@videoWriterNative",FALSE);
+    if(videoWriterOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,video_writer_ctor);
+    QUERY->add_dtor(QUERY,video_writer_dtor);
+    QUERY->add_mfun(QUERY,video_writer_open,"int","open");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","fps");
+    QUERY->add_mfun(QUERY,video_writer_append,"int","appendFrame");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,video_writer_finish,"int","finish");
+    QUERY->add_mfun(QUERY,video_writer_abort,"void","abort");
+    QUERY->add_mfun(QUERY,video_writer_active,"int","active");
+    QUERY->add_mfun(QUERY,video_writer_frames,"int","frames");
     return QUERY->end_class(QUERY);
 }
