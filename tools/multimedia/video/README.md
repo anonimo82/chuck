@@ -30,3 +30,15 @@ New remux checks have not yet been run on Windows or Linux.
 Reads frame000000.ppm through frame000119.ppm in order and encodes a silent FFV1 video in Matroska. Each input must be a P6 binary RGB PPM with maxval 255, identical dimensions (1–8192 pixels per axis), a single whitespace delimiter before pixel bytes, and no trailing bytes. Count: 1–100000; integer frame rate: 1–120 fps. The output must end in .mkv and must not already exist. Returns 1 on success, 0 on failure; partial outputs are removed on ordinary errors. RGB values are preserved without lossy compression. The encoder must be available in the linked FFmpeg build. This is offline, blocking processing; audio and other output codecs are not yet supported.
 
 Ten new smoke checks and a byte-for-byte decoded RGB comparison are included; execution pending.
+
+### Compressed video export
+
+```chuck
+@import "VideoIO";
+if(VideoIO.encoderAvailable("h264"))
+    <<< VideoIO.encodeSequence("frame", "animation.mp4", 120, 30, "h264", 23) >>>;
+if(VideoIO.encoderAvailable("vp9"))
+    <<< VideoIO.encodeSequence("frame", "animation.webm", 120, 30, "vp9", 32) >>>;
+```
+
+The six-argument overload accepts h264 (libx264/MP4), vp9 (libvpx-vp9/WebM), or ffv1 (MKV, quality 0 only). CRF quality ranges from 0 to 51 for compressed modes; lower values generally produce higher quality and larger files. CRF scales are not directly comparable between encoders. H.264 and VP9 use YUV420P, require even dimensions and do not guarantee exact RGB preservation even at CRF 0. The existing four-argument FFV1 API is unchanged. encoderAvailable reports whether the named encoder exists in the linked FFmpeg build, not whether a particular input can be encoded. All modes remain silent, offline, and blocking. Tests use FFmpeg and ffprobe CLI solely for independent verification. New checks remain unexecuted.
