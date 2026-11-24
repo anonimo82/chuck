@@ -9,7 +9,7 @@ CHUCK = HERE.parents[1] / "src/chuck"
 def run(module, script, expected, directory):
     path = directory / "test.ck"
     path.write_text('fun void check(int ok) { if(ok) <<< "PASS" >>>; else <<< "FAIL" >>>; }\n' + script)
-    r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), str(path)], cwd=directory, capture_output=True, text=True, timeout=60)
+    r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
     log = r.stdout + r.stderr
     print(module, log)
     if r.returncode or "FAIL" in log or log.count("PASS") != expected:
