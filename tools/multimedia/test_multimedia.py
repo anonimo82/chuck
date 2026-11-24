@@ -149,13 +149,13 @@ check(VideoIO.transcode("generated.mkv", "resized.mkv", 32, 24, "ffv1", 0));
 check(VideoIO.width("resized.mkv") == 32);
 check(VideoIO.height("resized.mkv") == 24);
 check(!VideoIO.transcode("generated.mkv", "resized.mkv", 32, 24, "ffv1", 0));
-check(!VideoIO.transcode("audiovisual.mkv", "reject-audio.mkv", 32, 24, "ffv1", 0));
+check(VideoIO.transcode("audiovisual.mkv", "preserved-audio.mkv", 32, 24, "ffv1", 0));
 check(!VideoIO.transcode("generated.mkv", "invalid-size.mkv", 0, 24, "ffv1", 0));
 check(!VideoIO.transcode("generated.mkv", "invalid-codec.mkv", 32, 24, "unknown", 0));
 check(!VideoIO.transcode("missing.mkv", "missing-source.mkv", 32, 24, "ffv1", 0));
 """, 8, p)
     assert decoded("resized.mkv") == bytes((255, 0, 0)) * (32 * 24) + bytes((0, 0, 255)) * (32 * 24)
-    for name in ("reject-audio.mkv", "invalid-size.mkv", "invalid-codec.mkv", "missing-source.mkv"):
+    for name in ("invalid-size.mkv", "invalid-codec.mkv", "missing-source.mkv"):
         assert not (p / name).exists(), name
     for mode, ext, quality in (("h264", "mp4", 23), ("vp9", "webm", 32)):
         name = "transcoded." + ext
@@ -201,3 +201,39 @@ check(VideoIO.encodeSequence("extracted", "roundtrip.mkv", 2, 2));
     assert not (p / "missing-frame000000.ppm").exists()
     assert not (p / "invalid-frame000000.ppm").exists()
     assert decoded("roundtrip.mkv") == red + blue
+
+    # Preserve two independent audio tracks, their metadata and their decoded samples.
+    pcm2 = b"\x00\x20\x00\xe0" * 4000
+    with wave.open(str(p / "sound2.wav"), "wb") as wav:
+        wav.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+        wav.writeframes(pcm2)
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(p / "generated.mkv"),
+                    "-i", str(p / "sound.wav"), "-i", str(p / "sound2.wav"),
+                    "-map", "0:v:0", "-map", "1:a:0", "-map", "2:a:0", "-c", "copy",
+                    "-metadata:s:a:0", "language=ita", "-metadata:s:a:1", "language=eng",
+                    str(p / "multi-audio.mkv")], check=True, timeout=30)
+    run("video", """
+check(VideoIO.width("preserved-audio.mkv") == 32);
+check(VideoIO.height("preserved-audio.mkv") == 24);
+check(VideoIO.transcode("multi-audio.mkv", "multi-preserved.mkv", 32, 24, "ffv1", 0));
+check(!VideoIO.transcode("multi-audio.mkv", "multi-preserved.mkv", 32, 24, "ffv1", 0));
+check(!VideoIO.transcode("multi-audio.mkv", "incompatible.webm", 32, 24, "vp9", 32));
+""", 5, p)
+    import json
+    def audio_tracks(name):
+        info = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "a",
+                                        "-show_streams", "-of", "json", str(p / name)], timeout=30)
+        return json.loads(info)["streams"]
+    def audio_samples(name, index):
+        return subprocess.check_output(["ffmpeg", "-nostdin", "-v", "error", "-i", str(p / name),
+                                        "-map", f"0:a:{index}", "-c:a", "pcm_s16le",
+                                        "-f", "s16le", "-"], timeout=30)
+    assert len(audio_tracks("preserved-audio.mkv")) == 1
+    assert audio_samples("preserved-audio.mkv", 0) == pcm
+    tracks = audio_tracks("multi-preserved.mkv")
+    assert len(tracks) == 2
+    assert [x["tags"]["language"] for x in tracks] == ["ita", "eng"]
+    assert audio_samples("multi-preserved.mkv", 0) == pcm
+    assert audio_samples("multi-preserved.mkv", 1) == pcm2
+    assert decoded("multi-preserved.mkv") == decoded("resized.mkv")
+    assert not (p / "incompatible.webm").exists()

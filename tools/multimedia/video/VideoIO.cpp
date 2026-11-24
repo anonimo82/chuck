@@ -505,8 +505,8 @@ bool encodeSequence(const std::string &prefix, const std::string &dest, int coun
 }
 
 
-// Transcode a single video-only stream, preserving presentation timestamps.
-// Reject extra streams explicitly instead of silently discarding audio.
+// Transcode one video stream and copy compatible audio streams.
+// Reject unsupported extra streams instead of silently discarding them.
 bool transcode(const std::string &source, const std::string &dest,
                int w, int h, const std::string &mode, int quality) {
     const bool ffv1 = mode == "ffv1", h264 = mode == "h264", vp9 = mode == "vp9";
@@ -516,7 +516,11 @@ bool transcode(const std::string &source, const std::string &dest,
        w < 1 || h < 1 || w > 8192 || h > 8192 || quality < 0 || quality > 51 ||
        (ffv1 && quality != 0) || (!ffv1 && ((w & 1) || (h & 1)))) return false;
     Input in;
-    if(!in.open(source) || in.ctx->nb_streams != 1) return false;
+    if(!in.open(source)) return false;
+    for(unsigned i = 0; i < in.ctx->nb_streams; ++i) {
+        if(static_cast<int>(i) != in.video &&
+           in.ctx->streams[i]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) return false;
+    }
     auto *src = in.ctx->streams[in.video];
     const auto *decoder = avcodec_find_decoder(src->codecpar->codec_id);
     const auto *encoder = avcodec_find_encoder_by_name(ffv1 ? "ffv1" : h264 ? "libx264" : "libvpx-vp9");
@@ -555,6 +559,23 @@ bool transcode(const std::string &source, const std::string &dest,
     dst->time_base = enc.ctx->time_base;
     dst->avg_frame_rate = enc.ctx->framerate;
     dst->sample_aspect_ratio = enc.ctx->sample_aspect_ratio;
+    std::vector<int> mapping(in.ctx->nb_streams, -1);
+    mapping[in.video] = dst->index;
+    for(unsigned i = 0; i < in.ctx->nb_streams; ++i) {
+        if(static_cast<int>(i) == in.video) continue;
+        auto *audio = in.ctx->streams[i];
+        if(avformat_query_codec(out.ctx->oformat, audio->codecpar->codec_id, FF_COMPLIANCE_NORMAL) <= 0)
+            return false;
+        auto *copy = avformat_new_stream(out.ctx, nullptr);
+        if(!copy || avcodec_parameters_copy(copy->codecpar, audio->codecpar) < 0) return false;
+        copy->codecpar->codec_tag = 0;
+        copy->time_base = audio->time_base;
+        copy->disposition = audio->disposition;
+        if(av_dict_copy(&copy->metadata, audio->metadata, 0) < 0) return false;
+        mapping[i] = copy->index;
+    }
+    if(av_dict_copy(&dst->metadata, src->metadata, 0) < 0 ||
+       av_dict_copy(&out.ctx->metadata, in.ctx->metadata, 0) < 0) return false;
     if(avformat_write_header(out.ctx, nullptr) < 0) return false;
     Frame decoded, scaled;
     Packet inputPacket, outputPacket;
@@ -604,9 +625,22 @@ bool transcode(const std::string &source, const std::string &dest,
     };
     int ret;
     while((ret = av_read_frame(in.ctx, inputPacket.p)) >= 0) {
-        int sent = avcodec_send_packet(dec.ctx, inputPacket.p);
-        av_packet_unref(inputPacket.p);
-        if(sent < 0 || !drainDecoder(false)) return false;
+        int i = inputPacket.p->stream_index;
+        if(i < 0 || static_cast<unsigned>(i) >= mapping.size()) return false;
+        if(i == in.video) {
+            int sent = avcodec_send_packet(dec.ctx, inputPacket.p);
+            av_packet_unref(inputPacket.p);
+            if(sent < 0 || !drainDecoder(false)) return false;
+        } else {
+            auto *packet = inputPacket.p;
+            auto *audio = out.ctx->streams[mapping[i]];
+            av_packet_rescale_ts(packet, in.ctx->streams[i]->time_base, audio->time_base);
+            packet->stream_index = audio->index;
+            packet->pos = -1;
+            int written = av_interleaved_write_frame(out.ctx, packet);
+            av_packet_unref(packet);
+            if(written < 0) return false;
+        }
     }
     if(ret != AVERROR_EOF || avcodec_send_packet(dec.ctx, nullptr) < 0 ||
        !drainDecoder(true) || previous == AV_NOPTS_VALUE ||
