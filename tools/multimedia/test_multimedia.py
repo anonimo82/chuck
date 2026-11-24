@@ -1188,7 +1188,7 @@ check(b.save("model-independent/out.obj"));
 a.clear();
 check(!a.loaded() && b.loaded());
 check(!a.save("model-cleared/out.obj"));
-""",24,p)
+""",25,p)
     def obj_vertices(path):
         return sorted(tuple(round(float(v),5)+0.0 for v in line.split()[1:4])
                       for line in (p/path).read_text(encoding="utf-8").splitlines()
@@ -1261,7 +1261,7 @@ check(b.sampleAt(0,0)==0.25 && b.gain()==1.0);
 a.clear();
 check(!a.loaded() && a.frames()==0 && b.loaded());
 check(!a.save("buffer-cleared.wav"));
-""",29,p)
+""",28,p)
     def buffer_pcm(name):
         data=subprocess.check_output(["ffmpeg","-v","error","-i",str(p/name),
             "-f","s32le","-acodec","pcm_s32le","-"],timeout=30)
@@ -1438,7 +1438,7 @@ check(a.frameIndex()==0 && !a.eof());
 a.clear();
 check(!a.loaded() && b.loaded());
 check(!a.saveFrame("clip-cleared.ppm"));
-""",31,p)
+""",30,p)
     def clip_ppm(name,w=16,h=16):
         header=f"P6\n{w} {h}\n255\n".encode()
         data=(p/name).read_bytes()
