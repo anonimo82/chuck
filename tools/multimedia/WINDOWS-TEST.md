@@ -37,3 +37,7 @@ User-executed build-and-test.ps1 against source revision d32d24cb389d10d6b3da85c
 ## Picture-in-picture and chroma-key compositing Windows result — 2026-11-24
 
 User-executed build-and-test.ps1 against source revision 20850643135db803ebc46e920b4bc8634f2d9659 (PRs #31–#32). ChucK 1.5.5.9 x64, API 10.2, MSYS2 UCRT64. All six Chugins loaded and all 228 smoke checks passed: RasterIO 8, VectorIO 4, ModelIO 6, AudioIO 7, MidiFileIO 5, VideoIO 198. All 18 new checks ran (9 picture-in-picture and 9 chroma-key/audio mixing), including independent RGB and PCM assertions. Final script message: All multimedia smoke tests passed. Validation remains limited to tested fixtures; soft-key edges, more varied media, long-clip memory usage, multiple tracks and other platforms require further validation.
+
+## Static watermarks and multilayer compositing Windows result — 2026-11-24
+
+User-executed build-and-test.ps1 against source revision b3741d10ad6f7a33cf4e779696a3991e991fce8a (PRs #33–#34). ChucK 1.5.5.9 x64, API 10.2, MSYS2 UCRT64. All six Chugins loaded and all 245 smoke checks passed: RasterIO 8, VectorIO 4, ModelIO 6, AudioIO 7, MidiFileIO 5, VideoIO 215. All 17 new checks ran (9 static watermark and 8 ordered multilayer checks), including independent RGB and PCM assertions. Final script message: All multimedia smoke tests passed. Validation remains limited to tested fixtures; JPEG/BMP watermark inputs, alpha-edge quality, long-clip memory usage, maximum layer count in successful compositions, and other platforms require further testing.
