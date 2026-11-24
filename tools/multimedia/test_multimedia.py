@@ -816,3 +816,37 @@ check(!SubtitleIO.convert("sub.srt","bad-cue.txt"));
     assert (p/"single.vtt").read_bytes()==b"WEBVTT\n\n00:00:00.250 --> 00:00:01.750\nNew cue\n\n"
     assert not (p/"bad-cue.vtt").exists()
     assert not (p/"bad-cue.txt").exists()
+
+    # At native 2 FPS, only frames 1 and 2 have captions.
+    captions="1\n00:00:00,500 --> 00:00:01,500\nA\n\n"
+    overlap=captions+"2\n00:00:01,000 --> 00:00:01,500\nB\n\n"
+    (p/"burn.srt").write_bytes(captions.encode("utf-8"))
+    (p/"burn-overlap.srt").write_bytes(overlap.encode("utf-8"))
+    (p/"burn.vtt").write_bytes(b"WEBVTT\n\n00:00:00.500 --> 00:00:01.500\nA\n\n")
+    (p/"burn-outside.srt").write_bytes(b"1\n00:00:03,000 --> 00:00:04,000\nA\n\n")
+    run("video", """
+check(VideoIO.burnSubtitles("trim-av.mkv","burn.srt","burned.mkv","Sans Bold",6,16777215,1));
+check(VideoIO.burnSubtitles("trim-av.mkv","burn.vtt","burned-vtt.mkv","Sans Bold",6,16777215,1));
+check(VideoIO.burnSubtitles("trim-av.mkv","burn-overlap.srt","burned-overlap.mkv","Sans Bold",6,16777215,1));
+check(VideoIO.burnSubtitles("trim-av.mkv","burn-outside.srt","burned-outside.mkv","Sans Bold",6,16777215,1));
+check(!VideoIO.burnSubtitles("trim-av.mkv","burn.srt","burned.mkv","Sans Bold",6,16777215,1));
+check(!VideoIO.burnSubtitles("trim-av.mkv","missing.srt","burn-missing.mkv","Sans Bold",6,16777215,1));
+check(!VideoIO.burnSubtitles("trim-av.mkv","invalid.srt","burn-invalid.mkv","Sans Bold",6,16777215,1));
+check(!VideoIO.burnSubtitles("trim-av.mkv","burn.srt","burn-margin.mkv","Sans Bold",6,16777215,16));
+check(!VideoIO.burnSubtitles("trim-av.mkv","burn.srt","burn-size.mkv","Sans Bold",0,16777215,1));
+""",9,p)
+    burned=decoded("burned.mkv")
+    stacked=decoded("burned-overlap.mkv")
+    assert len(burned)==len(stacked)==len(title_original)
+    for frame in range(4):
+        lo,hi=frame*stride,(frame+1)*stride
+        assert (burned[lo:hi]!=title_original[lo:hi])==(1<=frame<3)
+        assert (stacked[lo:hi]!=burned[lo:hi])==(frame==2)
+        # Last row lies within the reserved bottom margin.
+        assert burned[hi-48:hi]==title_original[hi-48:hi]
+    assert decoded("burned-vtt.mkv")==burned
+    assert decoded("burned-outside.mkv")==title_original
+    for name in ("burned.mkv","burned-vtt.mkv","burned-overlap.mkv","burned-outside.mkv"):
+        assert audio_samples(name,0)==pcm+pcm2
+    for name in ("burn-missing.mkv","burn-invalid.mkv","burn-margin.mkv","burn-size.mkv"):
+        assert not (p/name).exists(),name
