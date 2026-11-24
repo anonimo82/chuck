@@ -1076,3 +1076,70 @@ check(image.red()==1.5);
 check(image.save("object-curve.png"));
 """,5,p)
     assert rgba_png("object-curve.png")==bytes((150,50,0,255,30,40,60,128))
+
+    # VectorImage: independent geometry, opacity and persistent document.
+    svg='<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><rect x="2" y="4" width="4" height="2" fill="#ff0000"/></svg>'
+    (p/"vector-object.svg").write_text(svg,encoding="utf-8")
+    run("vector", """
+VectorImage a;
+VectorImage b;
+check(!a.loaded());
+check(!a.render("vector-empty.png",16,16));
+check(a.load("vector-object.svg"));
+check(a.loaded() && !b.loaded());
+check(a.x()==0.0 && a.y()==0.0 && a.scaleX()==1.0 && a.scaleY()==1.0);
+check(a.rotation()==0.0 && a.opacity()==1.0);
+check(a.render("vector-original.png",16,16));
+check(!a.render("vector-original.png",16,16));
+4.0 => a.x;
+2.0 => a.y;
+check(a.x()==4.0 && a.y()==2.0);
+check(a.render("vector-moved.png",16,16));
+check(!a.load("missing.svg"));
+check(a.loaded() && a.x()==4.0);
+check(!a.setSvg("not svg"));
+check(a.x()==4.0);
+a.reset();
+check(a.x()==0.0 && a.y()==0.0);
+2.0 => a.scaleX;
+2.0 => a.scaleY;
+check(a.render("vector-scaled.png",16,16));
+a.reset();
+90.0 => a.rotation;
+check(a.render("vector-rotated.png",16,16));
+a.reset();
+0.5 => a.opacity;
+check(a.render("vector-alpha.png",16,16));
+a.opacity(2.0);
+check(a.opacity()==0.5);
+check(!a.render("vector-invalid-size.png",0,16));
+check(b.setSvg("<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'><rect width='16' height='16' fill='blue'/></svg>"));
+check(b.loaded() && b.opacity()==1.0 && a.opacity()==0.5);
+check(b.render("vector-blue.png",16,16));
+a.clear();
+check(!a.loaded() && b.loaded());
+check(!a.render("vector-cleared.png",16,16));
+""",25,p)
+    def vector_rect(x0,y0,x1,y1,alpha=255,color=(255,0,0)):
+        return bytes(c for y in range(16) for x in range(16)
+                     for c in ((*color,alpha) if x0<=x<x1 and y0<=y<y1 else (0,0,0,0)))
+    assert rgba_png("vector-original.png")==vector_rect(2,4,6,6)
+    assert rgba_png("vector-moved.png")==vector_rect(6,6,10,8)
+    assert rgba_png("vector-scaled.png")==vector_rect(0,0,4,4)
+    assert rgba_png("vector-rotated.png")==vector_rect(10,2,12,6)
+    assert rgba_png("vector-alpha.png")==vector_rect(2,4,6,6,128)
+    assert rgba_png("vector-blue.png")==vector_rect(0,0,16,16,color=(0,0,255))
+    for name in ("vector-empty.png","vector-invalid-size.png","vector-cleared.png"):
+        assert not (p/name).exists()
+    run("vector", """
+@import "KeyframeIO";
+VectorImage image;
+KeyframeCurve move;
+check(image.load("vector-object.svg"));
+check(move.add(0.0,0.0,"linear"));
+check(move.add(2.0,8.0,"linear"));
+move.valueAt(1.0) => image.x;
+check(image.x()==4.0);
+check(image.render("vector-curve.png",16,16));
+""",5,p)
+    assert rgba_png("vector-curve.png")==vector_rect(6,4,10,6)
