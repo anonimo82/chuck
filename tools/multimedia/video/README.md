@@ -113,3 +113,12 @@ Eight new smoke checks including AAC decode and independent PCM comparisons are 
 ```
 
 transcodeAV(source, destination, width, height, videoCodec, CRF, audioKbps) supports H.264/AAC in MP4 and VP9/Opus in WebM, using libx264/native AAC and libvpx-vp9/libopus respectively. All audio tracks are decoded and encoded at 48 kHz; nominal bitrate is 32–256 kbps per track. Only continuous mono/stereo tracks with stable sample format, rate and channel layout are accepted. Timestamp discontinuities or unsupported extra streams cause rejection; first audio timestamps anchor the resampled sample clock. Codec delay, padding and container rounding may affect exact duration. Video dimensions must be even, up to 8192 per axis; scaling stretches to the requested size. The existing transcode API still copies compatible audio unchanged. No overwrite; ordinary failure removes incomplete files. Offline only. libswresample is now required alongside the existing FFmpeg and libsndfile dependencies. Eleven additional smoke checks are planned when both encoder pairs are present, plus independent codec, duration and start-time checks. New code has not yet been compiled or executed.
+
+### Keyframe-aligned trimming
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.trim("movie.mkv", "excerpt.mkv", 10.0, 25.0) >>>;
+```
+
+trim(source, destination, start, end) selects a time interval in seconds relative to the input container start. It copies packets without re-encoding and starts at the first video keyframe at or after start, strictly before end. Video packets with presentation timestamps before end are kept, so the last frame may extend beyond end. Complete audio packets within the actual interval are retained, with timestamps shifted by the common video anchor. Audio packet boundaries can leave short gaps near the edges. The current conservative implementation accepts exactly one video stream and compatible audio streams, requires strictly increasing equal PTS/DTS per stream, and rejects reordered video (e.g. many H.264 streams with B-frames), missing timestamps, empty output tracks and unsupported extra streams. Keyframe flags are not a guarantee of independent decoding in every open-GOP codec. Supported output containers: MKV, MP4, MOV, WebM. No overwrite; ordinary failures remove incomplete output. This is not frame-accurate or sample-accurate editing. Offline trusted local inputs only. Ten new smoke checks and decoded video/audio checks are included, pending execution.
