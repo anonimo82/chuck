@@ -491,3 +491,39 @@ check(!VideoIO.trimAV("{source}", "{target}", 1, 2));
         actual = audio_samples(target, 0)
         assert start_sample >= 0 and len(actual) == rate * 2
         assert actual == reference[start_sample*2:(start_sample+rate)*2]
+
+    # Different dimensions, codecs and frame rates; test both duplication and dropping.
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-framerate", "4",
+                    "-i", str(p / "trimsrc%06d.ppm"), "-vf", "scale=32:24",
+                    "-c:v", "mpeg4", "-pix_fmt", "yuv420p", str(p / "different.mp4")],
+                   check=True, timeout=30)
+    run("video", """
+check(VideoIO.concatNormalized("trim-source.mkv", "different.mp4", "normalized.mkv", 16, 16, 4));
+check(VideoIO.concatNormalized("trim-source.mkv", "different.mp4", "normalized-low.mkv", 16, 16, 2));
+check(VideoIO.width("normalized.mkv") == 16);
+check(VideoIO.height("normalized.mkv") == 16);
+check(Math.fabs(VideoIO.fps("normalized.mkv") - 4.0) < 0.01);
+check(!VideoIO.concatNormalized("trim-source.mkv", "different.mp4", "normalized.mkv", 16, 16, 4));
+check(!VideoIO.concatNormalized("trim-source.mkv", "different.mp4", "bad-norm-size.mkv", 0, 16, 4));
+check(!VideoIO.concatNormalized("trim-source.mkv", "different.mp4", "bad-norm-fps.mkv", 16, 16, 0));
+check(!VideoIO.concatNormalized("trim-av.mkv", "different.mp4", "bad-norm-audio.mkv", 16, 16, 4));
+check(!VideoIO.concatNormalized("missing.mkv", "different.mp4", "bad-norm-source.mkv", 16, 16, 4));
+check(!VideoIO.concatNormalized("trim-source.mkv", "different.mp4", "bad-norm.mp4", 16, 16, 4));
+""", 11, p)
+    stride = 16 * 16 * 3
+    high = decoded("normalized.mkv")
+    low = decoded("normalized-low.mkv")
+    assert len(high) == 12 * stride and len(low) == 6 * stride
+    assert high[:8*stride] == red*2 + blue*2 + red*2 + blue*2
+    assert low[:4*stride] == red + blue + red + blue
+    assert max(abs(x-y) for x,y in zip(high[8*stride:], red+blue+red+blue)) <= 5
+    assert max(abs(x-y) for x,y in zip(low[4*stride:], red+red)) <= 5
+    for name, expected in (("normalized.mkv", 12), ("normalized-low.mkv", 6)):
+        packets = json.loads(subprocess.check_output(["ffprobe", "-v", "error",
+            "-select_streams", "v:0", "-show_packets", "-of", "json", str(p / name)],
+            timeout=30))["packets"]
+        rate = 4 if expected == 12 else 2
+        assert [float(x["pts_time"]) for x in packets] == [i/rate for i in range(expected)]
+    for name in ("bad-norm-size.mkv", "bad-norm-fps.mkv", "bad-norm-audio.mkv",
+                 "bad-norm-source.mkv", "bad-norm.mp4"):
+        assert not (p / name).exists(), name
