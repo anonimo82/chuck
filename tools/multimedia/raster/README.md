@@ -65,3 +65,7 @@ image.save("frame.png");
 ```
 
 RasterImage has no knowledge of curves; it accepts ordinary numbers. The legacy RasterIO.animate uses the same rendering helper. Thirty-three new object and integration smoke checks plus independent RGBA comparisons await execution.
+
+## In-memory drawing and editing
+
+RasterImage.fill(r,g,b,a), fillRect(x,y,w,h,r,g,b,a), line(x,y,x2,y2,r,g,b,a), and fillCircle(x,y,radius,r,g,b,a) replace raw RGBA8 pixels. Coordinates use a top-left origin; rectangle and line endpoints must fit; circles are clipped to the canvas, with center inside. Drawing is non-antialiased. crop(x,y,w,h) extracts an in-bounds rectangle and resize(w,h) uses nearest-neighbor sampling. Both are transactional, preserve numeric controls and existing image bounds. composite(x,y,w,h,int[] pixels,float opacity) performs straight-alpha source-over blending with clipping, row-major RGBA8, opacity [0,1]. It validates all source values before writing. Compositing uses raw destination pixels; existing color controls apply afterward on export/save. All methods return 1 on success and 0 for invalid input. No extra dependencies or temporary files. 37 new smoke checks plus independent RGB assertions; Windows execution pending.
