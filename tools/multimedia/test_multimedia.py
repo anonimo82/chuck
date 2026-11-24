@@ -176,3 +176,28 @@ if(VideoIO.encoderAvailable("{mode}")) {{
             assert len(rgb) == 32 * 24 * 3 * 2
             assert rgb[0] > 200 and rgb[2] < 50
             assert rgb[32 * 24 * 3 + 2] > 200
+
+    # Frame extraction: exact pixels, range selection and rollback on collision.
+    (p / "collision000001.ppm").write_bytes(b"sentinel")
+    run("video", """
+check(VideoIO.extractSequence("generated.mkv", "extracted", 0, 10) == 2);
+check(VideoIO.extractSequence("generated.mkv", "second", 1, 1) == 1);
+check(VideoIO.extractSequence("generated.mkv", "beyond", 2, 1) == 0);
+check(VideoIO.extractSequence("generated.mkv", "extracted", 0, 2) == -1);
+check(VideoIO.extractSequence("generated.mkv", "collision", 0, 2) == -1);
+check(VideoIO.extractSequence("missing.mkv", "missing-frame", 0, 1) == -1);
+check(VideoIO.extractSequence("generated.mkv", "invalid-frame", -1, 1) == -1);
+check(VideoIO.extractSequence("generated.mkv", "invalid-frame", 0, 0) == -1);
+check(VideoIO.encodeSequence("extracted", "roundtrip.mkv", 2, 2));
+""", 9, p)
+    header = b"P6\n16 16\n255\n"
+    assert (p / "extracted000000.ppm").read_bytes() == header + red
+    assert (p / "extracted000001.ppm").read_bytes() == header + blue
+    assert (p / "second000000.ppm").read_bytes() == header + blue
+    assert not (p / "extracted000002.ppm").exists()
+    assert not (p / "beyond000000.ppm").exists()
+    assert not (p / "collision000000.ppm").exists()
+    assert (p / "collision000001.ppm").read_bytes() == b"sentinel"
+    assert not (p / "missing-frame000000.ppm").exists()
+    assert not (p / "invalid-frame000000.ppm").exists()
+    assert decoded("roundtrip.mkv") == red + blue
