@@ -8,6 +8,10 @@ extern "C" {
 #include <libavutil/mem.h>
 }
 #include <cstdio>
+#include <sndfile.h>
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <cerrno>
 #include <cctype>
 #include <memory>
@@ -420,6 +424,132 @@ bool extractAudio(Input &in, const std::string &dest, int track) {
         wrote = true;
     }
     return ret == AVERROR_EOF && wrote && out.finish();
+}
+
+
+// Decode one selected audio stream and write interleaved floating-point samples
+// through libsndfile. Preserve sample rate and channel count; reject changes.
+bool convertAudio(Input &in, const std::string &dest, int track) {
+    const auto dot = dest.find_last_of('.');
+    if(dot == std::string::npos || track < 0) return false;
+    const auto ext = dest.substr(dot);
+    int format = ext == ".wav" ? SF_FORMAT_WAV | SF_FORMAT_PCM_24 :
+                 ext == ".flac" ? SF_FORMAT_FLAC | SF_FORMAT_PCM_24 :
+                 ext == ".mp3" ? SF_FORMAT_MPEG | SF_FORMAT_MPEG_LAYER_III :
+                 ext == ".ogg" ? SF_FORMAT_OGG | SF_FORMAT_VORBIS :
+                 ext == ".aiff" || ext == ".aif" ? SF_FORMAT_AIFF | SF_FORMAT_PCM_24 : 0;
+    if(!format) return false;
+    int index = -1;
+    for(unsigned i = 0; i < in.ctx->nb_streams; ++i)
+        if(in.ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && track-- == 0) {
+            index = static_cast<int>(i); break;
+        }
+    if(index < 0) return false;
+    auto *src = in.ctx->streams[index];
+    const auto *decoder = avcodec_find_decoder(src->codecpar->codec_id);
+    if(!decoder) return false;
+    Codec codec;
+    codec.ctx = avcodec_alloc_context3(decoder);
+    if(!codec.ctx || avcodec_parameters_to_context(codec.ctx, src->codecpar) < 0 ||
+       avcodec_open2(codec.ctx, decoder, nullptr) < 0) return false;
+    // RAII closes both handles before deleting a failed output.
+    struct AudioOutput {
+        const std::string &path;
+        FILE *file = nullptr;
+        SNDFILE *sound = nullptr;
+        bool created = false, complete = false;
+        explicit AudioOutput(const std::string &p) : path(p) {}
+        ~AudioOutput() {
+            if(sound) sf_close(sound);
+            if(file) std::fclose(file);
+            if(created && !complete) std::remove(path.c_str());
+        }
+        bool open(SF_INFO &info) {
+            if(!sf_format_check(&info)) return false;
+            file = mediaio::openNew(path.c_str());
+            if(!file) return false;
+            created = true;
+#ifdef _WIN32
+            int fd = _fileno(file);
+#else
+            int fd = fileno(file);
+#endif
+            sound = sf_open_fd(fd, SFM_WRITE, &info, SF_FALSE);
+            return sound != nullptr;
+        }
+        bool finish() {
+            bool ok = sf_error(sound) == SF_ERR_NO_ERROR;
+            if(sf_close(sound) != 0) ok = false;
+            sound = nullptr;
+            if(std::fclose(file) != 0) ok = false;
+            file = nullptr;
+            complete = ok;
+            return ok;
+        }
+    } out(dest);
+    Frame frame;
+    Packet packet;
+    if(!frame.p || !packet.p) return false;
+    SF_INFO info{};
+    info.format = format;
+    std::vector<double> samples;
+    auto drain = [&](bool flushing) {
+        for(;;) {
+            int ret = avcodec_receive_frame(codec.ctx, frame.p);
+            if(ret == AVERROR_EOF) return flushing;
+            if(ret == AVERROR(EAGAIN)) return !flushing;
+            if(ret < 0) return false;
+            auto *a = frame.p;
+            const int channels = a->ch_layout.nb_channels;
+            if(channels < 1 || channels > 8 || a->sample_rate < 1 ||
+               a->nb_samples < 1 || a->nb_samples > 1048576) return false;
+            if(!out.sound) {
+                info.channels = channels;
+                info.samplerate = a->sample_rate;
+                if(!out.open(info)) return false;
+            }
+            if(channels != info.channels || a->sample_rate != info.samplerate) return false;
+            const auto fmt = static_cast<AVSampleFormat>(a->format);
+            const auto packed = av_get_packed_sample_fmt(fmt);
+            const bool planar = av_sample_fmt_is_planar(fmt) != 0;
+            const int bytes = av_get_bytes_per_sample(fmt);
+            if(bytes <= 0 || !a->extended_data) return false;
+            samples.resize(static_cast<size_t>(a->nb_samples) * channels);
+            for(int n = 0; n < a->nb_samples; ++n) {
+                for(int c = 0; c < channels; ++c) {
+                    const size_t i = static_cast<size_t>(n) * channels + c;
+                    const auto *base = a->extended_data[planar ? c : 0];
+                    if(!base) return false;
+                    const auto *p = base + (planar ? static_cast<size_t>(n) : i) * bytes;
+                    double v;
+                    switch(packed) {
+                    case AV_SAMPLE_FMT_U8: v = (static_cast<int>(*p) - 128) / 128.0; break;
+                    case AV_SAMPLE_FMT_S16: { int16_t x; std::memcpy(&x,p,2); v = x / 32768.0; break; }
+                    case AV_SAMPLE_FMT_S32: { int32_t x; std::memcpy(&x,p,4); v = x / 2147483648.0; break; }
+                    case AV_SAMPLE_FMT_S64: { int64_t x; std::memcpy(&x,p,8); v = static_cast<double>(x) / 9223372036854775808.0; break; }
+                    case AV_SAMPLE_FMT_FLT: { float x; std::memcpy(&x,p,4); v = x; break; }
+                    case AV_SAMPLE_FMT_DBL: std::memcpy(&v,p,8); break;
+                    default: return false;
+                    }
+                    if(!std::isfinite(v)) return false;
+                    samples[i] = std::max(-1.0, std::min(1.0, v));
+                }
+            }
+            if(sf_writef_double(out.sound, samples.data(), a->nb_samples) != a->nb_samples)
+                return false;
+            av_frame_unref(a);
+        }
+    };
+    int ret;
+    while((ret = av_read_frame(in.ctx, packet.p)) >= 0) {
+        if(packet.p->stream_index == index) {
+            int sent = avcodec_send_packet(codec.ctx, packet.p);
+            av_packet_unref(packet.p);
+            if(sent < 0 || !drain(false)) return false;
+        } else av_packet_unref(packet.p);
+    }
+    return ret == AVERROR_EOF && avcodec_send_packet(codec.ctx, nullptr) >= 0 &&
+           drain(true) && out.sound && out.finish();
 }
 
 // Strict P6 RGB8 input, with standard whitespace/comments in the header.
@@ -849,6 +979,17 @@ CK_DLL_SFUN(video_extract_audio) {
            extractAudio(in, dest, static_cast<int>(track))) RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_convert_audio) {
+    RETURN->v_int = 0;
+    try {
+        auto source = GET_NEXT_STRING_SAFE(ARGS);
+        auto dest = GET_NEXT_STRING_SAFE(ARGS);
+        auto track = GET_NEXT_INT(ARGS);
+        Input in;
+        if(track >= 0 && track <= 2147483647 && in.open(source) &&
+           convertAudio(in, dest, static_cast<int>(track))) RETURN->v_int = 1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -899,6 +1040,10 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_sfun(QUERY, video_audio_tracks, "int", "audioTracks");
     QUERY->add_arg(QUERY, "string", "source");
     QUERY->add_sfun(QUERY, video_extract_audio, "int", "extractAudio");
+    QUERY->add_arg(QUERY, "string", "source");
+    QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_arg(QUERY, "int", "track");
+    QUERY->add_sfun(QUERY, video_convert_audio, "int", "convertAudio");
     QUERY->add_arg(QUERY, "string", "source");
     QUERY->add_arg(QUERY, "string", "destination");
     QUERY->add_arg(QUERY, "int", "track");

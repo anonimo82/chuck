@@ -262,3 +262,28 @@ check(!VideoIO.extractAudio("multi-audio.mkv", "wrong-extension.bin", 0));
     for name in ("invalid-track.wav", "negative-track.wav", "silent.wav", "wrong-codec.mp3",
                  "missing-audio-output.wav", "wrong-extension.bin"):
         assert not (p / name).exists(), name
+
+    # AAC fixture exercises planar floating-point decoding, independent of PCM copy.
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(p / "generated.mkv"),
+                    "-i", str(p / "sound.wav"), "-map", "0:v:0", "-map", "1:a:0",
+                    "-c:v", "copy", "-c:a", "aac", str(p / "aac-video.mkv")], check=True, timeout=30)
+    run("video", """
+check(VideoIO.convertAudio("multi-audio.mkv", "decoded.wav", 0));
+check(VideoIO.convertAudio("multi-audio.mkv", "decoded.flac", 1));
+check(VideoIO.convertAudio("aac-video.mkv", "decoded-aac.wav", 0));
+check(!VideoIO.convertAudio("multi-audio.mkv", "decoded.wav", 0));
+check(!VideoIO.convertAudio("multi-audio.mkv", "bad-track.wav", 2));
+check(!VideoIO.convertAudio("multi-audio.mkv", "bad-format.bin", 0));
+check(!VideoIO.convertAudio("generated.mkv", "no-track.wav", 0));
+check(!VideoIO.convertAudio("missing.mkv", "missing-source.wav", 0));
+""", 8, p)
+    assert audio_samples("decoded.wav", 0) == pcm
+    assert audio_samples("decoded.flac", 0) == pcm2
+    # Compare AAC decoded samples with independent FFmpeg decode, allowing PCM rounding.
+    import struct
+    ref = audio_samples("aac-video.mkv", 0)
+    got = audio_samples("decoded-aac.wav", 0)
+    assert len(ref) == len(got) and len(got) > 0
+    assert max(abs(a[0] - b[0]) for a, b in zip(struct.iter_unpack("<h", ref), struct.iter_unpack("<h", got))) <= 2
+    for name in ("bad-track.wav", "bad-format.bin", "no-track.wav", "missing-source.wav"):
+        assert not (p / name).exists(), name
