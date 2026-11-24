@@ -1,5 +1,6 @@
 // Optional SVG I/O using librsvg and Cairo; synchronous, offline operations.
 #include "chuck_dl.h"
+#include "../file_compat.h"
 #include <librsvg/rsvg.h>
 #include <cairo.h>
 #include <cstdio>
@@ -19,7 +20,7 @@ Handle load(const std::string &path) {
         reinterpret_cast<const guint8 *>(data), size, nullptr), g_object_unref);
 }
 bool writeNew(const std::string &path, const unsigned char *bytes, size_t size) {
-    FILE *f = std::fopen(path.c_str(), "wbx");
+    FILE *f = mediaio::openNew(path.c_str());
     if(!f) return false;
     bool ok = std::fwrite(bytes, 1, size, f) == size;
     if(std::fclose(f) != 0) ok = false;
@@ -68,7 +69,7 @@ CK_DLL_SFUN(vector_render) {
         RsvgRectangle viewport = {0, 0, static_cast<double>(width), static_cast<double>(height)};
         if(!rsvg_handle_render_document(h.get(), cr.get(), &viewport, nullptr)
            || cairo_status(cr.get()) != CAIRO_STATUS_SUCCESS) return;
-        FILE *f = std::fopen(dest.c_str(), "wbx");
+        FILE *f = mediaio::openNew(dest.c_str());
         if(!f) return;
         bool ok = cairo_surface_write_to_png_stream(surface.get(), writePng, f)
                   == CAIRO_STATUS_SUCCESS;

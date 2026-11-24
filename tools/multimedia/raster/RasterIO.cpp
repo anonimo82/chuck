@@ -1,5 +1,6 @@
 // Optional offline raster I/O for ChucK; no VM changes.
 #include "chuck_dl.h"
+#include "../file_compat.h"
 #if __has_include(<MagickWand/MagickWand.h>)
 #include <MagickWand/MagickWand.h>
 #else
@@ -75,7 +76,7 @@ CK_DLL_SFUN(raster_convert) {
         if(!blob) return;
         std::unique_ptr<unsigned char, decltype(&MagickRelinquishMemory)> data(blob, MagickRelinquishMemory);
         // Exclusive creation: never overwrite an existing file.
-        FILE *out = fopen(dest.c_str(), "wbx");
+        FILE *out = mediaio::openNew(dest.c_str());
         if(!out) return;
         bool ok = fwrite(blob, 1, size, out) == size;
         if(fclose(out) != 0) ok = false;

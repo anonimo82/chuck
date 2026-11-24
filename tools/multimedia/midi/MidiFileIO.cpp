@@ -1,5 +1,6 @@
 // Optional offline Standard MIDI File I/O using Craig Sapp's midifile library.
 #include "chuck_dl.h"
+#include "../file_compat.h"
 #include "MidiFile.h"
 #include <cstdio>
 #include <sstream>
@@ -15,7 +16,7 @@ bool saveNew(smf::MidiFile &m, const std::string &path) {
     std::ostringstream stream(std::ios::out | std::ios::binary);
     if(!m.write(stream)) return false;
     auto bytes = stream.str();
-    FILE *out = std::fopen(path.c_str(), "wbx");
+    FILE *out = mediaio::openNew(path.c_str());
     if(!out) return false;
     bool ok = std::fwrite(bytes.data(), 1, bytes.size(), out) == bytes.size();
     if(std::fclose(out) != 0) ok = false;

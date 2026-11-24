@@ -1,5 +1,6 @@
 // Optional offline audio file I/O. Does not modify the ChucK VM.
 #include "chuck_dl.h"
+#include "../file_compat.h"
 #include <sndfile.h>
 #include <algorithm>
 #include <cctype>
@@ -73,7 +74,7 @@ CK_DLL_SFUN(audio_convert) {
         const sf_count_t block = 4096;
         std::vector<double> samples(static_cast<size_t>(block) * info.channels);
         // Exclusive file creation, including when source and destination coincide.
-        FILE *file = std::fopen(dest.c_str(), "wb+x");
+        FILE *file = mediaio::openNew(dest.c_str());
         if(!file) return;
 #if defined(_WIN32)
         int fd = _fileno(file);
