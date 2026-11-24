@@ -8,7 +8,7 @@ CHUCK = HERE.parents[1] / "src/chuck"
 
 def run(module, script, expected, directory):
     path = directory / "test.ck"
-    name = {"vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO"}[module]
+    name = {"vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO"}[module]
     path.write_text(f'@import "{name}";\n' + 'fun void check(int ok) { if(ok) <<< "PASS" >>>; else <<< "FAIL" >>>; }\n' + script, encoding="utf-8")
     r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
     log = r.stdout + r.stderr
@@ -850,3 +850,37 @@ check(!VideoIO.burnSubtitles("trim-av.mkv","burn.srt","burn-size.mkv","Sans Bold
         assert audio_samples(name,0)==pcm+pcm2
     for name in ("burn-missing.mkv","burn-invalid.mkv","burn-margin.mkv","burn-size.mkv"):
         assert not (p/name).exists(),name
+
+    # Shared scalar automation: mixed outgoing interpolation and strict input validation.
+    (p/"curve.tsv").write_bytes(b"# seconds value outgoing\n0\t10\tlinear\n2\t30\tsmooth\n4\t50\tstep\n6\t70\tlinear\n")
+    (p/"duplicate.tsv").write_bytes(b"0 1 linear\n0 2 step\n")
+    (p/"bad-mode.tsv").write_bytes(b"0 1 unknown\n")
+    (p/"bad-number.tsv").write_bytes(b"0 nan linear\n")
+    (p/"descending.tsv").write_bytes(b"2 1 linear\n1 2 linear\n")
+    (p/"single-key.tsv").write_bytes(b"1 -5 linear\r\n")
+    run("keyframe", """
+check(KeyframeIO.valid("curve.tsv"));
+check(KeyframeIO.count("curve.tsv")==4);
+check(KeyframeIO.valueAt("curve.tsv",-1.0)==10.0);
+check(KeyframeIO.valueAt("curve.tsv",1.0)==20.0);
+check(KeyframeIO.valueAt("curve.tsv",2.0)==30.0);
+check(KeyframeIO.valueAt("curve.tsv",2.5)==33.125);
+check(KeyframeIO.valueAt("curve.tsv",3.5)==46.875);
+check(KeyframeIO.valueAt("curve.tsv",5.0)==50.0);
+check(KeyframeIO.valueAt("curve.tsv",6.0)==70.0);
+check(KeyframeIO.valueAt("curve.tsv",9.0)==70.0);
+check(KeyframeIO.valueAt("single-key.tsv",10.0)==-5.0);
+check(KeyframeIO.interpolate(0.0,100.0,0.25,"linear")==25.0);
+check(KeyframeIO.interpolate(0.0,100.0,0.25,"smooth")==15.625);
+check(KeyframeIO.interpolate(0.0,100.0,0.25,"easeIn")==6.25);
+check(KeyframeIO.interpolate(0.0,100.0,0.25,"easeOut")==43.75);
+check(KeyframeIO.interpolate(0.0,100.0,0.25,"step")==0.0);
+check(KeyframeIO.interpolate(0.0,100.0,1.0,"step")==100.0);
+check(KeyframeIO.interpolate(0.0,100.0,-1.0,"linear")==0.0);
+check(KeyframeIO.interpolate(0.0,100.0,2.0,"linear")==100.0);
+check(!KeyframeIO.valid("duplicate.tsv"));
+check(!KeyframeIO.valid("bad-mode.tsv"));
+check(!KeyframeIO.valid("bad-number.tsv"));
+check(!KeyframeIO.valid("descending.tsv"));
+check(KeyframeIO.count("missing-curve.tsv")==-1);
+""",24,p)
