@@ -712,10 +712,54 @@ struct OverlayReader {
             sws_scale(scale.p,f->data,f->linesize,0,f->height,dest->data,dest->linesize)==dest->height;
     }
 };
+
+// Decode one static PNG/JPEG/BMP image, retaining straight alpha in BGRA.
+bool loadWatermark(const std::string &path, AVFrame *dest) {
+    Input input;
+    if(!input.open(path) || input.ctx->nb_streams!=1) return false;
+    auto *stream=input.ctx->streams[input.video];
+    auto id=stream->codecpar->codec_id;
+    if(id!=AV_CODEC_ID_PNG && id!=AV_CODEC_ID_MJPEG && id!=AV_CODEC_ID_BMP) return false;
+    const auto *decoder=avcodec_find_decoder(id);
+    if(!decoder) return false;
+    Codec dec;
+    Frame frame;
+    Packet packet;
+    Scale scale;
+    dec.ctx=avcodec_alloc_context3(decoder);
+    if(!dec.ctx || !frame.p || !packet.p ||
+       avcodec_parameters_to_context(dec.ctx,stream->codecpar)<0 ||
+       avcodec_open2(dec.ctx,decoder,nullptr)<0) return false;
+    int count=0;
+    auto drain=[&](bool flush) {
+        for(;;) {
+            int ret=avcodec_receive_frame(dec.ctx,frame.p);
+            if(ret==AVERROR_EOF) return flush;
+            if(ret==AVERROR(EAGAIN)) return !flush;
+            if(ret<0 || ++count!=1 || frame.p->width<1 || frame.p->height<1 ||
+               frame.p->width>8192 || frame.p->height>8192) return false;
+            scale.p=sws_getContext(frame.p->width,frame.p->height,
+                static_cast<AVPixelFormat>(frame.p->format),dest->width,dest->height,
+                AV_PIX_FMT_BGRA,SWS_BILINEAR,nullptr,nullptr,nullptr);
+            if(!scale.p || sws_scale(scale.p,frame.p->data,frame.p->linesize,0,
+                frame.p->height,dest->data,dest->linesize)!=dest->height) return false;
+            av_frame_unref(frame.p);
+        }
+    };
+    int ret;
+    while((ret=av_read_frame(input.ctx,packet.p))>=0) {
+        int sent=avcodec_send_packet(dec.ctx,packet.p);
+        av_packet_unref(packet.p);
+        if(sent<0 || !drain(false)) return false;
+    }
+    return ret==AVERROR_EOF && avcodec_send_packet(dec.ctx,nullptr)>=0 &&
+           drain(true) && count==1;
+}
+
 bool overlayVideo(const std::string &base,const std::string &layer,const std::string &dest,
                   int w,int h,int fps,int x,int y,int lw,int lh,double opacity,int rate,int channels,
                   int key=-1,double tolerance=0,double softness=0,
-                  double baseGain=1,double layerGain=0) {
+                  double baseGain=1,double layerGain=0,bool still=false) {
     if(w<1 || h<1 || w>8192 || h>8192 || fps<1 || fps>120 ||
        lw<1 || lh<1 || lw>w || lh>h || x<0 || y<0 || x>w-lw || y>h-lh ||
        !std::isfinite(opacity) || opacity<0 || opacity>1 ||
@@ -726,7 +770,8 @@ bool overlayVideo(const std::string &base,const std::string &layer,const std::st
        !std::isfinite(baseGain) || !std::isfinite(layerGain) ||
        baseGain<0 || baseGain>4 || layerGain<0 || layerGain>4) return false;
     OverlayReader main, inset;
-    if(!main.open(base) || !inset.open(layer)) return false;
+    if(!main.open(base) || (!still && !inset.open(layer))) return false;
+    if(still && (baseGain!=1 || layerGain!=0)) return false;
     const auto *encoder=avcodec_find_encoder_by_name("ffv1");
     if(!encoder) return false;
     Output out(dest);
@@ -756,8 +801,9 @@ bool overlayVideo(const std::string &base,const std::string &layer,const std::st
     out.ctx->max_interleave_delta=0;
     if(avformat_write_header(out.ctx,nullptr)<0) return false;
     canvas.p->width=w; canvas.p->height=h; canvas.p->format=AV_PIX_FMT_BGR0;
-    small.p->width=lw; small.p->height=lh; small.p->format=AV_PIX_FMT_BGR0;
+    small.p->width=lw; small.p->height=lh; small.p->format=still?AV_PIX_FMT_BGRA:AV_PIX_FMT_BGR0;
     if(av_frame_get_buffer(canvas.p,32)<0 || av_frame_get_buffer(small.p,32)<0) return false;
+    if(still && !loadWatermark(layer,small.p)) return false;
     auto drain=[&](bool flush) {
         for(;;) {
             int ret=avcodec_receive_packet(enc.ctx,packet.p);
@@ -778,15 +824,17 @@ bool overlayVideo(const std::string &base,const std::string &layer,const std::st
         bool active=false, show=false;
         if(!main.at(count,fps,active)) return false;
         if(!active) break;
-        if(count>=1000000 || !main.render(canvas.p) || !inset.at(count,fps,show)) return false;
+        if(count>=1000000 || !main.render(canvas.p)) return false;
+        if(still) show=true;
+        else if(!inset.at(count,fps,show)) return false;
         if(show) ++layerFrames;
         if(show && alpha) {
-            if(!inset.render(small.p)) return false;
+            if(!still && !inset.render(small.p)) return false;
             for(int row=0;row<lh;++row) {
                 auto *d=canvas.p->data[0]+static_cast<size_t>(y+row)*canvas.p->linesize[0]+x*4;
                 auto *v=small.p->data[0]+static_cast<size_t>(row)*small.p->linesize[0];
                 for(int col=0;col<lw;++col) {
-                    int pixelAlpha=alpha;
+                    int pixelAlpha=still?(alpha*v[col*4+3]+127)/255:alpha;
                     if(key>=0) {
                         int j=col*4;
                         int db=v[j]-(key&255), dg=v[j+1]-((key>>8)&255), dr=v[j+2]-((key>>16)&255);
@@ -2356,6 +2404,20 @@ CK_DLL_SFUN(video_composite) {
            overlayVideo(base,layer,dest,w,h,fps,x,y,lw,lh,opacity,rate,channels,static_cast<int>(key),tolerance,softness,baseGain,layerGain)) RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_watermark) {
+    RETURN->v_int=0;
+    try {
+        auto base=GET_NEXT_STRING_SAFE(ARGS), layer=GET_NEXT_STRING_SAFE(ARGS), dest=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS), h=GET_NEXT_INT(ARGS), fps=GET_NEXT_INT(ARGS);
+        auto x=GET_NEXT_INT(ARGS), y=GET_NEXT_INT(ARGS), lw=GET_NEXT_INT(ARGS), lh=GET_NEXT_INT(ARGS);
+        auto opacity=GET_NEXT_FLOAT(ARGS);
+        auto rate=GET_NEXT_INT(ARGS), channels=GET_NEXT_INT(ARGS);
+        if(w>=1 && w<=8192 && h>=1 && h<=8192 && fps>=1 && fps<=120 &&
+           x>=0 && x<=8192 && y>=0 && y<=8192 && lw>=1 && lw<=8192 && lh>=1 && lh<=8192 &&
+           rate>=8000 && rate<=96000 && channels>=1 && channels<=2 &&
+           overlayVideo(base,layer,dest,w,h,fps,x,y,lw,lh,opacity,rate,channels,-1,0,0,1,0,true)) RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -2511,5 +2573,19 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"float","softness");
     QUERY->add_arg(QUERY,"float","baseGain");
     QUERY->add_arg(QUERY,"float","layerGain");
+    QUERY->add_sfun(QUERY,video_watermark,"int","watermark");
+    QUERY->add_arg(QUERY,"string","baseClip");
+    QUERY->add_arg(QUERY,"string","imageFile");
+    QUERY->add_arg(QUERY,"string","destination");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","fps");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"int","layerWidth");
+    QUERY->add_arg(QUERY,"int","layerHeight");
+    QUERY->add_arg(QUERY,"float","opacity");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
     return QUERY->end_class(QUERY);
 }
