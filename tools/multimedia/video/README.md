@@ -131,3 +131,12 @@ trim(source, destination, start, end) selects a time interval in seconds relativ
 ```
 
 concat(first, second, destination) copies packets into a new MKV, MP4, MOV or WebM file without encoding. Inputs must have one video stream and matching audio streams in the same stream order, matching codec parameters and extradata, video dimensions/frame rate and audio sample rate/channel layout. Requires positive packet durations, equal PTS/DTS, strictly increasing output timestamps, a known container start and a keyframe at each video segment start. Rejects explicit audio priming/padding and skip-sample packet side data. This conservative version is intended for compatible independently decodable clips (especially intra-frame video and PCM), not arbitrary compressed videos or B-frame streams. Codec metadata and keyframe flags alone cannot guarantee independent decoding for every codec. The second clip is shifted by the longest actual packet span of the first; shorter streams can leave gaps. Timestamp rounding is possible, and first-clip stream metadata is retained. No transitions, mixing, resizing or normalization. No overwrite; ordinary failures remove incomplete output. Returns 1 on success or 0 on failure. Eight new smoke checks and independent decoded RGB/PCM comparisons are pending execution.
+
+### Exact frame-range trimming
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.trimFrames("movie.mkv", "excerpt.mkv", 120, 60) >>>;
+```
+
+trimFrames(source, destination, firstFrame, frameCount) decodes in presentation order and encodes exactly frameCount frames starting at the zero-based firstFrame index, irrespective of keyframe boundaries. It reuses the native transcoding pipeline and writes FFV1/BGR0 in MKV at the source dimensions, with the first selected timestamp shifted to zero and subsequent relative presentation timestamps retained. FFV1 is lossless relative to the converted BGR0 frames, not necessarily the source color representation. A complete requested range must exist; short inputs cause failure and cleanup. Only single-stream video inputs are accepted; audio and other streams are rejected rather than discarded. Missing or non-increasing decoded timestamps are rejected. No audio trimming, time-based frame selection, or exact last-frame duration guarantee. No overwrite. Offline only. Twelve new unconditional smoke checks plus one conditional H.264 reordered-frame check and independent decoded comparisons are pending execution.
