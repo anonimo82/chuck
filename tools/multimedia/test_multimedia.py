@@ -331,3 +331,41 @@ check(!VideoIO.transcodeAV("missing.mkv", "missing-av.mp4", 32, 24, "h264", 23, 
 """, 3, p)
     for name in ("bad-rate.mp4", "bad-mode.mkv", "missing-av.mp4"):
         assert not (p / name).exists(), name
+
+    # Independent all-intra fixture: four half-second frames, with two PCM tracks.
+    colors = (red, blue, red, blue)
+    for i, pixels in enumerate(colors):
+        (p / f"trimsrc{i:06d}.ppm").write_bytes(b"P6\n16 16\n255\n" + pixels)
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-framerate", "2",
+                    "-i", str(p / "trimsrc%06d.ppm"), "-c:v", "ffv1", "-g", "1",
+                    str(p / "trim-source.mkv")], check=True, timeout=30)
+    # PCM fixture is two seconds; both tracks share the same timeline.
+    with wave.open(str(p / "trim-audio.wav"), "wb") as wav:
+        wav.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+        wav.writeframes(pcm + pcm2)
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(p / "trim-source.mkv"),
+                    "-i", str(p / "trim-audio.wav"), "-map", "0:v:0", "-map", "1:a:0",
+                    "-c", "copy", str(p / "trim-av.mkv")], check=True, timeout=30)
+    run("video", """
+check(VideoIO.trim("trim-source.mkv", "trimmed.mkv", 0.5, 1.5));
+check(VideoIO.trim("trim-source.mkv", "rounded.mkv", 0.1, 1.5));
+check(VideoIO.trim("trim-av.mkv", "trimmed-av.mkv", 0.5, 1.5));
+check(!VideoIO.trim("trim-source.mkv", "trimmed.mkv", 0.5, 1.5));
+check(!VideoIO.trim("trim-source.mkv", "negative.mkv", -1.0, 1.0));
+check(!VideoIO.trim("trim-source.mkv", "reversed.mkv", 1.5, 0.5));
+check(!VideoIO.trim("trim-source.mkv", "beyond-end.mkv", 3.0, 4.0));
+check(!VideoIO.trim("trim-source.mkv", "no-keyframe.mkv", 0.1, 0.4));
+check(!VideoIO.trim("missing.mkv", "missing-trim.mkv", 0.0, 1.0));
+check(!VideoIO.trim("trim-source.mkv", "invalid-trim.bin", 0.0, 1.0));
+""", 10, p)
+    assert decoded("trimmed.mkv") == blue + red
+    assert decoded("rounded.mkv") == blue + red
+    assert decoded("trimmed-av.mkv") == blue + red
+    assert len(audio_tracks("trimmed-av.mkv")) == 1
+    # Complete audio packets only: a little shorter than the requested interval.
+    cut_pcm = audio_samples("trimmed-av.mkv", 0)
+    assert 0 < len(cut_pcm) <= 16000
+    assert len(cut_pcm) >= 10000
+    for name in ("negative.mkv", "reversed.mkv", "beyond-end.mkv",
+                 "no-keyframe.mkv", "missing-trim.mkv", "invalid-trim.bin"):
+        assert not (p / name).exists(), name
