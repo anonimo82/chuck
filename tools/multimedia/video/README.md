@@ -162,3 +162,12 @@ The same trimAV API now attempts native decoding of non-S16LE audio, converting 
 ```
 
 concatNormalized(firstClip, secondClip, destination, width, height, fps) decodes two single-stream video files, scales each to the requested dimensions (1–8192), and emits one continuous FFV1/BGR0 MKV at integer 1–120 fps. Each clip is independently anchored at its first decoded presentation timestamp. Frames are selected by holding the most recent input frame on the target time grid (duplication or dropping, not interpolation); each clip duration rounds upward to a whole output frame. Requires strictly increasing decoded timestamps and a positive final frame duration. Maximum combined output: one million frames. Aspect ratio is stretched, with square output pixels; rotation and color metadata are not normalized. Additional streams, including audio, are rejected rather than discarded. No intermediate files or external commands, no overwrite, incomplete output removed on ordinary failure. Eleven new smoke checks plus RGB and timestamp comparisons are pending execution. Audio normalization is a separate future extension.
+
+### Normalized audiovisual concatenation
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.concatAV("first.mp4", "second.webm", "joined.mkv", 1920, 1080, 30, 48000, 2) >>>;
+```
+
+concatAV extends normalized video concatenation with a single PCM S16LE audio output at a requested sample rate (8000–96000 Hz) and mono or stereo channel count. Each input may contain one video and zero or one audio stream; additional streams are rejected. Audio is decoded and resampled with libswresample, anchored to the first video timestamp, trimmed or silence-padded to the rounded video duration. Missing audio becomes silence. Stable decoded formats and continuous timestamps are required. Audio is processed in a separate pass over each source, so inputs must remain unchanged and the muxer can buffer substantial video data (not suitable for unbounded clips or real-time use). The existing video-only API is unchanged. Seven smoke checks plus independent PCM and RGB checks are pending compilation and execution.

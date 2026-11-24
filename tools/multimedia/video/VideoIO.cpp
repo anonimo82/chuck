@@ -498,13 +498,143 @@ bool concatenate(const std::string &first, const std::string &second, const std:
 
 // Join video-only clips into a single constant-frame-rate FFV1 stream.
 // Sample-and-hold on each clip's presentation timeline; no intermediate files.
+
+// Separate audio pass: each clip's first video timestamp is its common origin.
+// Normalize the first/only audio track to stereo or mono S16 at target rate.
+// Reject discontinuities; trim or silence-pad at clip boundaries.
+bool normalizedAudio(const std::string &source, int audioIndex, int rate, int channels,
+                     int64_t videoOrigin, AVRational videoTB, int64_t offset, int64_t length,
+                     AVStream *dst, AVFormatContext *out) {
+    if(length <= 0 || offset < 0) return false;
+    int64_t written = 0;
+    auto write = [&](const uint8_t *data, int64_t n) {
+        while(n > 0) {
+            int block = static_cast<int>(std::min<int64_t>(n, 4096));
+            Packet p;
+            if(!p.p || av_new_packet(p.p, block*channels*2) < 0) return false;
+            if(data) { std::memcpy(p.p->data, data, p.p->size); data += p.p->size; }
+            else std::memset(p.p->data, 0, p.p->size);
+            p.p->pts = p.p->dts = offset + written;
+            p.p->duration = block;
+            p.p->stream_index = dst->index;
+            p.p->flags = AV_PKT_FLAG_KEY;
+            av_packet_rescale_ts(p.p, AVRational{1,rate}, dst->time_base);
+            if(av_interleaved_write_frame(out, p.p) < 0) return false;
+            written += block;
+            n -= block;
+        }
+        return true;
+    };
+    if(audioIndex < 0) return write(nullptr, length);
+    Input in;
+    if(!in.open(source) || static_cast<unsigned>(audioIndex) >= in.ctx->nb_streams) return false;
+    auto *src = in.ctx->streams[audioIndex];
+    const auto *decoder = avcodec_find_decoder(src->codecpar->codec_id);
+    if(!decoder) return false;
+    Codec dec;
+    Frame frame;
+    Packet packet;
+    dec.ctx = avcodec_alloc_context3(decoder);
+    if(!dec.ctx || !frame.p || !packet.p ||
+       avcodec_parameters_to_context(dec.ctx, src->codecpar) < 0) return false;
+    dec.ctx->pkt_timebase = src->time_base;
+    if(avcodec_open2(dec.ctx, decoder, nullptr) < 0 || dec.ctx->sample_rate < 1 ||
+       dec.ctx->sample_rate > 384000 || dec.ctx->ch_layout.nb_channels < 1 ||
+       dec.ctx->ch_layout.nb_channels > 8 || dec.ctx->sample_fmt == AV_SAMPLE_FMT_NONE) return false;
+    if(dec.ctx->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
+        av_channel_layout_default(&dec.ctx->ch_layout, dec.ctx->ch_layout.nb_channels);
+    struct Resampler {
+        SwrContext *p = nullptr;
+        ~Resampler() { swr_free(&p); }
+    } swr;
+    AVChannelLayout target{};
+    av_channel_layout_default(&target, channels);
+    int configured = swr_alloc_set_opts2(&swr.p, &target, AV_SAMPLE_FMT_S16, rate,
+                                        &dec.ctx->ch_layout, dec.ctx->sample_fmt,
+                                        dec.ctx->sample_rate, 0, nullptr);
+    av_channel_layout_uninit(&target);
+    if(configured < 0 || !swr.p || swr_init(swr.p) < 0) return false;
+    int64_t first = AV_NOPTS_VALUE, samples = 0, position = 0;
+    const AVRational sampleTB{1,rate};
+    const int64_t origin = av_rescale_q(videoOrigin, videoTB, sampleTB);
+    auto convert = [&](const uint8_t **planes, int n) {
+        int capacity = swr_get_out_samples(swr.p, n);
+        if(capacity < 0 || capacity > 2097152) return false;
+        if(capacity == 0) return true;
+        std::vector<uint8_t> data(static_cast<size_t>(capacity)*channels*2);
+        uint8_t *output[] = {data.data()};
+        int got = swr_convert(swr.p, output, capacity, planes, n);
+        if(got < 0) return false;
+        int64_t lo = std::max<int64_t>(0, position);
+        int64_t hi = std::min<int64_t>(length, position+got);
+        if(hi > lo) {
+            if(lo < written || (lo > written && !write(nullptr, lo-written))) return false;
+            if(!write(data.data()+(lo-position)*channels*2, hi-lo)) return false;
+        }
+        position += got;
+        return true;
+    };
+    auto drain = [&](bool flush) {
+        for(;;) {
+            int ret = avcodec_receive_frame(dec.ctx, frame.p);
+            if(ret == AVERROR_EOF) return flush;
+            if(ret == AVERROR(EAGAIN)) return !flush;
+            if(ret < 0) return false;
+            auto *f = frame.p;
+            if(f->sample_rate != dec.ctx->sample_rate || f->format != dec.ctx->sample_fmt ||
+               f->ch_layout.nb_channels != dec.ctx->ch_layout.nb_channels ||
+               (f->ch_layout.order != AV_CHANNEL_ORDER_UNSPEC &&
+                av_channel_layout_compare(&f->ch_layout, &dec.ctx->ch_layout) != 0) ||
+               f->nb_samples < 1 || f->nb_samples > 1048576 ||
+               f->best_effort_timestamp == AV_NOPTS_VALUE) return false;
+            int64_t pts = f->best_effort_timestamp;
+            if(first == AV_NOPTS_VALUE) {
+                first = pts;
+                position = av_rescale_q(pts, src->time_base, sampleTB)-origin;
+                if(position < -INT64_C(1000000000000000) || position > INT64_C(1000000000000000)) return false;
+            }
+            double elapsed = (static_cast<double>(pts)-static_cast<double>(first))*av_q2d(src->time_base);
+            if(std::abs(elapsed-static_cast<double>(samples)/dec.ctx->sample_rate) >
+               std::max(0.002, 2*av_q2d(src->time_base))) return false;
+            const uint8_t *planes[8] = {};
+            int count = av_sample_fmt_is_planar(dec.ctx->sample_fmt) ? dec.ctx->ch_layout.nb_channels : 1;
+            for(int i=0;i<count;++i) planes[i]=f->extended_data[i];
+            if(!convert(planes,f->nb_samples)) return false;
+            samples += f->nb_samples;
+            av_frame_unref(f);
+        }
+    };
+    int ret;
+    while((ret=av_read_frame(in.ctx,packet.p)) >= 0) {
+        if(packet.p->stream_index == audioIndex) {
+            int sent = avcodec_send_packet(dec.ctx,packet.p);
+            av_packet_unref(packet.p);
+            if(sent < 0 || !drain(false)) return false;
+        } else av_packet_unref(packet.p);
+    }
+    if(ret != AVERROR_EOF || avcodec_send_packet(dec.ctx,nullptr)<0 ||
+       !drain(true) || first == AV_NOPTS_VALUE || !convert(nullptr,0)) return false;
+    return write(nullptr,length-written);
+}
+
 bool concatNormalized(const std::string &first, const std::string &secondClip,
-                      const std::string &dest, int w, int h, int fps) {
+                      const std::string &dest, int w, int h, int fps, int rate = 0, int channels = 0) {
     if(w < 1 || h < 1 || w > 8192 || h > 8192 || fps < 1 || fps > 120 ||
        dest.size() < 4 || dest.substr(dest.size()-4) != ".mkv") return false;
     Input a, b;
-    if(!a.open(first) || !b.open(secondClip) ||
-       a.ctx->nb_streams != 1 || b.ctx->nb_streams != 1) return false;
+    if(!a.open(first) || !b.open(secondClip)) return false;
+    if(rate && (rate < 8000 || rate > 96000 || channels < 1 || channels > 2)) return false;
+    Input *clips[] = {&a, &b};
+    int audioIndices[] = {-1,-1};
+    for(int c=0;c<2;++c) {
+        auto *clip=clips[c];
+        for(unsigned i=0;i<clip->ctx->nb_streams;++i) {
+            if(static_cast<int>(i)==clip->video) continue;
+            if(!rate || audioIndices[c]>=0 ||
+               clip->ctx->streams[i]->codecpar->codec_type!=AVMEDIA_TYPE_AUDIO) return false;
+            audioIndices[c]=static_cast<int>(i);
+        }
+    }
     const auto *encoder = avcodec_find_encoder_by_name("ffv1");
     if(!encoder) return false;
     Output out(dest);
@@ -525,6 +655,23 @@ bool concatNormalized(const std::string &first, const std::string &secondClip,
     dst->time_base = enc.ctx->time_base;
     dst->avg_frame_rate = enc.ctx->framerate;
     dst->sample_aspect_ratio = enc.ctx->sample_aspect_ratio;
+    AVStream *audioDst = nullptr;
+    if(rate) {
+        audioDst = avformat_new_stream(out.ctx,nullptr);
+        if(!audioDst) return false;
+        auto *p = audioDst->codecpar;
+        p->codec_type=AVMEDIA_TYPE_AUDIO;
+        p->codec_id=AV_CODEC_ID_PCM_S16LE;
+        p->format=AV_SAMPLE_FMT_S16;
+        p->sample_rate=rate;
+        p->bits_per_coded_sample=p->bits_per_raw_sample=16;
+        p->block_align=channels*2;
+        p->bit_rate=static_cast<int64_t>(rate)*channels*16;
+        av_channel_layout_default(&p->ch_layout,channels);
+        audioDst->time_base=AVRational{1,rate};
+        // Avoid early interleave flush before the clip's separate audio pass.
+        out.ctx->max_interleave_delta=0;
+    }
     if(avformat_write_header(out.ctx, nullptr) < 0) return false;
     Frame scaled;
     Packet encoded;
@@ -548,8 +695,9 @@ bool concatNormalized(const std::string &first, const std::string &secondClip,
             if(status < 0) return false;
         }
     };
-    Input *clips[] = {&a, &b};
-    for(auto *clip : clips) {
+    for(int c=0;c<2;++c) {
+        auto *clip=clips[c];
+        int64_t clipOffset=total;
         auto *stream = clip->ctx->streams[clip->video];
         const auto *decoder = avcodec_find_decoder(stream->codecpar->codec_id);
         if(!decoder) return false;
@@ -611,6 +759,7 @@ bool concatNormalized(const std::string &first, const std::string &secondClip,
         };
         int ret;
         while((ret = av_read_frame(clip->ctx, packet.p)) >= 0) {
+            if(packet.p->stream_index != clip->video) { av_packet_unref(packet.p); continue; }
             int sent = avcodec_send_packet(dec.ctx, packet.p);
             av_packet_unref(packet.p);
             if(sent < 0 || !drain(false)) return false;
@@ -618,6 +767,12 @@ bool concatNormalized(const std::string &first, const std::string &secondClip,
         if(ret != AVERROR_EOF || avcodec_send_packet(dec.ctx, nullptr) < 0 ||
            !drain(true) || previous == AV_NOPTS_VALUE || duration <= 0 ||
            duration > bound || !emitUntil(previous+duration) || local == 0) return false;
+        if(rate) {
+            int64_t begin=av_rescale_q(clipOffset, enc.ctx->time_base, AVRational{1,rate});
+            int64_t end=av_rescale_q(total, enc.ctx->time_base, AVRational{1,rate});
+            if(!normalizedAudio(c==0?first:secondClip,audioIndices[c],rate,channels,origin,
+                                stream->time_base,begin,end-begin,audioDst,out.ctx)) return false;
+        }
     }
     return avcodec_send_frame(enc.ctx, nullptr) >= 0 && drainEncoder(true) && out.finish();
 }
@@ -1798,6 +1953,19 @@ CK_DLL_SFUN(video_concat_normalized) {
                             static_cast<int>(h), static_cast<int>(fps))) RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_concat_av) {
+    RETURN->v_int=0;
+    try {
+        auto first=GET_NEXT_STRING_SAFE(ARGS);
+        auto secondClip=GET_NEXT_STRING_SAFE(ARGS);
+        auto dest=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS), h=GET_NEXT_INT(ARGS), fps=GET_NEXT_INT(ARGS);
+        auto rate=GET_NEXT_INT(ARGS), channels=GET_NEXT_INT(ARGS);
+        if(w>=1 && w<=8192 && h>=1 && h<=8192 && fps>=1 && fps<=120 &&
+           rate>=8000 && rate<=96000 && channels>=1 && channels<=2 &&
+           concatNormalized(first,secondClip,dest,w,h,fps,rate,channels)) RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -1889,5 +2057,14 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "int", "width");
     QUERY->add_arg(QUERY, "int", "height");
     QUERY->add_arg(QUERY, "int", "fps");
+    QUERY->add_sfun(QUERY,video_concat_av,"int","concatAV");
+    QUERY->add_arg(QUERY,"string","firstClip");
+    QUERY->add_arg(QUERY,"string","secondClip");
+    QUERY->add_arg(QUERY,"string","destination");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","fps");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
     return QUERY->end_class(QUERY);
 }
