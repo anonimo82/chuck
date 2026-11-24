@@ -104,3 +104,12 @@ Twelve new smoke checks and independent sample/metadata comparisons are included
 Decodes the selected zero-based audio track with FFmpeg and writes WAV, FLAC, AIFF (24-bit PCM), MP3 or Ogg Vorbis using libsndfile >= 1.2.0. Output format follows the lowercase extension. Preserves sample rate and channel count (1–8), subject to format/encoder restrictions; no resampling, mixing or explicit channel-layout remapping. Samples outside [-1,1] are clipped; PCM is quantized to 24 bits and compressed formats may be lossy. Decoded samples are written consecutively, without retaining original timestamps, gaps or language metadata. MP3 and Ogg support depends on libsndfile. No overwrite; ordinary failures remove incomplete outputs. Returns 1 on success, 0 on failure. Offline only. VideoIO now links libsndfile in addition to FFmpeg.
 
 Eight new smoke checks including AAC decode and independent PCM comparisons are pending execution.
+
+### Simultaneous video and audio conversion
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.transcodeAV("original.mkv", "converted.mp4", 1280, 720, "h264", 23, 128) >>>;
+```
+
+transcodeAV(source, destination, width, height, videoCodec, CRF, audioKbps) supports H.264/AAC in MP4 and VP9/Opus in WebM, using libx264/native AAC and libvpx-vp9/libopus respectively. All audio tracks are decoded and encoded at 48 kHz; nominal bitrate is 32–256 kbps per track. Only continuous mono/stereo tracks with stable sample format, rate and channel layout are accepted. Timestamp discontinuities or unsupported extra streams cause rejection; first audio timestamps anchor the resampled sample clock. Codec delay, padding and container rounding may affect exact duration. Video dimensions must be even, up to 8192 per axis; scaling stretches to the requested size. The existing transcode API still copies compatible audio unchanged. No overwrite; ordinary failure removes incomplete files. Offline only. libswresample is now required alongside the existing FFmpeg and libsndfile dependencies. Eleven additional smoke checks are planned when both encoder pairs are present, plus independent codec, duration and start-time checks. New code has not yet been compiled or executed.
