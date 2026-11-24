@@ -1913,3 +1913,57 @@ check(copy.loaded());
                         for y in range(16) for x in range(16))
     assert decoded("vector-memory.png")==expected_vector_rect(2)
     assert decoded("vector-moved-memory.png")==expected_vector_rect(4)
+
+    run("model", """
+Model3D model;
+Model3D copy;
+float xyz[9];
+int triangles[3];
+float outXYZ[9];
+int outFaces[3];
+check(!model.loaded());
+check(model.faces(0)==-1);
+check(!model.createMesh(xyz,triangles));
+1.0 => xyz[3]; 1.0 => xyz[7];
+1 => triangles[1]; 2 => triangles[2];
+check(model.createMesh(xyz,triangles));
+check(model.loaded() && model.meshes()==1 && model.vertices()==3);
+check(model.meshVertices(0)==3 && model.faces(0)==1);
+check(model.faceSize(0,0)==3 && model.faceIndex(0,0,2)==2);
+check(model.faceIndex(0,0,3)==-1);
+check(model.vertexAt(0,1,0)==1.0);
+check(model.exportVertices(0,outXYZ));
+check(model.exportTriangles(0,outFaces));
+check(outXYZ[3]==1.0 && outXYZ[7]==1.0 && outFaces[2]==2);
+check(model.setVertex(1,2.0,0.0,0.0));
+check(model.vertexAt(0,1,0)==2.0);
+check(!model.setVertex(3,0.0,0.0,0.0));
+3 => triangles[2];
+check(!model.createMesh(xyz,triangles));
+check(model.vertexAt(0,1,0)==2.0);
+2.0 => model.x;
+check(model.save("procedural-triangle/mesh.obj"));
+check(!model.save("procedural-triangle/mesh.obj"));
+check(copy.load("procedural-triangle/mesh.obj"));
+check(copy.faces(0)==1);
+check(!copy.setVertex(0,0.0,0.0,0.0));
+check(model.createBox(2.0,4.0,6.0));
+check(model.vertices()==8 && model.faces(0)==12);
+check(model.vertexAt(0,0,0)==-1.0 && model.vertexAt(0,0,1)==-2.0 && model.vertexAt(0,0,2)==-3.0);
+check(model.x()==0.0);
+check(!model.createBox(0.0,4.0,6.0));
+check(model.vertices()==8);
+check(!model.exportVertices(0,outXYZ));
+check(model.save("procedural-box/mesh.obj"));
+model.clear();
+check(!model.loaded() && copy.loaded());
+""",31,p)
+    def procedural_obj(name):
+        lines=(p/name).read_text().splitlines()
+        return ([tuple(map(float,l.split()[1:4])) for l in lines if l.startswith("v ")],
+                [l.split()[1:] for l in lines if l.startswith("f ")])
+    vertices,faces=procedural_obj("procedural-triangle/mesh.obj")
+    assert set(vertices)=={(2.,0.,0.),(4.,0.,0.),(2.,1.,0.)} and len(faces)==1
+    vertices,faces=procedural_obj("procedural-box/mesh.obj")
+    assert set(vertices)=={(x,y,z) for x in (-1.,1.) for y in (-2.,2.) for z in (-3.,3.)}
+    assert len(faces)==12 and all(len(face)==3 for face in faces)
