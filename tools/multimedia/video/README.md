@@ -295,3 +295,18 @@ if(clip.load("input.mkv")) {
 VideoClip retains a native decoder and two decoded frames (current and lookahead), rather than loading the full video into memory. load(path) selects the first decoded frame, resets controls, and replaces existing state only on success. next() returns 1 for a new frame, 0 at end (last frame remains available), -1 on error. A decoder error invalidates the loaded state. eof() means the current frame is the last decoded frame. frameIndex() is zero-based; timeSeconds() is the current presentation timestamp relative to the first frame. Both return -1 when unloaded. width()/height() report current decoded dimensions, or zero when unloaded. clear() releases the decoder, reset() resets controls without rewinding. Reload to rewind. One video stream and at most one audio stream are accepted, with strictly increasing known presentation timestamps. Audio is not exposed by this class.
 
 red/green/blue float getter/setters [0,4] default 1 and brightness [-1,1] default 0 affect only exported pixels. Invalid setters return NaN and preserve previous values. saveFrame(path) writes RGB8 P6 PPM at source dimensions; saveFrame(path,width,height) stretches with bilinear resampling. Dimensions 1–8192, maximum 16 megapixels. Each frame uses original decoded pixels; color adjustments do not accumulate. Output is always PPM regardless of filename extension, exclusive creation. No random seek, playback UGen, live display, or incremental video encoder yet. Synchronous offline operations, no real-time guarantee. Numeric setters can be driven by KeyframeCurve without a native dependency. 37 new smoke checks plus exact PPM pixel comparisons await execution.
+
+## Incremental VideoWriter
+
+```chuck
+@import "VideoIO";
+VideoWriter writer;
+int pixels[16*16*4];
+for(0 => int i; i<256; i++) 255 => pixels[i*4+3];
+if(writer.open("generated.mkv",16,16,30)) {
+    writer.appendFrame(pixels);
+    writer.finish();
+}
+```
+
+VideoWriter.open(path,width,height,fps) reserves a new lowercase .mkv file and starts a FFV1/BGR0 encoder. Dimensions 1–8192, at most 16777216 pixels, integer fps 1–120. appendFrame(int[]) accepts exactly width*height*4 row-major RGBA8 bytes; alpha must be 255 (no silent loss of transparency). Appends at the next constant-frame-rate timestamp, with a limit of one million frames. Invalid input returns 0 without consuming a frame; fatal encoding errors close the writer and remove incomplete output. frames() reports appended frames while active, active() reports open state. finish() flushes and finalizes; requires at least one frame, closes even on failure. abort() or destruction before finish deletes incomplete output. Existing files are never overwritten. No audio track or variable timestamps yet; explicit finish is mandatory. Multiple independent writers can coexist. Compatible with RasterImage.exportPixels and VideoClip.exportPixels. Synchronous offline operations, no hard realtime guarantee. New smoke checks and independent decoded RGB comparisons await Windows testing.
