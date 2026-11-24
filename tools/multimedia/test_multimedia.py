@@ -1759,3 +1759,42 @@ check(writer.finish());
 """,10,p)
     assert decoded("avwriter-fractional.mkv")==bytes(16*16*3*3)
     assert writer_pcm("avwriter-fractional.mkv")==bytes(16000)
+
+    run("video", """
+@import "AudioIO";
+VideoAudio source;
+VideoAudio other;
+AudioBuffer audio;
+float samples[16000];
+float block[8000];
+float small[3];
+check(!source.loaded());
+check(source.frames()==0 && source.channels()==0 && source.sampleRate()==0);
+check(!source.exportSamples(samples));
+check(!source.load("generated.mkv",0));
+check(!source.load("avwriter.mkv",-1));
+check(!source.load("avwriter.mkv",1));
+check(source.load("avwriter.mkv",0));
+check(source.loaded() && !other.loaded());
+check(source.frames()==8000 && source.channels()==2 && source.sampleRate()==8000);
+check(!source.exportSamples(block));
+check(source.exportSamples(samples));
+check(samples[0]==0.25 && samples[1]==-0.5);
+check(samples[8000]==0.125 && samples[8001]==-0.25);
+check(source.readSamples(4000,block));
+check(block[0]==0.125 && block[1]==-0.25);
+check(!source.readSamples(4001,block));
+check(!source.readSamples(-1,block));
+check(!source.readSamples(0,small));
+check(audio.importSamples(source.sampleRate(),source.channels(),samples));
+check(audio.frames()==8000 && audio.sampleAt(4000,0)==0.125);
+0.5 => audio.gain;
+check(audio.save("videoaudio-memory.wav"));
+check(!source.load("missing.mkv",0));
+check(source.frames()==8000);
+check(other.load("avwriter-fractional.mkv",0));
+check(other.frames()==8000 && other.channels()==1);
+source.clear();
+check(!source.loaded() && source.frames()==0 && other.loaded());
+""",26,p)
+    assert writer_pcm("videoaudio-memory.wav")==struct.pack("<hh",4096,-8192)*4000+struct.pack("<hh",2048,-4096)*4000
