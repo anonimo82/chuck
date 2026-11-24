@@ -6,6 +6,7 @@
 #include <wand/MagickWand.h>
 #endif
 #include <memory>
+#include <cstdio>
 #include <mutex>
 #include <fstream>
 #include <algorithm>
