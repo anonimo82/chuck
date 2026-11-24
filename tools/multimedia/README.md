@@ -21,3 +21,15 @@ The tool refuses existing primary output files. Assimp can create sidecar files,
 - MIDI file writing and editing; existing MidiFileIn is unchanged.
 - Automated round-trip tests with fixtures across Linux, Windows and macOS.
 - Exact runtime capability enumeration and codec/licensing review before distributing binaries.
+
+## Native Chugins and unified build (experimental)
+
+Six optional modules now exist in raster, vector, model, audio, midi and video. On Linux install build-essential, pkg-config, libmagickwand-dev, librsvg2-dev, libcairo2-dev, libassimp-dev, libsndfile1-dev (>= 1.2.0), libavformat-dev, libavcodec-dev, libavutil-dev, libswscale-dev and ffmpeg. On macOS the equivalent Homebrew libraries are imagemagick, librsvg, cairo, assimp, libsndfile, ffmpeg and pkg-config. Obtain https://github.com/craigsapp/midifile separately (revision not yet pinned).
+
+From the repository root, with a matching ChucK binary built at src/chuck:
+
+    make -C tools/multimedia MIDIFILE=/absolute/path/to/midifile
+    make -C tools/multimedia test MIDIFILE=/absolute/path/to/midifile
+    make -C tools/multimedia install MIDIFILE=/absolute/path/to/midifile PREFIX=/absolute/path/to/chugins
+
+Use chuck --chugin-path:/absolute/path/to/chugins with your script. The install target copies six binaries and may replace previous copies in the chosen prefix. See each module README for API limitations. Windows build remains pending. Smoke tests are not exhaustive format or security tests. CI and local native compilation results have not yet been verified.

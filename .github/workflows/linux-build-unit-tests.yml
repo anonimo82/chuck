@@ -15,7 +15,7 @@ jobs:
     - uses: actions/checkout@v2
 
     - name: Dependencies - Linux
-      run: sudo apt update && sudo apt install --fix-missing -y libsndfile1-dev libpulse-dev libasound2-dev libmagickwand-dev pkg-config
+      run: sudo apt update && sudo apt install --fix-missing -y libsndfile1-dev libpulse-dev libasound2-dev libmagickwand-dev pkg-config librsvg2-dev libcairo2-dev libassimp-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev ffmpeg
 
     - name: Compile - Linux
       run: cd src/ && make -j linux-pulse
@@ -23,12 +23,8 @@ jobs:
     - name: Unit Tests - Linux
       run: cd src/ && export PATH=$PATH:$(pwd) && cd test/ && python test.py
 
-    - name: Build RasterIO and run smoke test
-      run: |
-        make -C tools/multimedia/raster
-        python3 tools/multimedia/raster/test_raster.py
+    - name: Fetch MIDI dependency
+      run: git clone --depth 1 https://github.com/craigsapp/midifile.git "$RUNNER_TEMP/midifile"
 
-    - name: Build AudioIO and run smoke test
-      run: |
-        make -C tools/multimedia/audio
-        python3 tools/multimedia/audio/test_audio.py
+    - name: Build and test all multimedia Chugins
+      run: make -C tools/multimedia test MIDIFILE="$RUNNER_TEMP/midifile"
