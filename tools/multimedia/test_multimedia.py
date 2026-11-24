@@ -1967,3 +1967,99 @@ check(!model.loaded() && copy.loaded());
     vertices,faces=procedural_obj("procedural-box/mesh.obj")
     assert set(vertices)=={(x,y,z) for x in (-1.,1.) for y in (-2.,2.) for z in (-3.,3.)}
     assert len(faces)==12 and all(len(face)==3 for face in faces)
+
+    run("midi", """
+MidiSequence seq;
+MidiSequence copy;
+int pitches[3];
+check(!seq.loaded());
+check(seq.addTrack()==-1);
+check(!seq.create(0,120.0));
+check(!seq.create(480,0.0));
+check(seq.create(480,120.0));
+check(seq.loaded() && seq.tracks()==1 && seq.ticksPerQuarter()==480);
+check(seq.addTrack()==1);
+check(seq.tracks()==2);
+check(seq.addProgram(1,0,0,10));
+check(seq.addCC(1,0,0,7,100));
+check(seq.addNote(1,480,240,0,72,100));
+check(seq.addNote(1,0,240,0,60,80));
+60 => pitches[0]; 64 => pitches[1]; 67 => pitches[2];
+check(seq.addChord(1,960,480,0,pitches,90));
+check(seq.addTempo(960,60.0));
+check(!seq.addTempo(960,90.0));
+check(!seq.addNote(2,0,1,0,60,80));
+check(!seq.addNote(1,0,0,0,60,80));
+check(!seq.addNote(1,0,1,16,60,80));
+check(!seq.addNote(1,0,1,0,128,80));
+check(!seq.addCC(1,0,0,128,100));
+check(!seq.addProgram(1,0,0,128));
+60 => pitches[1];
+check(!seq.addChord(1,960,480,0,pitches,90));
+check(seq.events(1)==12);
+check(seq.events(0)==2);
+check(seq.tickAt(1,0)==0 && seq.tickAt(1,11)==1440);
+check(seq.save("procedural.mid"));
+check(!seq.save("procedural.mid"));
+check(copy.load("procedural.mid"));
+check(copy.tracks()==2 && copy.ticksPerQuarter()==480);
+check(copy.addTrack()==-1);
+2 => seq.transpose;
+0.5 => seq.velocityGain;
+check(seq.save("procedural-adjusted.mid"));
+check(seq.create(96,90.0));
+check(seq.tracks()==1 && seq.transpose()==0 && seq.velocityGain()==1.0);
+seq.clear();
+check(!seq.loaded() && copy.loaded());
+""",34,p)
+    # Independent SMF parsing: no dependency on midifile for verification.
+    def procedural_midi(name):
+        data=(p/name).read_bytes()
+        assert data[:4]==b"MThd" and int.from_bytes(data[4:8],"big")==6
+        assert data[8:14]==b"\x00\x01\x00\x02\x01\xe0"
+        tracks=[]
+        pos=14
+        def vlq():
+            nonlocal pos
+            value=0
+            for _ in range(4):
+                b=data[pos]; pos+=1
+                value=(value<<7)|(b&127)
+                if b<128: return value
+            raise AssertionError("invalid VLQ")
+        for _ in range(2):
+            assert data[pos:pos+4]==b"MTrk"
+            end=pos+8+int.from_bytes(data[pos+4:pos+8],"big")
+            pos+=8
+            tick=0; running=None; events=[]
+            while pos<end:
+                tick+=vlq()
+                status=data[pos]
+                if status>=128: pos+=1
+                else:
+                    assert running is not None
+                    status=running
+                if status==255:
+                    kind=data[pos]; pos+=1
+                    size=vlq()
+                    payload=data[pos:pos+size]; pos+=size
+                    events.append((tick,status,kind,payload))
+                    running=None
+                else:
+                    assert 128<=status<240
+                    running=status
+                    size=1 if status&240 in (192,208) else 2
+                    payload=data[pos:pos+size]; pos+=size
+                    events.append((tick,status,payload))
+            assert pos==end
+            tracks.append(events)
+        assert pos==len(data)
+        return tracks
+    original=procedural_midi("procedural.mid")
+    adjusted=procedural_midi("procedural-adjusted.mid")
+    assert [(e[0],e[3]) for e in original[0] if e[1:3]==(255,81)]==[(0,b"\x07\xa1\x20"),(960,b"\x0f\x42\x40")]
+    assert (0,192,bytes((10,))) in original[1] and (0,176,bytes((7,100))) in original[1]
+    def note_ons(events):
+        return sorted((e[0],e[2][0],e[2][1]) for e in events if e[1]==144 and e[2][1]>0)
+    assert note_ons(original[1])==[(0,60,80),(480,72,100),(960,60,90),(960,64,90),(960,67,90)]
+    assert note_ons(adjusted[1])==[(0,62,40),(480,74,50),(960,62,45),(960,66,45),(960,69,45)]
