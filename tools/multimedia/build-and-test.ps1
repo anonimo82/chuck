@@ -88,7 +88,7 @@ try {
     } finally { $ErrorActionPreference = $previousPreference }
     $probe | ForEach-Object { Write-Host $_ }
     if ($probeExit -ne 0) { throw "Chugin probe failed: $probeExit" }
-    foreach ($module in @("RasterIO","VectorIO","ModelIO","AudioIO","MidiFileIO","VideoIO")) {
+    foreach ($module in @("RasterIO","VectorIO","ModelIO","AudioIO","MidiFileIO","VideoIO","SubtitleIO")) {
         if (($probe -join "`n") -notmatch ([regex]::Escape("$module.chug") + '\s+\[OK\]')) {
             throw "Chugin probe did not confirm $module"
         }

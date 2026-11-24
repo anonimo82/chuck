@@ -8,7 +8,7 @@ CHUCK = HERE.parents[1] / "src/chuck"
 
 def run(module, script, expected, directory):
     path = directory / "test.ck"
-    name = {"vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO"}[module]
+    name = {"vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO"}[module]
     path.write_text(f'@import "{name}";\n' + 'fun void check(int ok) { if(ok) <<< "PASS" >>>; else <<< "FAIL" >>>; }\n' + script)
     r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
     log = r.stdout + r.stderr
@@ -774,3 +774,40 @@ check(!VideoIO.title("trim-av.mkv", "title-size.mkv", "A", "Sans", 0, 16777215, 
     assert decoded("title-utf8.mkv")!=original
     for name in ("title-empty.mkv","title-time.mkv","title-position.mkv","title-size.mkv"):
         assert not (p/name).exists(),name
+
+    # Plain-text UTF-8 subtitle round trip; compare exact canonical bytes.
+    srt="1\n00:00:00,125 --> 00:00:01,250\nHello\nWorld\n\n2\n00:00:01,000 --> 00:00:02,500\nCittà\n\n"
+    vtt="WEBVTT\n\n00:00:00.125 --> 00:00:01.250\nHello\nWorld\n\n00:00:01.000 --> 00:00:02.500\nCittà\n\n"
+    (p/"sub.srt").write_bytes(b"\xef\xbb\xbf"+srt.replace("\n","\r\n").encode("utf-8"))
+    (p/"short.vtt").write_bytes(b"WEBVTT\n\n00:01.000 --> 00:02.000\nShort\n\n")
+    (p/"invalid.srt").write_bytes(b"1\n00:00:02,000 --> 00:00:01,000\nBad\n")
+    (p/"styled.vtt").write_bytes(b"WEBVTT\n\n00:01.000 --> 00:02.000 align:start\nBad\n")
+    (p/"bad-utf8.srt").write_bytes(b"1\n00:00:01,000 --> 00:00:02,000\n\xff\n")
+    run("subtitle", r"""
+check(SubtitleIO.count("sub.srt")==2);
+check(SubtitleIO.startTime("sub.srt",0)==0.125);
+check(SubtitleIO.endTime("sub.srt",0)==1.25);
+check(SubtitleIO.text("sub.srt",0)=="Hello\nWorld");
+check(SubtitleIO.count("short.vtt")==1);
+check(SubtitleIO.startTime("short.vtt",0)==1.0);
+check(SubtitleIO.convert("sub.srt","sub.vtt"));
+check(SubtitleIO.convert("sub.vtt","roundtrip.srt"));
+check(SubtitleIO.writeCue("single.srt","New cue",250,1750));
+check(SubtitleIO.writeCue("single.vtt","New cue",250,1750));
+check(!SubtitleIO.convert("sub.srt","sub.vtt"));
+check(!SubtitleIO.writeCue("single.srt","Replace",0,1000));
+check(SubtitleIO.count("invalid.srt")==-1);
+check(SubtitleIO.count("styled.vtt")==-1);
+check(SubtitleIO.count("bad-utf8.srt")==-1);
+check(SubtitleIO.count("missing.srt")==-1);
+check(SubtitleIO.startTime("sub.srt",2)==-1.0);
+check(SubtitleIO.text("sub.srt",-1)=="");
+check(!SubtitleIO.writeCue("bad-cue.vtt","Bad",1000,500));
+check(!SubtitleIO.convert("sub.srt","bad-cue.txt"));
+""",20,p)
+    assert (p/"sub.vtt").read_bytes()==vtt.encode("utf-8")
+    assert (p/"roundtrip.srt").read_bytes()==srt.encode("utf-8")
+    assert (p/"single.srt").read_bytes()==b"1\n00:00:00,250 --> 00:00:01,750\nNew cue\n\n"
+    assert (p/"single.vtt").read_bytes()==b"WEBVTT\n\n00:00:00.250 --> 00:00:01.750\nNew cue\n\n"
+    assert not (p/"bad-cue.vtt").exists()
+    assert not (p/"bad-cue.txt").exists()
