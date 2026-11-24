@@ -410,6 +410,133 @@ CK_DLL_MFUN(raster_image_pixel) {
         RETURN->v_int=p->input.rgba[(static_cast<size_t>(y)*p->input.width+x)*4+c];
 }
 
+
+namespace {
+using RGBA=std::array<unsigned char,4>;
+bool readColor(void *&args,RGBA &color) {
+    for(auto &c:color) {
+        auto v=GET_NEXT_INT(args);
+        if(v<0 || v>255) return false;
+        c=static_cast<unsigned char>(v);
+    }
+    return true;
+}
+void paint(RasterPixels &p,int x,int y,const RGBA &c) {
+    auto i=(static_cast<size_t>(y)*p.width+x)*4;
+    std::copy(c.begin(),c.end(),p.rgba.begin()+i);
+}
+bool insideRect(RasterImageState *p,t_CKINT x,t_CKINT y,t_CKINT w,t_CKINT h) {
+    return rasterPosition(p,x,y) && w>0 && h>0 &&
+        static_cast<uint64_t>(w)<=p->input.width-x &&
+        static_cast<uint64_t>(h)<=p->input.height-y;
+}
+}
+CK_DLL_MFUN(raster_image_fill) {
+    RETURN->v_int=0;
+    auto *p=imageState(SELF,API);
+    RGBA c;
+    if(!p || !p->input.loaded() || !readColor(ARGS,c)) return;
+    for(size_t i=0;i<p->input.rgba.size();i+=4)
+        std::copy(c.begin(),c.end(),p->input.rgba.begin()+i);
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(raster_image_rect) {
+    RETURN->v_int=0;
+    auto *p=imageState(SELF,API);
+    auto x=GET_NEXT_INT(ARGS),y=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+    RGBA c;
+    if(!insideRect(p,x,y,w,h) || !readColor(ARGS,c)) return;
+    for(int j=y;j<y+h;++j) for(int i=x;i<x+w;++i) paint(p->input,i,j,c);
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(raster_image_line) {
+    RETURN->v_int=0;
+    auto *p=imageState(SELF,API);
+    auto x=GET_NEXT_INT(ARGS),y=GET_NEXT_INT(ARGS),x2=GET_NEXT_INT(ARGS),y2=GET_NEXT_INT(ARGS);
+    RGBA c;
+    if(!rasterPosition(p,x,y) || !rasterPosition(p,x2,y2) || !readColor(ARGS,c)) return;
+    int dx=std::abs(static_cast<int>(x2-x)),dy=-std::abs(static_cast<int>(y2-y));
+    int sx=x<x2?1:-1,sy=y<y2?1:-1,err=dx+dy;
+    for(;;) {
+        paint(p->input,x,y,c);
+        if(x==x2 && y==y2) break;
+        int e=2*err;
+        if(e>=dy) { err+=dy; x+=sx; }
+        if(e<=dx) { err+=dx; y+=sy; }
+    }
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(raster_image_circle) {
+    RETURN->v_int=0;
+    auto *p=imageState(SELF,API);
+    auto x=GET_NEXT_INT(ARGS),y=GET_NEXT_INT(ARGS),radius=GET_NEXT_INT(ARGS);
+    RGBA c;
+    if(!rasterPosition(p,x,y) || radius<0 || radius>8192 || !readColor(ARGS,c)) return;
+    int loX=std::max<int>(0,x-radius),hiX=std::min<int>(p->input.width-1,x+radius);
+    int loY=std::max<int>(0,y-radius),hiY=std::min<int>(p->input.height-1,y+radius);
+    for(int j=loY;j<=hiY;++j) for(int i=loX;i<=hiX;++i) {
+        int64_t dx=i-x,dy=j-y;
+        if(dx*dx+dy*dy<=radius*radius) paint(p->input,i,j,c);
+    }
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(raster_image_crop) {
+    RETURN->v_int=0;
+    try {
+        auto *p=imageState(SELF,API);
+        auto x=GET_NEXT_INT(ARGS),y=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        if(!insideRect(p,x,y,w,h)) return;
+        RasterPixels next; next.width=w; next.height=h; next.rgba.resize(static_cast<size_t>(w)*h*4);
+        for(int j=0;j<h;++j)
+            std::copy_n(p->input.rgba.begin()+((static_cast<size_t>(y)+j)*p->input.width+x)*4,
+                        w*4,next.rgba.begin()+static_cast<size_t>(j)*w*4);
+        p->input=std::move(next); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(raster_image_resize) {
+    RETURN->v_int=0;
+    try {
+        auto *p=imageState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        if(!p || !p->input.loaded() || !rasterDimensions(w,h)) return;
+        RasterPixels next; next.width=w; next.height=h; next.rgba.resize(static_cast<size_t>(w)*h*4);
+        for(size_t y=0;y<next.height;++y) for(size_t x=0;x<next.width;++x) {
+            size_t src=((y*p->input.height/next.height)*p->input.width+x*p->input.width/next.width)*4;
+            std::copy_n(p->input.rgba.begin()+src,4,next.rgba.begin()+(y*next.width+x)*4);
+        }
+        p->input=std::move(next); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(raster_image_composite) {
+    RETURN->v_int=0;
+    try {
+        auto *p=imageState(SELF,API);
+        auto x=GET_NEXT_INT(ARGS),y=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto arr=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        auto opacity=GET_NEXT_FLOAT(ARGS);
+        if(!p || !p->input.loaded() || !arr || !rasterDimensions(w,h) ||
+           x< -8192 || x>8192 || y< -8192 || y>8192 ||
+           !std::isfinite(opacity) || opacity<0 || opacity>1 ||
+           API->object->array_int_size(arr)!=w*h*4) return;
+        for(t_CKINT i=0;i<w*h*4;++i) {
+            auto v=API->object->array_int_get_idx(arr,i);
+            if(v<0 || v>255) return;
+        }
+        for(int j=std::max<t_CKINT>(0,-y);j<h && y+j<static_cast<t_CKINT>(p->input.height);++j)
+            for(int i=std::max<t_CKINT>(0,-x);i<w && x+i<static_cast<t_CKINT>(p->input.width);++i) {
+                size_t src=(static_cast<size_t>(j)*w+i)*4;
+                size_t dst=((static_cast<size_t>(y+j)*p->input.width)+x+i)*4;
+                double a=API->object->array_int_get_idx(arr,src+3)/255.0*opacity;
+                if(a==0) continue;
+                double b=p->input.rgba[dst+3]/255.0*(1-a),out=a+b;
+                for(int c=0;c<3;++c) p->input.rgba[dst+c]=static_cast<unsigned char>(
+                    std::lround(std::clamp((API->object->array_int_get_idx(arr,src+c)*a+p->input.rgba[dst+c]*b)/out,0.0,255.0)));
+                p->input.rgba[dst+3]=static_cast<unsigned char>(std::lround(std::clamp(out*255,0.0,255.0)));
+            }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+
 CK_DLL_QUERY(RasterIO) {
     QUERY->setname(QUERY, "RasterIO");
     QUERY->begin_class(QUERY, "RasterIO", "Object");
@@ -476,5 +603,51 @@ CK_DLL_QUERY(RasterIO) {
     QUERY->add_arg(QUERY,"int","x");
     QUERY->add_arg(QUERY,"int","y");
     QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_mfun(QUERY,raster_image_fill,"int","fill");
+    QUERY->add_arg(QUERY,"int","red");
+    QUERY->add_arg(QUERY,"int","green");
+    QUERY->add_arg(QUERY,"int","blue");
+    QUERY->add_arg(QUERY,"int","alpha");
+    QUERY->add_mfun(QUERY,raster_image_rect,"int","fillRect");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","red");
+    QUERY->add_arg(QUERY,"int","green");
+    QUERY->add_arg(QUERY,"int","blue");
+    QUERY->add_arg(QUERY,"int","alpha");
+    QUERY->add_mfun(QUERY,raster_image_line,"int","line");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"int","x2");
+    QUERY->add_arg(QUERY,"int","y2");
+    QUERY->add_arg(QUERY,"int","red");
+    QUERY->add_arg(QUERY,"int","green");
+    QUERY->add_arg(QUERY,"int","blue");
+    QUERY->add_arg(QUERY,"int","alpha");
+    QUERY->add_mfun(QUERY,raster_image_circle,"int","fillCircle");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"int","radius");
+    QUERY->add_arg(QUERY,"int","red");
+    QUERY->add_arg(QUERY,"int","green");
+    QUERY->add_arg(QUERY,"int","blue");
+    QUERY->add_arg(QUERY,"int","alpha");
+    QUERY->add_mfun(QUERY,raster_image_crop,"int","crop");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_mfun(QUERY,raster_image_resize,"int","resize");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_mfun(QUERY,raster_image_composite,"int","composite");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_arg(QUERY,"float","opacity");
     return QUERY->end_class(QUERY);
 }
