@@ -1398,3 +1398,68 @@ check(sequence.save("sequence-curve.mid"));
     expected[1]=(0,(144,66,100))
     expected[2]=(480,(128,66,32))
     assert smf_events("sequence-curve.mid")==expected
+
+    # Persistent sequential decoder: two independent readers, original and processed frames.
+    run("video", """
+VideoClip a;
+VideoClip b;
+check(!a.loaded());
+check(a.frameIndex()==-1 && a.timeSeconds()==-1.0);
+check(a.next()==-1);
+check(!a.saveFrame("clip-empty.ppm"));
+check(a.load("generated.mkv"));
+check(a.loaded() && !b.loaded());
+check(a.width()==16 && a.height()==16);
+check(a.frameIndex()==0 && a.timeSeconds()==0.0 && !a.eof());
+check(a.red()==1.0 && a.green()==1.0 && a.blue()==1.0 && a.brightness()==0.0);
+check(a.saveFrame("clip-object-first.ppm"));
+check(!a.saveFrame("clip-object-first.ppm"));
+check(a.saveFrame("clip-object-scaled.ppm",8,8));
+check(!a.saveFrame("clip-invalid-size.ppm",0,8));
+0.5 => a.red;
+0.1 => a.brightness;
+check(a.saveFrame("clip-object-adjusted.ppm"));
+a.red(-1.0);
+check(a.red()==0.5 && a.brightness()==0.1);
+check(!a.load("missing.mkv"));
+check(a.loaded() && a.frameIndex()==0 && a.red()==0.5);
+check(a.next()==1);
+check(a.frameIndex()==1 && a.timeSeconds()==0.5 && a.eof());
+a.reset();
+check(a.red()==1.0 && a.brightness()==0.0);
+check(a.saveFrame("clip-object-last.ppm"));
+check(a.next()==0);
+check(a.frameIndex()==1 && a.loaded());
+check(b.load("generated.mkv"));
+check(b.frameIndex()==0 && a.frameIndex()==1);
+check(b.saveFrame("clip-object-independent.ppm"));
+check(a.load("generated.mkv"));
+check(a.frameIndex()==0 && !a.eof());
+a.clear();
+check(!a.loaded() && b.loaded());
+check(!a.saveFrame("clip-cleared.ppm"));
+""",31,p)
+    def clip_ppm(name,w=16,h=16):
+        header=f"P6\n{w} {h}\n255\n".encode()
+        data=(p/name).read_bytes()
+        assert data.startswith(header),name
+        return data[len(header):]
+    assert clip_ppm("clip-object-first.ppm")==red
+    assert clip_ppm("clip-object-scaled.ppm",8,8)==bytes((255,0,0))*64
+    assert clip_ppm("clip-object-adjusted.ppm")==bytes((153,26,26))*256
+    assert clip_ppm("clip-object-last.ppm")==blue
+    assert clip_ppm("clip-object-independent.ppm")==red
+    assert not any((p/name).exists() for name in ("clip-empty.ppm","clip-invalid-size.ppm","clip-cleared.ppm"))
+    run("video", """
+@import "KeyframeIO";
+VideoClip clip;
+KeyframeCurve gain;
+check(clip.load("generated.mkv"));
+check(gain.add(0.0,1.0,"linear"));
+check(gain.add(1.0,0.0,"linear"));
+check(clip.next()==1);
+gain.valueAt(clip.timeSeconds()) => clip.blue;
+check(clip.blue()==0.5);
+check(clip.saveFrame("clip-object-curve.ppm"));
+""",6,p)
+    assert clip_ppm("clip-object-curve.ppm")==bytes((0,0,128))*256
