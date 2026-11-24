@@ -1459,7 +1459,7 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "float", "end");
     QUERY->add_sfun(QUERY, video_concat, "int", "concat");
     QUERY->add_arg(QUERY, "string", "first");
-    QUERY->add_arg(QUERY, "string", "second");
+    QUERY->add_arg(QUERY, "string", "secondClip");
     QUERY->add_arg(QUERY, "string", "destination");
     return QUERY->end_class(QUERY);
 }
