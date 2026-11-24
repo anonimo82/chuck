@@ -432,3 +432,27 @@ check(VideoIO.trimFrames("reordered.mp4", "reordered-cut.mkv", 1, 2));
         result = decoded("reordered-cut.mkv")
         assert len(result) == 2 * stride
         assert max(abs(x-y) for x,y in zip(result, original[stride:3*stride])) <= 3
+
+    # Exact audiovisual cut across PCM packet boundaries.
+    run("video", """
+check(VideoIO.trimAV("trim-av.mkv", "exact-av.mkv", 1, 2));
+check(VideoIO.trimAV("multi-audio.mkv", "exact-multi.mkv", 0, 1));
+check(VideoIO.trimAV("trim-av.mkv", "exact-tail.mkv", 3, 1));
+check(VideoIO.trimAV("trim-source.mkv", "exact-silent.mkv", 1, 2));
+check(!VideoIO.trimAV("trim-av.mkv", "exact-av.mkv", 0, 1));
+check(!VideoIO.trimAV("trim-av.mkv", "bad-av-range.mkv", 3, 2));
+check(!VideoIO.trimAV("aac-video.mkv", "bad-av-codec.mkv", 0, 1));
+check(!VideoIO.trimAV("trim-av.mkv", "bad-av-count.mkv", 0, 0));
+check(!VideoIO.trimAV("missing.mkv", "bad-av-source.mkv", 0, 1));
+""", 9, p)
+    assert decoded("exact-av.mkv") == blue + red
+    assert audio_samples("exact-av.mkv", 0) == (pcm + pcm2)[8000:24000]
+    assert decoded("exact-tail.mkv") == blue
+    assert audio_samples("exact-tail.mkv", 0) == pcm2[8000:16000]
+    assert decoded("exact-silent.mkv") == blue + red
+    assert len(audio_tracks("exact-multi.mkv")) == 2
+    assert audio_samples("exact-multi.mkv", 0) == pcm[:8000]
+    assert audio_samples("exact-multi.mkv", 1) == pcm2[:8000]
+    assert [x["tags"]["language"] for x in audio_tracks("exact-multi.mkv")] == ["ita", "eng"]
+    for name in ("bad-av-range.mkv", "bad-av-codec.mkv", "bad-av-count.mkv", "bad-av-source.mkv"):
+        assert not (p / name).exists(), name

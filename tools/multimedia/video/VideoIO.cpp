@@ -1047,9 +1047,121 @@ struct AudioEncoder {
     }
 };
 
+
+// Locate the exact presentation interval, including the next frame boundary.
+// At EOF require a known final frame duration.
+bool frameInterval(const std::string &source, int64_t first, int64_t count,
+                   int64_t &begin, int64_t &end, AVRational &tb) {
+    Input in;
+    if(!in.open(source)) return false;
+    auto *stream = in.ctx->streams[in.video];
+    tb = stream->time_base;
+    const auto *decoder = avcodec_find_decoder(stream->codecpar->codec_id);
+    if(!decoder) return false;
+    Codec dec;
+    dec.ctx = avcodec_alloc_context3(decoder);
+    Frame frame;
+    Packet packet;
+    if(!dec.ctx || !frame.p || !packet.p ||
+       avcodec_parameters_to_context(dec.ctx, stream->codecpar) < 0) return false;
+    dec.ctx->pkt_timebase = tb;
+    if(avcodec_open2(dec.ctx, decoder, nullptr) < 0) return false;
+    int64_t seen = 0, previous = AV_NOPTS_VALUE, duration = 0;
+    bool done = false;
+    auto drain = [&](bool flush) {
+        while(!done) {
+            int ret = avcodec_receive_frame(dec.ctx, frame.p);
+            if(ret == AVERROR_EOF) return flush;
+            if(ret == AVERROR(EAGAIN)) return !flush;
+            if(ret < 0) return false;
+            int64_t pts = frame.p->best_effort_timestamp;
+            if(pts == AV_NOPTS_VALUE || (previous != AV_NOPTS_VALUE && pts <= previous) ||
+               pts < -INT64_C(1000000000000000) || pts > INT64_C(1000000000000000))
+                return false;
+            if(seen == first) begin = pts;
+            if(seen == first + count) { end = pts; done = true; }
+            ++seen;
+            previous = pts;
+#if LIBAVUTIL_VERSION_MAJOR >= 58
+            duration = frame.p->duration;
+#else
+            duration = frame.p->pkt_duration;
+#endif
+            av_frame_unref(frame.p);
+        }
+        return true;
+    };
+    int ret = 0;
+    while(!done && (ret = av_read_frame(in.ctx, packet.p)) >= 0) {
+        if(packet.p->stream_index == in.video) {
+            int sent = avcodec_send_packet(dec.ctx, packet.p);
+            av_packet_unref(packet.p);
+            if(sent < 0 || !drain(false)) return false;
+        } else av_packet_unref(packet.p);
+    }
+    if(!done) {
+        if(ret != AVERROR_EOF || avcodec_send_packet(dec.ctx, nullptr) < 0 || !drain(true))
+            return false;
+        if(!done) {
+            if(seen != first + count || duration <= 0 || duration > INT64_C(1000000000000000))
+                return false;
+            end = previous + duration;
+        }
+    }
+    return begin != AV_NOPTS_VALUE && end > begin;
+}
+
+// PCM S16LE is packet-addressable: slice complete interleaved sample frames.
+// Track a continuous sample clock, tolerating only container timestamp rounding.
+struct PCMTrim {
+    int rate = 0, bytes = 0;
+    int64_t start = 0, stop = 0, next = AV_NOPTS_VALUE, written = 0;
+    bool setup(const AVCodecParameters *p, int64_t begin, int64_t end, AVRational videoTB) {
+        if(p->codec_id != AV_CODEC_ID_PCM_S16LE || p->sample_rate <= 0 ||
+           p->sample_rate > 384000 || p->ch_layout.nb_channels < 1 ||
+           p->ch_layout.nb_channels > 8) return false;
+        rate = p->sample_rate;
+        bytes = p->ch_layout.nb_channels * 2;
+        start = av_rescale_q_rnd(begin, videoTB, AVRational{1,rate}, AV_ROUND_UP);
+        stop = av_rescale_q_rnd(end, videoTB, AVRational{1,rate}, AV_ROUND_UP);
+        return start > -INT64_C(1000000000000000) && stop < INT64_C(1000000000000000) &&
+               stop > start;
+    }
+    bool push(AVPacket *p, AVStream *src, AVStream *dst, AVFormatContext *out) {
+        if(p->pts == AV_NOPTS_VALUE || p->dts != p->pts || p->size <= 0 ||
+           p->size % bytes || av_packet_get_side_data(p, AV_PKT_DATA_SKIP_SAMPLES, nullptr))
+            return false;
+        int64_t pos = av_rescale_q(p->pts, src->time_base, AVRational{1,rate});
+        if(pos < -INT64_C(1000000000000000) || pos > INT64_C(1000000000000000)) return false;
+        int64_t tolerance = std::max<int64_t>(1, av_rescale_q_rnd(1, src->time_base,
+                                                    AVRational{1,rate}, AV_ROUND_UP));
+        if(next != AV_NOPTS_VALUE) {
+            if(std::abs(pos-next) > tolerance) return false;
+            pos = next;
+        }
+        next = pos + p->size / bytes;
+        const int64_t lo = std::max(pos, start), hi = std::min(next, stop);
+        if(hi <= lo) return true;
+        if(lo != start + written) return false; // no silent gaps or padding
+        Packet cut;
+        int size = static_cast<int>((hi-lo)*bytes);
+        if(!cut.p || av_new_packet(cut.p, size) < 0) return false;
+        std::memcpy(cut.p->data, p->data + (lo-pos)*bytes, size);
+        cut.p->pts = cut.p->dts = lo-start;
+        cut.p->duration = hi-lo;
+        av_packet_rescale_ts(cut.p, AVRational{1,rate}, dst->time_base);
+        cut.p->stream_index = dst->index;
+        cut.p->flags = AV_PKT_FLAG_KEY;
+        cut.p->pos = -1;
+        if(av_interleaved_write_frame(out, cut.p) < 0) return false;
+        written += hi-lo;
+        return true;
+    }
+};
+
 bool transcode(const std::string &source, const std::string &dest,
                int w, int h, const std::string &mode, int quality, int audioKbps = 0,
-               int64_t firstFrame = 0, int64_t frameCount = 0) {
+               int64_t firstFrame = 0, int64_t frameCount = 0, bool trimAudio = false) {
     const bool ffv1 = mode == "ffv1", h264 = mode == "h264", vp9 = mode == "vp9";
     const char *container = ffv1 ? "matroska" : h264 ? "mp4" : vp9 ? "webm" : nullptr;
     const std::string ext = ffv1 ? ".mkv" : h264 ? ".mp4" : ".webm";
@@ -1060,7 +1172,12 @@ bool transcode(const std::string &source, const std::string &dest,
     Input in;
     if(!in.open(source)) return false;
     const bool cutting = frameCount > 0;
-    if(cutting && (firstFrame < 0 || in.ctx->nb_streams != 1 || audioKbps)) return false;
+    if(cutting && (firstFrame < 0 || (!trimAudio && in.ctx->nb_streams != 1) || audioKbps)) return false;
+    int64_t cutBegin = AV_NOPTS_VALUE, cutEnd = AV_NOPTS_VALUE;
+    AVRational cutTB{};
+    if(trimAudio && (!cutting || !ffv1 || !frameInterval(source, firstFrame, frameCount,
+                                                        cutBegin, cutEnd, cutTB))) return false;
+    std::vector<PCMTrim> pcm(in.ctx->nb_streams);
     if(cutting && w == 0 && h == 0) {
         w = in.ctx->streams[in.video]->codecpar->width;
         h = in.ctx->streams[in.video]->codecpar->height;
@@ -1115,6 +1232,7 @@ bool transcode(const std::string &source, const std::string &dest,
     for(unsigned i = 0; i < in.ctx->nb_streams; ++i) {
         if(static_cast<int>(i) == in.video) continue;
         auto *audio = in.ctx->streams[i];
+        if(trimAudio && !pcm[i].setup(audio->codecpar, cutBegin, cutEnd, cutTB)) return false;
         if(audioKbps) {
             auto encoder = std::make_unique<AudioEncoder>();
             if(!encoder->open(audio, out.ctx, vp9, audioKbps)) return false;
@@ -1190,13 +1308,18 @@ bool transcode(const std::string &source, const std::string &dest,
         }
     };
     int ret = 0;
-    while((!cutting || selected < frameCount) && (ret = av_read_frame(in.ctx, inputPacket.p)) >= 0) {
+    while((trimAudio || !cutting || selected < frameCount) && (ret = av_read_frame(in.ctx, inputPacket.p)) >= 0) {
         int i = inputPacket.p->stream_index;
         if(i < 0 || static_cast<unsigned>(i) >= mapping.size()) return false;
         if(i == in.video) {
+            if(cutting && selected == frameCount) { av_packet_unref(inputPacket.p); continue; }
             int sent = avcodec_send_packet(dec.ctx, inputPacket.p);
             av_packet_unref(inputPacket.p);
             if(sent < 0 || !drainDecoder(false)) return false;
+        } else if(trimAudio) {
+            bool ok = pcm[i].push(inputPacket.p, in.ctx->streams[i], out.ctx->streams[mapping[i]], out.ctx);
+            av_packet_unref(inputPacket.p);
+            if(!ok) return false;
         } else if(audioEncoders[i]) {
             bool ok = audioEncoders[i]->push(inputPacket.p);
             av_packet_unref(inputPacket.p);
@@ -1218,6 +1341,11 @@ bool transcode(const std::string &source, const std::string &dest,
     }
     if(previous == AV_NOPTS_VALUE || (cutting && selected != frameCount) ||
        avcodec_send_frame(enc.ctx, nullptr) < 0 || !drainEncoder(true)) return false;
+    if(trimAudio) {
+        if(ret != AVERROR_EOF) return false;
+        for(unsigned i = 0; i < pcm.size(); ++i)
+            if(static_cast<int>(i) != in.video && pcm[i].written != pcm[i].stop-pcm[i].start) return false;
+    }
     for(auto &audio : audioEncoders) if(audio && !audio->finish()) return false;
     return out.finish();
 }
@@ -1419,6 +1547,18 @@ CK_DLL_SFUN(video_trim_frames) {
             RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_trim_av) {
+    RETURN->v_int = 0;
+    try {
+        auto source = GET_NEXT_STRING_SAFE(ARGS);
+        auto dest = GET_NEXT_STRING_SAFE(ARGS);
+        auto first = GET_NEXT_INT(ARGS);
+        auto count = GET_NEXT_INT(ARGS);
+        if(first >= 0 && first <= 2147483647 && count >= 1 && count <= 100000 &&
+           transcode(source, dest, 0, 0, "ffv1", 0, 0, first, count, true))
+            RETURN->v_int = 1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -1494,6 +1634,11 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "string", "secondClip");
     QUERY->add_arg(QUERY, "string", "destination");
     QUERY->add_sfun(QUERY, video_trim_frames, "int", "trimFrames");
+    QUERY->add_arg(QUERY, "string", "source");
+    QUERY->add_arg(QUERY, "string", "destination");
+    QUERY->add_arg(QUERY, "int", "firstFrame");
+    QUERY->add_arg(QUERY, "int", "frameCount");
+    QUERY->add_sfun(QUERY, video_trim_av, "int", "trimAV");
     QUERY->add_arg(QUERY, "string", "source");
     QUERY->add_arg(QUERY, "string", "destination");
     QUERY->add_arg(QUERY, "int", "firstFrame");

@@ -140,3 +140,12 @@ concat(first, second, destination) copies packets into a new MKV, MP4, MOV or We
 ```
 
 trimFrames(source, destination, firstFrame, frameCount) decodes in presentation order and encodes exactly frameCount frames starting at the zero-based firstFrame index, irrespective of keyframe boundaries. It reuses the native transcoding pipeline and writes FFV1/BGR0 in MKV at the source dimensions, with the first selected timestamp shifted to zero and subsequent relative presentation timestamps retained. FFV1 is lossless relative to the converted BGR0 frames, not necessarily the source color representation. A complete requested range must exist; short inputs cause failure and cleanup. Only single-stream video inputs are accepted; audio and other streams are rejected rather than discarded. Missing or non-increasing decoded timestamps are rejected. No audio trimming, time-based frame selection, or exact last-frame duration guarantee. No overwrite. Offline only. Twelve new unconditional smoke checks plus one conditional H.264 reordered-frame check and independent decoded comparisons are pending execution.
+
+### Synchronized frame and PCM audio trimming
+
+```chuck
+@import "VideoIO";
+<<< VideoIO.trimAV("movie.mkv", "excerpt.mkv", 120, 60) >>>;
+```
+
+trimAV uses a first decoding pass to locate the presentation timestamps of the first selected frame and the next frame after the requested range (or the known final frame duration at EOF). It then re-encodes the exact video range as FFV1/BGR0 at source dimensions, copying the corresponding complete PCM S16LE sample frames from every audio track into MKV. Audio boundaries are rounded upward to the source sample grid. Original sample rates and channel counts (1–8) are preserved; timestamps are rebased, subject to muxer rounding. A continuous PCM sample clock is required, allowing one source timestamp tick of rounding. Tracks must cover the entire selected interval; gaps, unsupported codecs, subtitles or extra video streams cause failure rather than silent loss. Compressed audio (AAC, Opus, MP3 etc.) is not yet accepted by trimAV. Video-only files are also supported. No overwrite; ordinary failures clean up incomplete output. The source must remain unchanged during both passes. Offline only. Nine new smoke checks and independent decoded RGB/PCM comparisons are pending execution.
