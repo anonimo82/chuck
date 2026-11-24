@@ -287,3 +287,47 @@ check(!VideoIO.convertAudio("missing.mkv", "missing-source.wav", 0));
     assert max(abs(a[0] - b[0]) for a, b in zip(struct.iter_unpack("<h", ref), struct.iter_unpack("<h", got))) <= 2
     for name in ("bad-track.wav", "bad-format.bin", "no-track.wav", "missing-source.wav"):
         assert not (p / name).exists(), name
+
+    # Simultaneous conversion: verify independent video/audio codecs, sample rate,
+    # track count and approximate duration (codec priming/padding may differ).
+    for mode, ext, quality, acodec in (("h264", "mp4", 23, "aac"),
+                                       ("vp9", "webm", 32, "opus")):
+        target = "av-converted." + ext
+        # These audio encoders are required for this specific test environment.
+        available = subprocess.check_output(["ffmpeg", "-hide_banner", "-encoders"], stderr=subprocess.STDOUT, timeout=30).decode()
+        audio_encoder = "aac" if mode == "h264" else "libopus"
+        if audio_encoder not in available:
+            print("SKIP audio encoder", audio_encoder)
+            continue
+        run("video", f"""
+if(VideoIO.encoderAvailable("{mode}")) {{
+    check(VideoIO.transcodeAV("multi-audio.mkv", "{target}", 32, 24, "{mode}", {quality}, 64));
+    check(VideoIO.width("{target}") == 32);
+    check(VideoIO.height("{target}") == 24);
+    check(!VideoIO.transcodeAV("multi-audio.mkv", "{target}", 32, 24, "{mode}", {quality}, 64));
+}} else {{
+    <<< "SKIP video encoder {mode}" >>>;
+    check(!VideoIO.transcodeAV("multi-audio.mkv", "{target}", 32, 24, "{mode}", {quality}, 64));
+    check(!VideoIO.encoderAvailable("{mode}"));
+    check(!VideoIO.transcodeAV("multi-audio.mkv", "bad.bin", 32, 24, "{mode}", {quality}, 64));
+    check(!VideoIO.transcodeAV("multi-audio.mkv", "{target}", 32, 24, "{mode}", {quality}, 0));
+}}
+""", 4, p)
+        if (p / target).exists():
+            tracks = audio_tracks(target)
+            assert len(tracks) == 2
+            assert all(t["codec_name"] == acodec and t["sample_rate"] == "48000" and t["channels"] == 1 for t in tracks)
+            assert len(decoded(target)) == 32 * 24 * 3 * 2
+            for i in range(2):
+                assert abs(len(audio_samples(target, i)) / 96000 - 1) < 0.08
+            # Compare stream start times where reported (encoder delay allowed).
+            probe = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(p / target)], timeout=30))
+            starts = [float(t["start_time"]) for t in probe["streams"] if "start_time" in t]
+            assert len(starts) == 3 and max(starts) - min(starts) < 0.08
+    run("video", """
+check(!VideoIO.transcodeAV("multi-audio.mkv", "bad-rate.mp4", 32, 24, "h264", 23, 0));
+check(!VideoIO.transcodeAV("multi-audio.mkv", "bad-mode.mkv", 32, 24, "ffv1", 0, 64));
+check(!VideoIO.transcodeAV("missing.mkv", "missing-av.mp4", 32, 24, "h264", 23, 64));
+""", 3, p)
+    for name in ("bad-rate.mp4", "bad-mode.mkv", "missing-av.mp4"):
+        assert not (p / name).exists(), name
