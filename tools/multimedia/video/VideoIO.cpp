@@ -44,6 +44,32 @@ struct Scale {
     SwsContext *p = nullptr;
     ~Scale() { sws_freeContext(p); }
 };
+bool writeFramePPM(AVFrame *frame, const std::string &dest) {
+    const int w = frame->width, h = frame->height;
+    if(w <= 0 || h <= 0 || w > 8192 || h > 8192) return false;
+    Scale scale;
+    scale.p = sws_getContext(w, h, static_cast<AVPixelFormat>(frame->format),
+                            w, h, AV_PIX_FMT_RGB24, SWS_BILINEAR,
+                            nullptr, nullptr, nullptr);
+    if(!scale.p) return false;
+    // Align and pad rows for swscale SIMD writes.
+    const int stride = (w * 3 + 31) & ~31;
+    std::vector<unsigned char> rgb(static_cast<size_t>(stride) * h + 64);
+    uint8_t *planes[4] = {rgb.data(), nullptr, nullptr, nullptr};
+    int strides[4] = {stride, 0, 0, 0};
+    if(sws_scale(scale.p, frame->data, frame->linesize, 0, h, planes, strides) != h)
+        return false;
+    // PPM P6 is lossless RGB; no additional image encoder dependency.
+    FILE *out = mediaio::openNew(dest.c_str());
+    if(!out) return false;
+    bool ok = std::fprintf(out, "P6\n%d %d\n255\n", w, h) > 0;
+    for(int y = 0; ok && y < h; ++y)
+        ok = std::fwrite(rgb.data() + static_cast<size_t>(y)*stride, 1, w*3, out)
+             == static_cast<size_t>(w*3);
+    if(std::fclose(out) != 0) ok = false;
+    if(!ok) std::remove(dest.c_str());
+    return ok;
+}
 bool extract(Input &input, const std::string &dest) {
     auto *par = input.ctx->streams[input.video]->codecpar;
     const auto *decoder = avcodec_find_decoder(par->codec_id);
@@ -68,33 +94,82 @@ bool extract(Input &input, const std::string &dest) {
     if(!found && avcodec_send_packet(codec.ctx, nullptr) >= 0)
         found = avcodec_receive_frame(codec.ctx, frame.p) >= 0;
     if(!found) return false;
-    const int w = frame.p->width, h = frame.p->height;
-    if(w <= 0 || h <= 0 || w > 8192 || h > 8192) return false;
-    Scale scale;
-    scale.p = sws_getContext(w, h, static_cast<AVPixelFormat>(frame.p->format),
-                            w, h, AV_PIX_FMT_RGB24, SWS_BILINEAR,
-                            nullptr, nullptr, nullptr);
-    if(!scale.p) return false;
-    // Align and pad rows for swscale SIMD writes.
-    const int stride = (w * 3 + 31) & ~31;
-    std::vector<unsigned char> rgb(static_cast<size_t>(stride) * h + 64);
-    uint8_t *planes[4] = {rgb.data(), nullptr, nullptr, nullptr};
-    int strides[4] = {stride, 0, 0, 0};
-    if(sws_scale(scale.p, frame.p->data, frame.p->linesize, 0, h, planes, strides) != h)
-        return false;
-    // PPM P6 is lossless RGB; no additional image encoder dependency.
-    FILE *out = mediaio::openNew(dest.c_str());
-    if(!out) return false;
-    bool ok = std::fprintf(out, "P6\n%d %d\n255\n", w, h) > 0;
-    for(int y = 0; ok && y < h; ++y)
-        ok = std::fwrite(rgb.data() + static_cast<size_t>(y)*stride, 1, w*3, out)
-             == static_cast<size_t>(w*3);
-    if(std::fclose(out) != 0) ok = false;
-    if(!ok) std::remove(dest.c_str());
-    return ok;
+    return writeFramePPM(frame.p, dest);
 }
 
- // Export video and audio streams without decoding or re-encoding.
+ 
+// Keep completed outputs only when the entire extraction succeeds.
+struct ExtractedFiles {
+    std::vector<std::string> paths;
+    bool complete = false;
+    ~ExtractedFiles() {
+        if(!complete) for(const auto &path : paths) std::remove(path.c_str());
+    }
+};
+// Extract up to limit decoded frames, starting at zero-based frame index start.
+// Return actual count (including a shorter sequence at EOF), or -1 on error.
+int extractSequence(Input &input, const std::string &prefix, int start, int limit) {
+    if(prefix.empty() || start < 0 || limit < 1 || limit > 100000) return -1;
+    auto *stream = input.ctx->streams[input.video];
+    const auto *decoder = avcodec_find_decoder(stream->codecpar->codec_id);
+    if(!decoder) return -1;
+    Codec codec;
+    codec.ctx = avcodec_alloc_context3(decoder);
+    if(!codec.ctx || avcodec_parameters_to_context(codec.ctx, stream->codecpar) < 0)
+        return -1;
+    codec.ctx->pkt_timebase = stream->time_base;
+    if(avcodec_open2(codec.ctx, decoder, nullptr) < 0) return -1;
+    Frame frame;
+    Packet packet;
+    if(!frame.p || !packet.p) return -1;
+    ExtractedFiles outputs;
+    outputs.paths.reserve(static_cast<size_t>(limit));
+    int64_t index = 0;
+    int written = 0;
+    auto drain = [&](bool flushing) {
+        while(written < limit) {
+            const int ret = avcodec_receive_frame(codec.ctx, frame.p);
+            if(ret == AVERROR_EOF) return flushing;
+            if(ret == AVERROR(EAGAIN)) return !flushing;
+            if(ret < 0) return false;
+            if(index++ >= start) {
+                char suffix[32];
+                std::snprintf(suffix, sizeof suffix, "%06d.ppm", written);
+                std::string path = prefix + suffix;
+                // Allocate tracking storage before creating the file.
+                outputs.paths.push_back(path);
+                bool ok;
+                try {
+                    ok = writeFramePPM(frame.p, path);
+                } catch(...) {
+                    outputs.paths.pop_back();
+                    throw;
+                }
+                // Never remove a pre-existing file when exclusive creation fails.
+                if(!ok) { outputs.paths.pop_back(); return false; }
+                ++written;
+            }
+            av_frame_unref(frame.p);
+        }
+        return true;
+    };
+    int ret = 0;
+    while(written < limit && (ret = av_read_frame(input.ctx, packet.p)) >= 0) {
+        if(packet.p->stream_index == input.video) {
+            int sent = avcodec_send_packet(codec.ctx, packet.p);
+            av_packet_unref(packet.p);
+            if(sent < 0 || !drain(false)) return -1;
+        } else av_packet_unref(packet.p);
+    }
+    if(written < limit) {
+        if(ret != AVERROR_EOF || avcodec_send_packet(codec.ctx, nullptr) < 0 ||
+           !drain(true)) return -1;
+    }
+    outputs.complete = true;
+    return written;
+}
+
+// Export video and audio streams without decoding or re-encoding.
  // A custom seekable AVIO writes only to an exclusively created local file.
 int writeBytes(void *opaque, const uint8_t *buf, int size) {
     return std::fwrite(buf, 1, size, static_cast<FILE *>(opaque)) == static_cast<size_t>(size)
@@ -646,6 +721,19 @@ CK_DLL_SFUN(video_transcode) {
                      static_cast<int>(quality))) RETURN->v_int = 1;
     } catch(...) {}
 }
+CK_DLL_SFUN(video_extract_sequence) {
+    RETURN->v_int = -1;
+    try {
+        auto source = GET_NEXT_STRING_SAFE(ARGS);
+        auto prefix = GET_NEXT_STRING_SAFE(ARGS);
+        auto start = GET_NEXT_INT(ARGS);
+        auto limit = GET_NEXT_INT(ARGS);
+        Input in;
+        if(start >= 0 && start <= 2147483647 && limit >= 1 && limit <= 100000 &&
+           in.open(source))
+            RETURN->v_int = extractSequence(in, prefix, static_cast<int>(start), static_cast<int>(limit));
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -688,5 +776,10 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY, "int", "height");
     QUERY->add_arg(QUERY, "string", "codec");
     QUERY->add_arg(QUERY, "int", "quality");
+    QUERY->add_sfun(QUERY, video_extract_sequence, "int", "extractSequence");
+    QUERY->add_arg(QUERY, "string", "source");
+    QUERY->add_arg(QUERY, "string", "prefix");
+    QUERY->add_arg(QUERY, "int", "start");
+    QUERY->add_arg(QUERY, "int", "limit");
     return QUERY->end_class(QUERY);
 }
