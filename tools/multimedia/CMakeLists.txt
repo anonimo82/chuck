@@ -55,3 +55,5 @@ target_link_libraries(VideoIO PRIVATE PkgConfig::AV PkgConfig::SND PkgConfig::TE
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
 chugin(SubtitleIO subtitle/SubtitleIO.cpp)
 target_link_libraries(SubtitleIO PRIVATE PkgConfig::GLIB)
+
+chugin(KeyframeIO keyframe/KeyframeIO.cpp)
