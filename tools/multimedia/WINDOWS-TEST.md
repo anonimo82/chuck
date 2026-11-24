@@ -21,3 +21,7 @@ User-executed build-and-test.ps1 against source revision 9ab46a4d759c0223de273ac
 ## Frame-accurate trimming Windows result — 2026-11-24
 
 User-executed build-and-test.ps1 against source revision ad9fa456ce67c5a03603f4cdec0427ea6719170e (PR #24). ChucK 1.5.5.9 x64, API 10.2, MSYS2 UCRT64. All six Chugins loaded and all 161 smoke checks passed: RasterIO 8, VectorIO 4, ModelIO 6, AudioIO 7, MidiFileIO 5, VideoIO 131. All thirteen new frame-range checks ran, including the conditional H.264 reordered-frame fixture. Independent RGB and timestamp comparisons completed. Final script message: All multimedia smoke tests passed. Frame-accurate trimming currently accepts video-only inputs and outputs FFV1/MKV; sample-accurate audiovisual trimming and broader platform/codec validation remain outstanding.
+
+## Synchronized audiovisual trimming Windows result — 2026-11-24
+
+User-executed build-and-test.ps1 against source revision ee6474e8d8f134b936cd739a0809c25d4a45b1c9 (PRs #25–#26). ChucK 1.5.5.9 x64, API 10.2, MSYS2 UCRT64. All six Chugins loaded and all 176 smoke checks passed: RasterIO 8, VectorIO 4, ModelIO 6, AudioIO 7, MidiFileIO 5, VideoIO 146. All 15 new checks ran, including synchronized PCM trimming and AAC, MP3 and Opus decoding fixtures. Independent RGB, PCM sample and metadata comparisons completed. Final script message: All multimedia smoke tests passed. This validates the tested continuous audio fixtures; arbitrary codec priming, discontinuities, channel layouts, timestamp rounding and other platforms still require broader validation.
