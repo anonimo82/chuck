@@ -14,6 +14,15 @@ try {
     if (!(Test-Path "$bin/cmake.exe")) { throw "Run setup-windows.ps1 first." }
     $env:PATH = "$bin;$MsysRoot\usr\bin;$env:PATH"
     $env:PKG_CONFIG = "$bin/pkg-config.exe"
+    # ImageMagick loads format-specific DLLs dynamically, outside the PE import graph.
+    $coder = Get-ChildItem -Path "$MsysRoot/ucrt64/lib/ImageMagick-*/modules-*/coders" -Directory | Where-Object { Test-Path (Join-Path $_.FullName "png.dll") } | Select-Object -First 1
+    if ($coder) {
+        $env:MAGICK_CODER_MODULE_PATH = $coder.FullName
+        Write-Host "ImageMagick coders: $env:MAGICK_CODER_MODULE_PATH"
+    }
+    $env:MAGICK_HOME = Join-Path $MsysRoot "ucrt64"
+    $config = Join-Path $MsysRoot "ucrt64/etc/ImageMagick-7"
+    if (Test-Path $config) { $env:MAGICK_CONFIGURE_PATH = $config }
     $midi = Join-Path $build "midifile"
     if (!(Test-Path "$midi/include/MidiFile.h")) {
         Run-Native "$MsysRoot/usr/bin/git.exe" @("clone","--depth","1","https://github.com/craigsapp/midifile.git",$midi)
