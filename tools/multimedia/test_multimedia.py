@@ -650,3 +650,25 @@ check(!VideoIO.overlay("multi-audio.mkv", "overlay-blue.mkv", "pip-multi.mkv", 1
     assert audio_samples("pip-silent.mkv",0)==bytes(32000)
     for name in ("pip-bounds.mkv","pip-alpha.mkv","pip-missing.mkv","pip-multi.mkv"):
         assert not (p/name).exists(),name
+
+    # Key out the blue layer (including small YUV-to-RGB rounding errors).
+    run("video", """
+check(VideoIO.composite("trim-av.mkv", "overlay-blue.mkv", "keyed.mkv", 16, 16, 4, 4, 4, 8, 8, 1.0, 8000, 1, 255, 0.02, 0.0, 1.0, 0.0));
+check(VideoIO.composite("trim-av.mkv", "overlay-blue.mkv", "key-other.mkv", 16, 16, 4, 4, 4, 8, 8, 1.0, 8000, 1, 65280, 0.02, 0.0, 1.0, 0.0));
+check(VideoIO.composite("trim-av.mkv", "trim-av.mkv", "mixed-audio.mkv", 16, 16, 4, 0, 0, 16, 16, 0.0, 8000, 1, -1, 0.0, 0.0, 0.25, 0.5));
+check(VideoIO.composite("trim-source.mkv", "trim-av.mkv", "layer-audio.mkv", 16, 16, 4, 0, 0, 16, 16, 0.0, 8000, 1, -1, 0.0, 0.0, 0.0, 1.0));
+check(VideoIO.composite("trim-av.mkv", "trim-av.mkv", "mixed-clipped.mkv", 16, 16, 4, 0, 0, 16, 16, 0.0, 8000, 1, -1, 0.0, 0.0, 4.0, 4.0));
+check(!VideoIO.composite("trim-av.mkv", "overlay-blue.mkv", "bad-key.mkv", 16, 16, 4, 4, 4, 8, 8, 1.0, 8000, 1, 16777216, 0.02, 0.0, 1.0, 0.0));
+check(!VideoIO.composite("trim-av.mkv", "overlay-blue.mkv", "bad-softness.mkv", 16, 16, 4, 4, 4, 8, 8, 1.0, 8000, 1, 255, 0.8, 0.5, 1.0, 0.0));
+check(!VideoIO.composite("trim-av.mkv", "overlay-blue.mkv", "bad-gain.mkv", 16, 16, 4, 4, 4, 8, 8, 1.0, 8000, 1, 255, 0.02, 0.0, 1.0, 5.0));
+check(!VideoIO.composite("trim-av.mkv", "overlay-blue.mkv", "keyed.mkv", 16, 16, 4, 4, 4, 8, 8, 1.0, 8000, 1, 255, 0.02, 0.0, 1.0, 0.0));
+""",9,p)
+    assert decoded("keyed.mkv")==original
+    assert decoded("key-other.mkv")==decoded("pip.mkv")
+    assert audio_samples("keyed.mkv",0)==pcm+pcm2
+    assert decoded("mixed-audio.mkv")==original
+    assert shorts(audio_samples("mixed-audio.mkv",0))==tuple(rounded(v*0.75) for v in shorts(pcm+pcm2))
+    assert audio_samples("layer-audio.mkv",0)==pcm+pcm2
+    assert shorts(audio_samples("mixed-clipped.mkv",0))==tuple(max(-32768,min(32767,v*8)) for v in shorts(pcm+pcm2))
+    for name in ("bad-key.mkv","bad-softness.mkv","bad-gain.mkv"):
+        assert not (p/name).exists(),name
