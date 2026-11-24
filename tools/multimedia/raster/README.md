@@ -37,3 +37,31 @@ brightness 4 0.2 linear
 ```
 
 Optional parameters: red/green/blue multipliers [0,4] (default 1), opacity multiplier [0,1] (default 1), brightness additive offset [-1,1] (default 0). At least one curve required. RGB is converted to sRGB 8-bit, multiplied and offset, clamped and rounded; alpha is multiplied separately. No geometric animation or animated GIF output yet. Up to 10000 frames, 1–120 FPS, source up to 8192 per axis and 16 megapixels. Existing outputs are never overwritten; newly created frames are removed on failure. No extra libraries. Nine new smoke checks and independent FFmpeg RGBA comparisons await execution.
+
+## Persistent RasterImage
+
+```chuck
+@import "RasterIO";
+RasterImage image;
+if(image.load("input.png")) {
+    0.5 => image.opacity;
+    1.2 => image.red;
+    <<< image.save("output.png") >>>;
+}
+```
+
+An image is decoded once and held as straight-alpha sRGB RGBA8 pixels. Each object owns independent data and controls. Methods: load(path), save(path), loaded(), width(), height(), clear(), reset(). Width/height are zero when unloaded. load returns 1 on success and resets controls; a failed load leaves the object unchanged. clear releases pixels and resets controls. reset restores controls without reloading. red(), green(), blue(), opacity(), brightness() are getters and accept a float argument as setters (also usable with ChucK's chuck operator). Ranges and defaults match RasterIO.animate. Invalid setters return NaN without changing the old value. save applies current controls to the original pixels, not the previous output, and uses exclusive file creation. All existing raster output extensions are recognized; lossy formats and formats without alpha may lose precision/transparency. PNG is recommended for exact RGBA output. Source metadata is not retained. Source image limits: 8192 per axis, 16 megapixels. Loading/saving is offline, not real-time audio safe.
+
+```chuck
+@import "RasterIO";
+@import "KeyframeIO";
+RasterImage image;
+KeyframeCurve gain;
+image.load("input.png");
+gain.add(0.0, 1.0, "linear");
+gain.add(2.0, 2.0, "smooth");
+gain.valueAt(1.0) => image.red;
+image.save("frame.png");
+```
+
+RasterImage has no knowledge of curves; it accepts ordinary numbers. The legacy RasterIO.animate uses the same rendering helper. Thirty-three new object and integration smoke checks plus independent RGBA comparisons await execution.
