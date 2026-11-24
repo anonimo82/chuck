@@ -1021,3 +1021,58 @@ check(resident.add(0.0,1.0,"step"));
 check(resident.add(1.0,2.0,"linear"));
 check(resident.valueAt(0.5)==1.0);
 """,5,p)
+
+    # Persistent images receive ordinary numerical parameters, independent of KeyframeIO.
+    run("raster", """
+RasterImage a;
+RasterImage b;
+check(!a.loaded());
+check(a.width()==0 && a.height()==0);
+check(!a.save("unloaded.png"));
+check(a.load("raster-anim.png"));
+check(a.loaded() && a.width()==2 && a.height()==1);
+check(!b.loaded());
+check(a.red()==1.0 && a.green()==1.0 && a.blue()==1.0);
+check(a.opacity()==1.0 && a.brightness()==0.0);
+check(a.red(2.0)==2.0);
+check(a.green(0.5)==0.5);
+check(a.blue(0.5)==0.5);
+check(a.opacity(0.5)==0.5);
+check(a.brightness(0.1)==0.1);
+check(a.save("object-adjusted.png"));
+check(!a.save("object-adjusted.png"));
+check(!a.load("missing.png"));
+check(a.loaded() && a.red()==2.0 && a.opacity()==0.5);
+a.opacity(2.0);
+check(a.opacity()==0.5);
+a.reset();
+check(a.red()==1.0 && a.green()==1.0 && a.blue()==1.0);
+check(a.opacity()==1.0 && a.brightness()==0.0);
+check(a.save("object-reset.png"));
+check(b.load("raster-anim.png"));
+0.5 => b.red;
+check(b.red()==0.5 && a.red()==1.0);
+check(b.save("object-second.png"));
+check(b.load("raster-anim.png") && b.red()==1.0);
+a.clear();
+check(!a.loaded() && a.width()==0 && a.height()==0);
+check(b.loaded());
+check(!a.save("cleared.png"));
+""",28,p)
+    assert rgba_png("object-adjusted.png")==bytes((226,51,26,128,66,46,56,64))
+    assert rgba_png("object-reset.png")==source_rgba
+    assert rgba_png("object-second.png")==bytes((50,50,0,255,10,40,60,128))
+    assert not (p/"unloaded.png").exists() and not (p/"cleared.png").exists()
+    # Explicit composition test: no manifest, no native coupling between the classes.
+    run("raster", """
+@import "KeyframeIO";
+RasterImage image;
+KeyframeCurve gain;
+check(image.load("raster-anim.png"));
+check(gain.add(0.0,1.0,"linear"));
+check(gain.add(2.0,2.0,"linear"));
+gain.valueAt(1.0) => image.red;
+check(image.red()==1.5);
+check(image.save("object-curve.png"));
+""",5,p)
+    assert rgba_png("object-curve.png")==bytes((150,50,0,255,30,40,60,128))
