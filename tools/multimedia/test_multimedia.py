@@ -121,3 +121,25 @@ check(!VideoIO.encodeSequence("seq", "bad-container.webm", 2, 2, "h264", 23));
 """, 4, p)
     for name in ("bad-codec.mkv", "bad-quality.mp4", "bad-container.webm"):
         assert not (p / name).exists(), name
+
+    # Independent PCM fixture, one second, matching the two-frame video.
+    import wave
+    pcm = b"\x00\x10\x00\xf0" * 4000
+    with wave.open(str(p / "sound.wav"), "wb") as wav:
+        wav.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+        wav.writeframes(pcm)
+    run("video", """
+check(VideoIO.muxAudio("generated.mkv", "sound.wav", "audiovisual.mkv"));
+check(VideoIO.width("audiovisual.mkv") == 16);
+check(VideoIO.height("audiovisual.mkv") == 16);
+check(!VideoIO.muxAudio("generated.mkv", "sound.wav", "audiovisual.mkv"));
+check(!VideoIO.muxAudio("generated.mkv", "missing.wav", "missing-audio.mkv"));
+check(!VideoIO.muxAudio("generated.mkv", "generated.mkv", "no-audio.mkv"));
+check(!VideoIO.muxAudio("sound.wav", "sound.wav", "no-video.mkv"));
+check(!VideoIO.muxAudio("generated.mkv", "sound.wav", "unsupported.bin"));
+""", 8, p)
+    for name in ("missing-audio.mkv", "no-audio.mkv", "no-video.mkv", "unsupported.bin"):
+        assert not (p / name).exists(), name
+    assert decoded("audiovisual.mkv") == red + blue
+    audio_bytes = subprocess.check_output(["ffmpeg", "-nostdin", "-v", "error", "-i", str(p / "audiovisual.mkv"), "-map", "0:a:0", "-c:a", "pcm_s16le", "-f", "s16le", "-"], timeout=30)
+    assert audio_bytes == pcm
