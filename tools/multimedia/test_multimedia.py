@@ -388,3 +388,47 @@ check(!VideoIO.concat("trim-source.mkv", "trim-source.mkv", "bad-container.bin")
     for name in ("bad-streams.mkv", "bad-size.mkv", "bad-source.mkv",
                  "bad-second.mkv", "bad-container.bin"):
         assert not (p / name).exists(), name
+
+    # Exact decoded-frame selection, including a non-keyframe in an inter-frame clip.
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-framerate", "2",
+                    "-i", str(p / "trimsrc%06d.ppm"), "-c:v", "ffv1", "-g", "12",
+                    str(p / "inter-source.mkv")], check=True, timeout=30)
+    packets = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                   "-show_packets", "-of", "json", str(p / "inter-source.mkv")], timeout=30))["packets"]
+    assert len(packets) == 4 and "K" not in packets[1]["flags"]
+    run("video", """
+check(VideoIO.trimFrames("inter-source.mkv", "exact.mkv", 1, 2));
+check(VideoIO.trimFrames("inter-source.mkv", "last-frame.mkv", 3, 1));
+check(VideoIO.width("exact.mkv") == 16);
+check(VideoIO.height("exact.mkv") == 16);
+check(!VideoIO.trimFrames("inter-source.mkv", "exact.mkv", 0, 1));
+check(!VideoIO.trimFrames("inter-source.mkv", "short-range.mkv", 3, 2));
+check(!VideoIO.trimFrames("inter-source.mkv", "past-end.mkv", 4, 1));
+check(!VideoIO.trimFrames("inter-source.mkv", "negative-index.mkv", -1, 1));
+check(!VideoIO.trimFrames("inter-source.mkv", "zero-count.mkv", 0, 0));
+check(!VideoIO.trimFrames("trim-av.mkv", "audio-rejected.mkv", 0, 1));
+check(!VideoIO.trimFrames("inter-source.mkv", "wrong-trim.mp4", 0, 1));
+check(!VideoIO.trimFrames("missing.mkv", "missing-exact.mkv", 0, 1));
+""", 12, p)
+    assert decoded("exact.mkv") == blue + red
+    assert decoded("last-frame.mkv") == blue
+    exact_packets = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                   "-show_packets", "-of", "json", str(p / "exact.mkv")], timeout=30))["packets"]
+    assert [float(x["pts_time"]) for x in exact_packets] == [0.0, 0.5]
+    for name in ("short-range.mkv", "past-end.mkv", "negative-index.mkv", "zero-count.mkv",
+                 "audio-rejected.mkv", "wrong-trim.mp4", "missing-exact.mkv"):
+        assert not (p / name).exists(), name
+    if "libx264" in subprocess.check_output(["ffmpeg", "-hide_banner", "-encoders"],
+                                             stderr=subprocess.STDOUT, timeout=30).decode():
+        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-framerate", "2",
+                        "-i", str(p / "trimsrc%06d.ppm"), "-c:v", "libx264", "-g", "12",
+                        "-bf", "2", "-x264-params", "b-adapt=0:scenecut=0", "-pix_fmt", "yuv420p",
+                        str(p / "reordered.mp4")], check=True, timeout=30)
+        run("video", """
+check(VideoIO.trimFrames("reordered.mp4", "reordered-cut.mkv", 1, 2));
+""", 1, p)
+        original = decoded("reordered.mp4")
+        stride = 16 * 16 * 3
+        result = decoded("reordered-cut.mkv")
+        assert len(result) == 2 * stride
+        assert max(abs(x-y) for x,y in zip(result, original[stride:3*stride])) <= 3
