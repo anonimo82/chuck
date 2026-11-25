@@ -2362,3 +2362,54 @@ check(Math.fabs(colorsOut[11]-0.5)<0.00001);
     assert len(skin_doc["skins"][0]["joints"])==2
     attrs=skin_doc["meshes"][0]["primitives"][0]["attributes"]
     assert all(k in attrs for k in ("POSITION","NORMAL","COLOR_0","JOINTS_0","WEIGHTS_0"))
+
+    run("model", """
+Model3D model;
+[0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0] @=> float xyz[];
+[0,1,2] @=> int tris[];
+[1.0,0.0,0.5,0.5,0.0,1.0] @=> float weights[];
+float posed[9];
+float small[3];
+check(model.boneParent(0,0)==-2);
+check(model.createMesh(xyz,tris));
+check(!model.resetPose(0));
+check(model.setSkin(0,2,weights));
+check(model.boneParent(0,0)==-1 && model.boneParent(0,1)==-1);
+check(model.exportPosedVertices(0,posed));
+check(posed[3]==1.0 && posed[7]==1.0);
+check(!model.exportPosedVertices(0,small));
+check(model.setBoneParent(0,1,0));
+check(model.boneParent(0,1)==0);
+check(!model.setBoneParent(0,0,1));
+check(!model.setBoneParent(0,1,1));
+check(model.boneParent(0,0)==-1 && model.boneParent(0,1)==0);
+check(model.setBonePose(0,0,2.0,0.0,0.0,0.0,0.0,0.0));
+check(model.setBonePose(0,1,0.0,2.0,0.0,0.0,0.0,0.0));
+check(model.exportPosedVertices(0,posed));
+check(posed[0]==2.0 && posed[1]==0.0);
+check(posed[3]==3.0 && posed[4]==1.0);
+check(posed[6]==2.0 && posed[7]==3.0);
+check(model.vertexAt(0,1,0)==1.0 && model.vertexAt(0,2,1)==1.0);
+check(model.exportPosedVertices(0,posed) && posed[7]==3.0);
+check(!model.setBonePose(0,2,0.0,0.0,0.0,0.0,0.0,0.0));
+check(model.resetPose(0));
+check(model.exportPosedVertices(0,posed));
+check(posed[0]==0.0 && posed[3]==1.0 && posed[7]==1.0);
+check(model.boneParent(0,1)==0);
+check(model.setBonePose(0,0,0.0,0.0,0.0,0.0,0.0,90.0));
+check(model.exportPosedVertices(0,posed));
+check(Math.fabs(posed[3])<0.00001 && Math.fabs(posed[4]-1.0)<0.00001);
+check(Math.fabs(posed[6]+1.0)<0.00001 && Math.fabs(posed[7])<0.00001);
+check(model.setBoneParent(0,1,-1));
+check(model.exportPosedVertices(0,posed));
+check(Math.fabs(posed[3]-0.5)<0.00001 && Math.fabs(posed[4]-0.5)<0.00001);
+check(model.setBoneParent(0,1,0));
+check(model.resetPose(0));
+check(model.save("hierarchical/model.gltf"));
+""",36,p)
+    hierarchy=json.loads((p/"hierarchical/model.gltf").read_text(encoding="utf-8"))
+    nodes=hierarchy["nodes"]
+    parent=next(i for i,n in enumerate(nodes) if n.get("name")=="Skin_0_0")
+    child=next(i for i,n in enumerate(nodes) if n.get("name")=="Skin_0_1")
+    assert child in nodes[parent]["children"]
+    assert {parent,child}==set(hierarchy["skins"][0]["joints"])

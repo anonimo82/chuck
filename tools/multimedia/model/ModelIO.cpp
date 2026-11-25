@@ -714,6 +714,137 @@ CK_DLL_MFUN(model3d_export_weights) {
     } catch(...) {}
 }
 
+
+namespace {
+// Generated skeletons have identity bind transforms. Pose matrices are local
+// to their parent, and weighted positions are evaluated without mutating rest vertices.
+aiNode *skinNode(ModelState *p,t_CKINT mesh,t_CKINT bone) {
+    auto *m=editableMesh(p,mesh);
+    if(!m||bone<0||static_cast<uint64_t>(bone)>=m->mNumBones) return nullptr;
+    return p->generated->mRootNode->FindNode(m->mBones[bone]->mName);
+}
+bool finiteMatrix(const aiMatrix4x4 &m) {
+    for(unsigned i=0;i<4;++i) for(unsigned j=0;j<4;++j)
+        if(!coordinate(m[i][j])) return false;
+    return true;
+}
+bool skinWorld(ModelState *p,aiNode *node,aiMatrix4x4 &world) {
+    auto *root=p->generated->mRootNode;
+    world=aiMatrix4x4();
+    unsigned depth=0;
+    while(node&&node!=root) {
+        if(++depth>64) return false;
+        world=node->mTransformation*world;
+        if(!finiteMatrix(world)) return false;
+        node=node->mParent;
+    }
+    return node==root;
+}
+}
+CK_DLL_MFUN(model3d_bone_parent) {
+    RETURN->v_int=-2;
+    auto *p=modelState(SELF,API);
+    auto mesh=GET_NEXT_INT(ARGS),bone=GET_NEXT_INT(ARGS);
+    auto *node=skinNode(p,mesh,bone);
+    if(!node) return;
+    if(node->mParent==p->generated->mRootNode) { RETURN->v_int=-1; return; }
+    auto *m=editableMesh(p,mesh);
+    for(unsigned i=0;i<m->mNumBones;++i)
+        if(skinNode(p,mesh,i)==node->mParent) { RETURN->v_int=i; return; }
+}
+CK_DLL_MFUN(model3d_set_bone_parent) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto mesh=GET_NEXT_INT(ARGS),bone=GET_NEXT_INT(ARGS),parent=GET_NEXT_INT(ARGS);
+        auto *node=skinNode(p,mesh,bone);
+        if(!node||parent< -1||parent==bone) return;
+        auto *target=parent==-1?p->generated->mRootNode:skinNode(p,mesh,parent);
+        if(!target) return;
+        // Refuse cycles and preserve local transforms (not world-space pose).
+        for(auto *q=target;q;q=q->mParent) if(q==node) return;
+        auto *old=node->mParent;
+        if(!old) return;
+        if(old==target) { RETURN->v_int=1; return; }
+        auto oldList=std::make_unique<aiNode*[]>(old->mNumChildren-1);
+        auto newList=std::make_unique<aiNode*[]>(target->mNumChildren+1);
+        unsigned n=0;
+        for(unsigned i=0;i<old->mNumChildren;++i)
+            if(old->mChildren[i]!=node) {
+                if(n>=old->mNumChildren-1) return;
+                oldList[n++]=old->mChildren[i];
+            }
+        if(n!=old->mNumChildren-1) return;
+        for(unsigned i=0;i<target->mNumChildren;++i) newList[i]=target->mChildren[i];
+        newList[target->mNumChildren]=node;
+        delete[] old->mChildren; old->mChildren=oldList.release(); --old->mNumChildren;
+        delete[] target->mChildren; target->mChildren=newList.release(); ++target->mNumChildren;
+        node->mParent=target; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_bone_pose) {
+    RETURN->v_int=0;
+    auto *p=modelState(SELF,API);
+    auto mesh=GET_NEXT_INT(ARGS),bone=GET_NEXT_INT(ARGS);
+    auto x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS),z=GET_NEXT_FLOAT(ARGS);
+    auto ax=GET_NEXT_FLOAT(ARGS),ay=GET_NEXT_FLOAT(ARGS),az=GET_NEXT_FLOAT(ARGS);
+    auto *node=skinNode(p,mesh,bone);
+    if(!node||!coordinate(x)||!coordinate(y)||!coordinate(z)||
+       !coordinate(ax)||!coordinate(ay)||!coordinate(az)) return;
+    constexpr double rad=3.14159265358979323846/180.0;
+    aiMatrix4x4 t,rx,ry,rz;
+    aiMatrix4x4::Translation(aiVector3D(x,y,z),t);
+    aiMatrix4x4::RotationX(std::remainder(ax,360.0)*rad,rx);
+    aiMatrix4x4::RotationY(std::remainder(ay,360.0)*rad,ry);
+    aiMatrix4x4::RotationZ(std::remainder(az,360.0)*rad,rz);
+    node->mTransformation=t*rz*ry*rx;
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(model3d_reset_pose) {
+    RETURN->v_int=0;
+    auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS);
+    auto *m=editableMesh(p,mesh);
+    if(!m||!m->HasBones()) return;
+    for(unsigned b=0;b<m->mNumBones;++b) if(!skinNode(p,mesh,b)) return;
+    for(unsigned b=0;b<m->mNumBones;++b) skinNode(p,mesh,b)->mTransformation=aiMatrix4x4();
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(model3d_export_posed) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto *m=editableMesh(p,mesh);
+        if(!m||!m->HasBones()||!a||API->object->array_float_size(a)!=static_cast<int64_t>(m->mNumVertices)*3) return;
+        struct Sum { double x=0,y=0,z=0,w=0; };
+        std::vector<Sum> next(m->mNumVertices);
+        for(unsigned b=0;b<m->mNumBones;++b) {
+            aiMatrix4x4 world;
+            if(!skinWorld(p,skinNode(p,mesh,b),world)) return;
+            world=world*m->mBones[b]->mOffsetMatrix;
+            if(!finiteMatrix(world)) return;
+            for(unsigned j=0;j<m->mBones[b]->mNumWeights;++j) {
+                auto weight=m->mBones[b]->mWeights[j];
+                if(weight.mVertexId>=m->mNumVertices||!unit(weight.mWeight)) return;
+                auto v=world*m->mVertices[weight.mVertexId];
+                auto &q=next[weight.mVertexId];
+                q.x+=double(v.x)*weight.mWeight; q.y+=double(v.y)*weight.mWeight;
+                q.z+=double(v.z)*weight.mWeight; q.w+=weight.mWeight;
+            }
+        }
+        for(auto &q:next) {
+            if(q.w<=0||!coordinate(q.x/q.w)||!coordinate(q.y/q.w)||!coordinate(q.z/q.w)) return;
+        }
+        for(unsigned i=0;i<m->mNumVertices;++i) {
+            auto q=next[i];
+            API->object->array_float_set_idx(a,3*i,q.x/q.w);
+            API->object->array_float_set_idx(a,3*i+1,q.y/q.w);
+            API->object->array_float_set_idx(a,3*i+2,q.z/q.w);
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+
 CK_DLL_QUERY(ModelIO) {
     QUERY->setname(QUERY, "ModelIO");
     QUERY->begin_class(QUERY, "ModelIO", "Object");
@@ -853,5 +984,26 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_export_weights,"int","exportWeights");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"float[]","weights");
+    QUERY->add_mfun(QUERY,model3d_bone_parent,"int","boneParent");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"int","bone");
+    QUERY->add_mfun(QUERY,model3d_set_bone_parent,"int","setBoneParent");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"int","bone");
+    QUERY->add_arg(QUERY,"int","parent");
+    QUERY->add_mfun(QUERY,model3d_bone_pose,"int","setBonePose");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"int","bone");
+    QUERY->add_arg(QUERY,"float","x");
+    QUERY->add_arg(QUERY,"float","y");
+    QUERY->add_arg(QUERY,"float","z");
+    QUERY->add_arg(QUERY,"float","rotationX");
+    QUERY->add_arg(QUERY,"float","rotationY");
+    QUERY->add_arg(QUERY,"float","rotationZ");
+    QUERY->add_mfun(QUERY,model3d_reset_pose,"int","resetPose");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_mfun(QUERY,model3d_export_posed,"int","exportPosedVertices");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"float[]","xyz");
     return QUERY->end_class(QUERY);
 }
