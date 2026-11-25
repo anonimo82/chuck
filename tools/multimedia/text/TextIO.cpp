@@ -1752,7 +1752,7 @@ struct NativeReader {
         b.paddingLeft=real(0,512); b.paddingRight=real(0,512); b.paddingTop=real(0,512); b.paddingBottom=real(0,512);
         b.borderWidth=real(0,128); b.borderColor=color(false); b.backgroundColor=color(true); b.opacity=real(0,1);
         auto &l=v.list;
-        l.marker=str(256); l.mode=bounded(0,3); l.number=bounded(1,999999); l.level=bounded(0,16);
+        l.marker=str(64); if(l.marker.find_first_of("\r\n\t")!=std::string::npos) ok=false; l.mode=bounded(0,3); l.number=bounded(1,999999); l.level=bounded(0,16);
         l.levelIndent=real(0,128); l.markerWidth=real(1,512);
         return ok&&!l.marker.empty();
     }
