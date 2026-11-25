@@ -71,6 +71,7 @@
     "transport-video-buffer",
     "transport-audio-video",
     "transport-av-consolidation",
-    "transport-text"
+    "transport-text",
+    "transport-text-fragments"
   ]
 }

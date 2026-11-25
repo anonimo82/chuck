@@ -1,6 +1,7 @@
 {
   "version": 1,
   "groups": [
-    "transport-text"
+    "transport-text",
+    "transport-text-fragments"
   ]
 }

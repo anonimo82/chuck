@@ -8,6 +8,7 @@
 #include "MediaAudioVideo.h"
 #include "MediaAVPacket.h"
 #include "MediaText.h"
+#include "MediaTextFragment.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -1038,6 +1039,74 @@ CK_DLL_SFUN(tx_decode) {
     } catch(...) {}
     RETURN->v_string=API->object->create_string(VM,result.c_str(),FALSE);
 }
+namespace {
+t_CKUINT textAssemblerOffset=0;
+mediawire::TextAssembler *textAssembler(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<mediawire::TextAssembler*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,textAssemblerOffset)));
+}
+}
+CK_DLL_SFUN(tf_size) {
+    RETURN->v_int=mediawire::fragmentPacketSize(GET_NEXT_INT(ARGS));
+}
+CK_DLL_SFUN(tf_encode) {
+    RETURN->v_int=0;
+    try {
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS);
+        auto first=GET_NEXT_INT(ARGS),offset=GET_NEXT_INT(ARGS),count=GET_NEXT_INT(ARGS);
+        auto text=GET_NEXT_STRING_SAFE(ARGS);
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(stream<1||static_cast<uint64_t>(stream)>=0xffffffffu||seq<0||
+           static_cast<uint64_t>(seq)>0xffffffffu||ts<0||first<0||first>seq||
+           offset<0||count<=0||text.size()>mediawire::maxTextMessage||
+           static_cast<uint64_t>(offset)>=text.size()||
+           static_cast<uint64_t>(count)>text.size()-static_cast<size_t>(offset))return;
+        auto n=mediawire::fragmentPacketSize(count);
+        if(!n||!exact(dst,API,n))return;
+        mediawire::Bytes data(text.begin(),text.end()),wire;
+        if(!mediawire::textUtf8(data))return;
+        mediawire::Bytes part(data.begin()+offset,data.begin()+offset+count);
+        if(mediawire::encodeTextFragment({7,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},
+             static_cast<uint32_t>(data.size()),static_cast<uint32_t>(offset),static_cast<uint32_t>(first),part,wire)){
+            write(dst,API,wire);RETURN->v_int=1;
+        }
+    }catch(...){}
+}
+CK_DLL_SFUN(tf_inspect) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Header h;mediawire::Bytes wire,data;uint32_t t,o,f;
+        if(!exact(dst,API,7)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeTextFragment(wire,h,t,o,f,data))return;
+        const uint64_t fields[]={h.stream,h.sequence,h.timestamp,f,t,o,data.size()};
+        for(size_t i=0;i<7;++i)API->object->array_int_set_idx(dst,i,fields[i]);
+        RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_CTOR(ta_ctor) {
+    OBJ_MEMBER_UINT(SELF,textAssemblerOffset)=0;
+    try{OBJ_MEMBER_UINT(SELF,textAssemblerOffset)=reinterpret_cast<uintptr_t>(new mediawire::TextAssembler);}catch(...){}
+}
+CK_DLL_DTOR(ta_dtor) {
+    delete textAssembler(SELF,API);OBJ_MEMBER_UINT(SELF,textAssemblerOffset)=0;
+}
+CK_DLL_MFUN(ta_reset) {if(auto *p=textAssembler(SELF,API))p->reset();}
+CK_DLL_MFUN(ta_size) {auto *p=textAssembler(SELF,API);RETURN->v_int=p?p->size():0;}
+CK_DLL_MFUN(ta_ready) {auto *p=textAssembler(SELF,API);RETURN->v_int=p&&p->ready();}
+CK_DLL_MFUN(ta_push) {
+    RETURN->v_int=0;
+    try{
+        auto *p=textAssembler(SELF,API);auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;
+        if(p&&read(src,API,mediawire::headerSize+mediawire::maxPayload,wire))RETURN->v_int=p->push(wire);
+    }catch(...){}
+}
+CK_DLL_MFUN(ta_text) {
+    std::string result;
+    try{auto *p=textAssembler(SELF,API);if(p&&p->ready())result.assign(p->data().begin(),p->data().end());}catch(...){}
+    RETURN->v_string=API->object->create_string(VM,result.c_str(),FALSE);
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -1557,6 +1626,34 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_sfun(QUERY,tx_decode,"string","decode");
     QUERY->add_arg(QUERY,"int[]","packet");
     if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaTextFragment","Object");
+    QUERY->add_sfun(QUERY,tf_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","bytes");
+    QUERY->add_sfun(QUERY,tf_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","firstSequence");
+    QUERY->add_arg(QUERY,"int","offset");
+    QUERY->add_arg(QUERY,"int","count");
+    QUERY->add_arg(QUERY,"string","text");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,tf_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaTextAssembler","Object");
+    textAssemblerOffset=QUERY->add_mvar(QUERY,"int","@textAssemblerNative",FALSE);
+    if(textAssemblerOffset==CK_INVALID_OFFSET)return FALSE;
+    QUERY->add_ctor(QUERY,ta_ctor);
+    QUERY->add_dtor(QUERY,ta_dtor);
+    QUERY->add_mfun(QUERY,ta_reset,"void","reset");
+    QUERY->add_mfun(QUERY,ta_size,"int","size");
+    QUERY->add_mfun(QUERY,ta_ready,"int","ready");
+    QUERY->add_mfun(QUERY,ta_push,"int","push");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,ta_text,"string","text");
+    if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaGraphics","Object");
     QUERY->add_sfun(QUERY,gr_inspect,"int","inspect");
     QUERY->add_arg(QUERY,"int[]","packet");
