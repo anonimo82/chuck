@@ -1,4 +1,4 @@
-param([string]$MsysRoot = "C:\msys64", [string]$ChuckExe = "")
+param([string]$MsysRoot = "C:\msys64", [string]$ChuckExe = "", [string]$CMakeExe = "")
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $build = Join-Path $root "build/multimedia-windows"
@@ -11,7 +11,18 @@ function Run-Native {
 }
 try {
     $bin = Join-Path $MsysRoot "ucrt64/bin"
-    if (!(Test-Path "$bin/cmake.exe")) { throw "Run setup-windows.ps1 first." }
+    if (!$CMakeExe) {
+        $nativeCMake = Join-Path $env:ProgramFiles "CMake/bin/cmake.exe"
+        if (Test-Path -LiteralPath $nativeCMake -PathType Leaf) { $CMakeExe = $nativeCMake }
+        else { $CMakeExe = "$bin/cmake.exe" }
+    }
+    if (!(Test-Path -LiteralPath $CMakeExe -PathType Leaf)) { throw "CMake not found: $CMakeExe" }
+    $CMakeExe = (Resolve-Path -LiteralPath $CMakeExe).Path
+    Write-Host "CMake: $CMakeExe"
+    Run-Native $CMakeExe @("--version")
+    foreach ($tool in @("g++.exe","ninja.exe","pkg-config.exe")) {
+        if (!(Test-Path "$bin/$tool")) { throw "Missing $bin/$tool. Run setup-windows.ps1 first." }
+    }
     $env:PATH = "$bin;$MsysRoot\usr\bin;$env:PATH"
     $env:PKG_CONFIG = "$bin/pkg-config.exe"
     # ImageMagick loads format-specific DLLs dynamically, outside the PE import graph.
@@ -28,9 +39,9 @@ try {
         Run-Native "$MsysRoot/usr/bin/git.exe" @("clone","--depth","1","https://github.com/craigsapp/midifile.git",$midi)
     }
     Run-Native "$MsysRoot/usr/bin/git.exe" @("-C",$midi,"rev-parse","HEAD")
-    Run-Native "$bin/cmake.exe" @("-S",$PSScriptRoot,"-B","$build/native","-G","Ninja","-DCMAKE_CXX_COMPILER=$bin/g++.exe","-DMIDIFILE_SOURCE_DIR=$midi","-DCMAKE_BUILD_TYPE=Release")
-    Run-Native "$bin/cmake.exe" @("--build","$build/native")
-    Run-Native "$bin/cmake.exe" @("--install","$build/native","--prefix","$build/install")
+    Run-Native $CMakeExe @("-S",$PSScriptRoot,"-B","$build/native","-G","Ninja","-DCMAKE_CXX_COMPILER=$bin/g++.exe","-DCMAKE_MAKE_PROGRAM=$bin/ninja.exe","-DPKG_CONFIG_EXECUTABLE=$bin/pkg-config.exe","-DMIDIFILE_SOURCE_DIR=$midi","-DCMAKE_BUILD_TYPE=Release")
+    Run-Native $CMakeExe @("--build","$build/native")
+    Run-Native $CMakeExe @("--install","$build/native","--prefix","$build/install")
     if (!$ChuckExe) {
         $candidate = Join-Path $root "src/visual-studio/x64/Release/chuck.exe"
         if (Test-Path $candidate) { $ChuckExe = $candidate }
