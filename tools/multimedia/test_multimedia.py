@@ -6487,8 +6487,70 @@ check(flow.saveNative("interop.ckflow"));
         assert (p / "interop.cktxt").read_bytes().startswith(b"CKTXTDOC")
         assert (p / "interop.ckflow").read_bytes().startswith(b"CKTXFLOW")
 
+
+def text_flow_performance():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextFlow flow;
+TextFrame frame;
+TextStyle style;
+TextRun run;
+check(style.fontSize(16)==16);
+check(flow.setText("café\\n",style));
+check(run.set("second\\nthird",style));
+check(flow.appendRun(run));
+check(frame.setGeometry(0,0,200,25));
+check(flow.appendFrame(frame));
+check(frame.height(1)==1);
+check(flow.appendFrame(frame));
+check(frame.height(25)==25);
+check(flow.appendFrame(frame));
+check(flow.appendFrame(frame));
+check(flow.appendFrame(frame));
+check(flow.layout());
+check(flow.frameStartByte(0)==0 && flow.frameEndByte(0)==6);
+check(flow.frameStartByte(1)==6 && flow.frameEndByte(1)==6);
+check(flow.frameStartByte(2)==6 && flow.frameEndByte(2)==13);
+check(flow.frameStartByte(3)==13 && flow.frameEndByte(3)==18);
+check(flow.frameStartByte(4)==18 && flow.frameEndByte(4)==18);
+check(flow.frameText(0)=="café\\n");
+check(flow.frameText(1)=="");
+check(flow.frameText(2)=="second\\n");
+check(flow.frameText(3)=="third");
+check(flow.frameText(4)=="");
+check(flow.overflowBytes()==0);
+check(flow.layout());
+check(flow.frameEndByte(3)==18);
+check(flow.removeFrame(2));
+check(flow.ready()==0);
+check(flow.frameStartByte(0)==-1 && flow.frameEndByte(0)==-1);
+check(flow.frameText(0)=="");
+check(flow.layout());
+check(flow.frameText(2)=="second\\n");
+check(flow.frameText(3)=="third");
+flow.clearFrames();
+check(flow.setText("x",style));
+check(frame.setGeometry(0,0,200,1));
+for(0=>int i;i<255;i++) flow.appendFrame(frame);
+check(frame.height(100)==100);
+check(flow.appendFrame(frame));
+check(flow.frameCount()==256);
+check(flow.layout());
+check(flow.frameStartByte(254)==0 && flow.frameEndByte(254)==0);
+check(flow.frameStartByte(255)==0 && flow.frameEndByte(255)==1);
+check(flow.frameText(255)=="x");
+check(flow.overflowBytes()==0);
+check(flow.frameStartByte(256)==-1);
+check(flow.setText("",style));
+check(flow.layout());
+check(flow.frameStartByte(255)==0 && flow.frameEndByte(255)==0);
+check(flow.frameText(255)=="");
+check(flow.overflowBytes()==0);
+""",49,p)
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
