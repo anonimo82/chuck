@@ -7663,8 +7663,79 @@ check(buffer.bytes()==0);
 check(!buffer.deleteForward());
 """,64,p)
 
+
+def text_capture_integration():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", r"""
+TextCapture capture;
+TextStyle style;
+TextDocument doc;
+TextFlow flow;
+check(!capture.inputKey(8));
+check(!capture.inputKey(27));
+check(!capture.inputKey(233));
+check(capture.inputKey(65));
+check(capture.insertCodepoint(233));
+check(capture.inputKey(127));
+check(capture.text()=="A");
+check(capture.inputKey(13));
+check(capture.insert("Ω😀"));
+check(capture.inputKey(10));
+check(capture.inputKey(9));
+check(capture.inputKey(66));
+check(capture.text()=="A\nΩ😀\n\tB");
+check(capture.lines()==3);
+check(capture.seek(2));
+check(flow.importCapture(capture,style));
+check(flow.sourceText()==capture.text());
+check(flow.selectionAnchor()==2);
+check(flow.selectionFocus()==2);
+check(doc.addParagraph("prefix",style));
+check(doc.appendCapture(capture,style));
+check(doc.paragraphCount()==4);
+check(doc.paragraphText(0)=="prefix");
+check(doc.paragraphText(1)=="A");
+check(doc.paragraphText(2)=="Ω😀");
+check(doc.paragraphText(3)=="\tB");
+check(capture.insert("X"));
+check(flow.sourceText()=="A\nΩ😀\n\tB");
+check(doc.paragraphText(2)=="Ω😀");
+check(doc.saveTXT("capture.txt"));
+TextDocument loaded;
+check(loaded.loadTXT("capture.txt"));
+check(loaded.paragraphCount()==4);
+check(loaded.paragraphText(2)=="Ω😀");
+capture.clear();
+check(capture.insert("one\r\ntwo\rthree\n"));
+check(doc.appendCapture(capture,style));
+check(doc.paragraphCount()==8);
+check(doc.paragraphText(4)=="one");
+check(doc.paragraphText(5)=="two");
+check(doc.paragraphText(6)=="three");
+check(doc.paragraphText(7)=="");
+capture.clear();
+check(flow.importCapture(capture,style));
+check(flow.sourceText()=="");
+check(flow.selectionFocus()==0);
+check(doc.appendCapture(capture,style));
+check(doc.paragraphCount()==9);
+check(doc.paragraphText(8)=="");
+check(capture.insert("ok"));
+check(flow.importCapture(capture,style));
+check(flow.selectionFocus()==2);
+check(capture.inputKey(8));
+check(capture.text()=="o");
+check(flow.sourceText()=="ok");
+check(!capture.inputKey(-1));
+check(capture.cursor()==1);
+check(capture.inputKey(32));
+check(capture.text()=="o ");
+""",56,p)
+        assert (p / "capture.txt").read_text(encoding="utf-8") == "prefix\nA\nΩ😀\n\tB"
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
