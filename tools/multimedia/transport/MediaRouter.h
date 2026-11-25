@@ -8,12 +8,12 @@
 
 namespace mediawire {
 // Stable kind identifiers: raster, raster fragment, vector, model, PCM, MIDI,
-// video frame, video fragment, text, text fragment.
+// video frame, video fragment, text, text fragment, compressed raster.
 inline int inspectMedia(const Bytes &wire,std::array<uint64_t,6> &out) {
     Header h;Bytes payload;
     if(!decode(wire,h,payload)||h.stream==0xffffffffu)return 0;
     int kind=0;
-    if(h.type<=3){uint64_t a=0,b=0;kind=graphicsKind(wire,h,a,b);}
+    if(h.type<=3){uint64_t a=0,b=0;kind=graphicsKind(wire,h,a,b);if(kind==5)kind=11;}
     else if(h.type==4||h.type==6){
         std::array<uint64_t,9> m{};
         int av=inspectAV(wire,m);
