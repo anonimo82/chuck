@@ -62,9 +62,10 @@ double listSpace(const ListStyle &p) { return p.mode?p.level*p.levelIndent+p.mar
 struct Paragraph { std::string text; Style style; size_t baseBytes=0; std::vector<Run> runs; ParagraphStyle layout; Container box; ListStyle list; };
 // Value-owned tree: children are snapshots, not references to VM objects.
 struct Node {
-    int kind=0; // 0 group, 1 paragraph, 2 decorated container, 3 table
+    int kind=0; // 0 group, 1 paragraph, 2 decorated container, 3 table, 4 grid, 5 list
     Paragraph paragraph;
     double gap=0;
+    int columnGap=0,rowGap=0;
     int rows=0,cols=0;
     std::vector<double> weights;
     std::vector<Node> children;
@@ -76,7 +77,7 @@ bool nodeStats(const Node &n,NodeStats &out,int depth=1) {
     if(n.paragraph.text.size()>1048576-out.bytes) return false;
     out.bytes+=n.paragraph.text.size();
     if(n.kind==1&&!n.children.empty()) return false;
-    if(n.kind==3&&(n.rows<1||n.cols<1||n.children.size()!=static_cast<size_t>(n.rows*n.cols)||n.weights.size()!=static_cast<size_t>(n.cols))) return false;
+    if((n.kind==3||n.kind==4)&&(n.rows<1||n.cols<1||n.children.size()!=static_cast<size_t>(n.rows*n.cols)||n.weights.size()!=static_cast<size_t>(n.cols))) return false;
     for(const auto &child:n.children) if(!nodeStats(child,out,depth+1)) return false;
     return true;
 }
@@ -845,7 +846,7 @@ CK_DLL_MFUN(text_node_copy) {
 }
 namespace {
 bool changeNodeChild(Node *n,t_CKINT index,const Node *child,bool replace) {
-    if(!n||!child||n==child||(n->kind!=0&&n->kind!=2)||index<0) return false;
+    if(!n||!child||n==child||(n->kind!=0&&n->kind!=2&&n->kind!=5)||index<0) return false;
     if(static_cast<uint64_t>(index)>n->children.size()||(replace&&static_cast<uint64_t>(index)==n->children.size())) return false;
     NodeStats st;
     if(!nodeStats(*n,st)) return false;
@@ -883,7 +884,7 @@ CK_DLL_MFUN(text_node_get) {
 CK_DLL_MFUN(text_node_remove) {
     RETURN->v_int=0;
     auto *n=nodeState(SELF,API); auto i=GET_NEXT_INT(ARGS);
-    if(nodeChildOK(n,i)&&n->kind!=3) { n->children.erase(n->children.begin()+i); RETURN->v_int=1; }
+    if(nodeChildOK(n,i)&&n->kind!=3&&n->kind!=4) { n->children.erase(n->children.begin()+i); RETURN->v_int=1; }
 }
 CK_DLL_MFUN(text_node_set_container) {
     RETURN->v_int=0;
@@ -922,10 +923,10 @@ CK_DLL_MFUN(text_node_get_style) {
 CK_DLL_MFUN(text_node_set_gap) {
     RETURN->v_float=-1;
     auto *n=nodeState(SELF,API); double gap=GET_NEXT_FLOAT(ARGS);
-    if(n&&(n->kind==0||n->kind==2)&&std::isfinite(gap)&&gap>=0&&gap<=512) RETURN->v_float=n->gap=gap;
+    if(n&&(n->kind==0||n->kind==2||n->kind==5)&&std::isfinite(gap)&&gap>=0&&gap<=512) RETURN->v_float=n->gap=gap;
 }
 CK_DLL_MFUN(text_node_get_gap) {
-    auto *n=nodeState(SELF,API); RETURN->v_float=n&&(n->kind==0||n->kind==2)?n->gap:-1;
+    auto *n=nodeState(SELF,API); RETURN->v_float=n&&(n->kind==0||n->kind==2||n->kind==5)?n->gap:-1;
 }
 CK_DLL_MFUN(text_node_set_text) {
     RETURN->v_int=0;
@@ -938,7 +939,7 @@ CK_DLL_MFUN(text_node_set_text) {
 }
 namespace {
 bool nodeCellOK(const Node *n,t_CKINT r,t_CKINT c) {
-    return n&&n->kind==3&&r>=0&&c>=0&&r<n->rows&&c<n->cols;
+    return n&&(n->kind==3||n->kind==4)&&r>=0&&c>=0&&r<n->rows&&c<n->cols;
 }
 bool replaceNodeCell(Node *n,t_CKINT r,t_CKINT c,const Node *child) {
     if(!nodeCellOK(n,r,c)||!child||n==child) return false;
@@ -965,8 +966,8 @@ CK_DLL_MFUN(text_node_create_table) {
         *n=std::move(next); RETURN->v_int=1;
     } catch(...) {}
 }
-CK_DLL_MFUN(text_node_rows) { auto *n=nodeState(SELF,API); RETURN->v_int=n&&n->kind==3?n->rows:0; }
-CK_DLL_MFUN(text_node_columns) { auto *n=nodeState(SELF,API); RETURN->v_int=n&&n->kind==3?n->cols:0; }
+CK_DLL_MFUN(text_node_rows) { auto *n=nodeState(SELF,API); RETURN->v_int=n&&(n->kind==3||n->kind==4)?n->rows:0; }
+CK_DLL_MFUN(text_node_columns) { auto *n=nodeState(SELF,API); RETURN->v_int=n&&(n->kind==3||n->kind==4)?n->cols:0; }
 CK_DLL_MFUN(text_node_set_cell) {
     RETURN->v_int=0;
     try {
@@ -983,12 +984,69 @@ CK_DLL_MFUN(text_node_get_cell) {
 }
 CK_DLL_MFUN(text_node_weight_get) {
     auto *n=nodeState(SELF,API); auto c=GET_NEXT_INT(ARGS);
-    RETURN->v_float=n&&n->kind==3&&c>=0&&c<n->cols?n->weights[c]:-1;
+    RETURN->v_float=n&&(n->kind==3||n->kind==4)&&c>=0&&c<n->cols?n->weights[c]:-1;
 }
 CK_DLL_MFUN(text_node_weight_set) {
     RETURN->v_float=-1;
     auto *n=nodeState(SELF,API); auto c=GET_NEXT_INT(ARGS); double w=GET_NEXT_FLOAT(ARGS);
-    if(n&&n->kind==3&&c>=0&&c<n->cols&&std::isfinite(w)&&w>=0.01&&w<=100) RETURN->v_float=n->weights[c]=w;
+    if(n&&(n->kind==3||n->kind==4)&&c>=0&&c<n->cols&&std::isfinite(w)&&w>=0.01&&w<=100) RETURN->v_float=n->weights[c]=w;
+}
+CK_DLL_MFUN(text_node_create_grid) {
+    RETURN->v_int=0;
+    try {
+        auto *n=nodeState(SELF,API); auto r=GET_NEXT_INT(ARGS),c=GET_NEXT_INT(ARGS);
+        if(!n||r<1||r>256||c<1||c>32||r*c>1024) return;
+        Node next; next.kind=4; next.rows=r; next.cols=c;
+        next.weights.assign(c,1.0); next.children.resize(r*c);
+        *n=std::move(next); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_node_create_list) {
+    RETURN->v_int=0;
+    try {
+        auto *n=nodeState(SELF,API); auto *ls=listState(GET_NEXT_OBJECT(ARGS),API);
+        if(!n||!ls||ls->mode==0) return;
+        Node next; next.kind=5; next.paragraph.list=*ls;
+        *n=std::move(next); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_node_set_list) {
+    RETURN->v_int=0;
+    try {
+        auto *n=nodeState(SELF,API); auto *ls=listState(GET_NEXT_OBJECT(ARGS),API);
+        if(!n||!ls||(n->kind!=1&&n->kind!=5)||(n->kind==5&&ls->mode==0)) return;
+        ListStyle copy=*ls; n->paragraph.list=std::move(copy); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_node_get_list) {
+    RETURN->v_int=0;
+    try {
+        auto *n=nodeState(SELF,API); auto *ls=listState(GET_NEXT_OBJECT(ARGS),API);
+        if(!n||!ls||(n->kind!=1&&n->kind!=5)) return;
+        ListStyle copy=n->paragraph.list; *ls=std::move(copy); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_node_item_label) {
+    std::string label;
+    try {
+        auto *n=nodeState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+        if(n&&n->kind==5&&nodeChildOK(n,i)) {
+            ListStyle ls=n->paragraph.list;
+            if(ls.mode==2) ls.number+=i;
+            label=listLabel(ls);
+        }
+    } catch(...) {}
+    RETURN->v_string=API->object->create_string(VM,label.c_str(),FALSE);
+}
+CK_DLL_MFUN(text_node_columnGap_get) { auto *n=nodeState(SELF,API); RETURN->v_int=n&&n->kind==4?n->columnGap:-1; }
+CK_DLL_MFUN(text_node_columnGap_set) {
+    RETURN->v_int=-1; auto *n=nodeState(SELF,API); auto v=GET_NEXT_INT(ARGS);
+    if(n&&n->kind==4&&v>=0&&v<=512) RETURN->v_int=n->columnGap=v;
+}
+CK_DLL_MFUN(text_node_rowGap_get) { auto *n=nodeState(SELF,API); RETURN->v_int=n&&n->kind==4?n->rowGap:-1; }
+CK_DLL_MFUN(text_node_rowGap_set) {
+    RETURN->v_int=-1; auto *n=nodeState(SELF,API); auto v=GET_NEXT_INT(ARGS);
+    if(n&&n->kind==4&&v>=0&&v<=512) RETURN->v_int=n->rowGap=v;
 }
 namespace {
 using LayoutPtr=std::unique_ptr<PangoLayout,decltype(&g_object_unref)>;
@@ -1640,6 +1698,24 @@ CK_DLL_QUERY(TextIO) {
     if(nodeOffset==CK_INVALID_OFFSET) return FALSE;
     QUERY->add_ctor(QUERY,text_node_ctor); QUERY->add_dtor(QUERY,text_node_dtor);
     QUERY->add_mfun(QUERY,text_node_kind,"int","kind");
+    QUERY->add_mfun(QUERY,text_node_create_grid,"int","createGrid");
+    QUERY->add_arg(QUERY,"int","rows");
+    QUERY->add_arg(QUERY,"int","columns");
+    QUERY->add_mfun(QUERY,text_node_create_list,"int","createList");
+    QUERY->add_arg(QUERY,"TextList","style");
+    QUERY->add_mfun(QUERY,text_node_set_list,"int","setList");
+    QUERY->add_arg(QUERY,"TextList","style");
+    QUERY->add_mfun(QUERY,text_node_get_list,"int","getList");
+    QUERY->add_arg(QUERY,"TextList","style");
+    QUERY->add_mfun(QUERY,text_node_item_label,"string","itemLabel");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_node_columnGap_get,"int","columnGap");
+    QUERY->add_mfun(QUERY,text_node_columnGap_set,"int","columnGap");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_node_rowGap_get,"int","rowGap");
+    QUERY->add_mfun(QUERY,text_node_rowGap_set,"int","rowGap");
+    QUERY->add_arg(QUERY,"int","value");
+
     QUERY->add_mfun(QUERY,text_node_create_table,"int","createTable");
     QUERY->add_arg(QUERY,"int","rows");
     QUERY->add_arg(QUERY,"int","columns");
