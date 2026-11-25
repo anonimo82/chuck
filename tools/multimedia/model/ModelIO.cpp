@@ -1,5 +1,6 @@
 // Optional synchronous model I/O for ChucK.
 #include "chuck_dl.h"
+#include "../file_compat.h"
 #include <assimp/Importer.hpp>
 #include <assimp/Exporter.hpp>
 #include <assimp/scene.h>
@@ -683,6 +684,83 @@ CK_DLL_MFUN(model3d_base_texture_path) {
         result=externalBaseTexture(modelState(SELF,API),index,slot);
     } catch(...) {}
     RETURN->v_string=API->object->create_string(VM,result.c_str(),FALSE);
+}
+namespace {
+const aiTexture *embeddedBaseTexture(ModelState *p,t_CKINT index,t_CKINT slot) {
+    auto *m=materialByIndex(p,index);
+    if(!m||slot<0) return nullptr;
+    auto kind=m->GetTextureCount(aiTextureType_BASE_COLOR)?aiTextureType_BASE_COLOR:aiTextureType_DIFFUSE;
+    if(static_cast<uint64_t>(slot)>=m->GetTextureCount(kind)) return nullptr;
+    aiString value;
+    unsigned uvIndex=0;
+    aiTextureMapping mapping=aiTextureMapping_UV;
+    if(m->GetTexture(kind,static_cast<unsigned>(slot),&value,&mapping,&uvIndex)!=AI_SUCCESS||
+       mapping!=aiTextureMapping_UV||uvIndex!=0) return nullptr;
+    return p->scene->GetEmbeddedTexture(value.C_Str());
+}
+// Compressed payloads are copied verbatim; raw texels are encoded as PPM
+// only when opaque (PPM cannot preserve alpha).
+std::string embeddedFormat(const aiTexture *tex) {
+    if(!tex||!tex->pcData||!tex->mWidth) return {};
+    if(tex->mHeight) {
+        uint64_t count=uint64_t(tex->mWidth)*tex->mHeight;
+        if(count>16000000) return {};
+        for(uint64_t i=0;i<count;++i) if(tex->pcData[i].a!=255) return {};
+        return "ppm";
+    }
+    if(tex->mWidth>64*1024*1024) return {};
+    const auto *bytes=reinterpret_cast<const unsigned char*>(tex->pcData);
+    if(tex->mWidth>=8&&bytes[0]==137&&bytes[1]==80&&bytes[2]==78&&bytes[3]==71&&
+       bytes[4]==13&&bytes[5]==10&&bytes[6]==26&&bytes[7]==10) return "png";
+    if(tex->mWidth>=3&&bytes[0]==255&&bytes[1]==216&&bytes[2]==255) return "jpg";
+    return {};
+}
+bool writeEmbedded(const aiTexture *tex,const std::string &path) {
+    auto format=embeddedFormat(tex);
+    if(format.empty()) return false;
+    auto ext=extension(path);
+    if(ext!="."+format&&!(format=="jpg"&&ext==".jpeg")) return false;
+    // Prepare allocations before reserving the destination.
+    std::vector<unsigned char> rgb;
+    std::string header;
+    if(tex->mHeight) {
+        auto count=uint64_t(tex->mWidth)*tex->mHeight;
+        rgb.resize(count*3);
+        for(uint64_t i=0;i<count;++i) {
+            rgb[3*i]=tex->pcData[i].r; rgb[3*i+1]=tex->pcData[i].g; rgb[3*i+2]=tex->pcData[i].b;
+        }
+        header="P6\n"+std::to_string(tex->mWidth)+" "+std::to_string(tex->mHeight)+"\n255\n";
+    }
+    FILE *file=mediaio::openNew(path.c_str());
+    if(!file) return false;
+    bool ok;
+    if(tex->mHeight) {
+        ok=std::fwrite(header.data(),1,header.size(),file)==header.size()&&
+           std::fwrite(rgb.data(),1,rgb.size(),file)==rgb.size();
+    } else {
+        ok=std::fwrite(tex->pcData,1,tex->mWidth,file)==tex->mWidth;
+    }
+    if(std::fclose(file)!=0) ok=false;
+    if(!ok) std::remove(path.c_str());
+    return ok;
+}
+}
+CK_DLL_MFUN(model3d_embedded_texture_format) {
+    std::string result;
+    try {
+        auto index=GET_NEXT_INT(ARGS),slot=GET_NEXT_INT(ARGS);
+        result=embeddedFormat(embeddedBaseTexture(modelState(SELF,API),index,slot));
+    } catch(...) {}
+    RETURN->v_string=API->object->create_string(VM,result.c_str(),FALSE);
+}
+CK_DLL_MFUN(model3d_export_embedded_texture) {
+    RETURN->v_int=0;
+    try {
+        auto index=GET_NEXT_INT(ARGS),slot=GET_NEXT_INT(ARGS);
+        auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(path.empty()||path.find('\0')!=std::string::npos) return;
+        RETURN->v_int=writeEmbedded(embeddedBaseTexture(modelState(SELF,API),index,slot),path);
+    } catch(...) {}
 }
 CK_DLL_MFUN(model3d_assign_material) {
     RETURN->v_int=0;
@@ -1471,6 +1549,13 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_base_texture_path,"string","baseColorTexturePath");
     QUERY->add_arg(QUERY,"int","materialIndex");
     QUERY->add_arg(QUERY,"int","slot");
+    QUERY->add_mfun(QUERY,model3d_embedded_texture_format,"string","embeddedBaseColorFormat");
+    QUERY->add_arg(QUERY,"int","materialIndex");
+    QUERY->add_arg(QUERY,"int","slot");
+    QUERY->add_mfun(QUERY,model3d_export_embedded_texture,"int","exportEmbeddedBaseColor");
+    QUERY->add_arg(QUERY,"int","materialIndex");
+    QUERY->add_arg(QUERY,"int","slot");
+    QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,model3d_assign_material,"int","assignMaterial");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"int","material");
