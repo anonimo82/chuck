@@ -1,6 +1,7 @@
 """Run with Python 3 and FFmpeg CLI after building ChucK and all Chugins."""
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
@@ -11,7 +12,7 @@ def run(module, script, expected, directory):
     name = {"audio": "AudioIO", "vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO", "raster": "RasterIO", "text": "TextIO", "transport": "MediaTransport"}[module]
     path.write_text(f'@import "{name}";\n' + '0 => int smokeCheckIndex;\nfun void check(int ok) { smokeCheckIndex++; if(ok) <<< "PASS", smokeCheckIndex >>>; else <<< "FAIL", smokeCheckIndex >>>; }\n' + script, encoding="utf-8")
     timeout = 60
-    if module == "raster":
+    if module == "raster" or re.search(r'(?m)^\s*@import\s+"RasterIO"\s*;', script):
         try:
             timeout = int(os.environ.get("MULTIMEDIA_RASTER_TIMEOUT", "180"))
             if not 1 <= timeout <= 900:
