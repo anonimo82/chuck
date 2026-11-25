@@ -2804,3 +2804,50 @@ check(Math.fabs(values[0])<0.00001 && Math.fabs(values[6]-1.0)<0.00001);
 check(model.load("scenehierarchy/model.gltf"));
 check(model.exportNodeTRS(0,values));
 """,17,p)
+
+
+    run("model", """
+Model3D model;
+[0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0] @=> float xyz[];
+[0,1,2] @=> int tris[];
+[0.0,2.0] @=> float times[];
+[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0] @=> float a[];
+[0.0,0.0,0.0,0.0,0.0,0.0,4.0,0.0,0.0,0.0,0.0,0.0] @=> float b[];
+float out[9];
+check(model.playbackClip()==-1);
+check(!model.advanceAnimation(1.0));
+check(model.createMesh(xyz,tris));
+check(model.setSkin(0,1,[1.0,1.0,1.0]));
+check(model.addAnimation(0,"idle",times,a)==0);
+check(model.addAnimation(0,"move",times,b)==1);
+check(!model.playAnimation(2,0));
+check(model.playAnimation(1,0));
+check(model.playbackClip()==1 && model.playbackTime()==0.0);
+check(model.playbackSpeed(2.0));
+check(!model.playbackSpeed(0.0));
+check(model.advanceAnimation(0.25));
+check(Math.fabs(model.playbackTime()-0.5)<0.00001);
+check(model.exportPosedVertices(0,out) && Math.fabs(out[0]-1.0)<0.00001);
+check(model.pauseAnimation(1));
+check(model.advanceAnimation(1.0) && Math.fabs(model.playbackTime()-0.5)<0.00001);
+check(model.pauseAnimation(0));
+check(!model.advanceAnimation(-1.0));
+check(model.advanceAnimation(2.0) && model.playbackEnded());
+check(model.exportPosedVertices(0,out) && Math.fabs(out[0]-4.0)<0.00001);
+check(model.seekAnimation(0.5) && !model.playbackEnded());
+check(model.playAnimation(1,1));
+check(model.advanceAnimation(2.5) && Math.fabs(model.playbackTime()-0.5)<0.00001);
+check(model.playAnimation(0,0));
+check(model.fadeAnimation(1,1.0));
+check(!model.fadeAnimation(1,1.0));
+check(!model.seekAnimation(0.1));
+check(model.advanceAnimation(0.5));
+check(model.exportPosedVertices(0,out) && Math.fabs(out[0]-0.5)<0.00001);
+check(model.advanceAnimation(0.5) && model.playbackClip()==1);
+check(model.exportPosedVertices(0,out) && Math.fabs(out[0]-2.0)<0.00001);
+model.stopAnimation();
+check(model.playbackClip()==-1 && model.playbackTime()==-1.0);
+check(model.exportPosedVertices(0,out) && Math.fabs(out[0]-2.0)<0.00001);
+check(model.playAnimation(1,0));
+check(model.load("triangle.obj") && model.playbackClip()==-1);
+""",35,p)

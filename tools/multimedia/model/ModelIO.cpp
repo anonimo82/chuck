@@ -115,9 +115,13 @@ struct ModelState {
     std::unique_ptr<aiScene> generated;
     const aiScene *scene=nullptr;
     fs::path sourceDirectory;
+    struct Playback {
+        t_CKINT clip=-1, target=-1, loop=0, paused=0, ended=0;
+        double cursor=0, targetCursor=0, speed=1, fade=0, elapsed=0;
+    } playback;
     std::unordered_map<const aiNode*,aiMatrix4x4> importedPose;
     std::array<double,9> controls{{0,0,0,0,0,0,1,1,1}};
-    void reset() { controls={{0,0,0,0,0,0,1,1,1}}; }
+    void reset() { controls={{0,0,0,0,0,0,1,1,1}}; playback=Playback{}; }
     bool read(const std::string &path) {
         auto candidate=std::make_unique<Assimp::Importer>();
         const auto *next=load(*candidate,path);
@@ -1430,6 +1434,7 @@ CK_DLL_MFUN(model3d_sample_animation) {
         if(!evaluateClip(p,index,seconds,loop,pose)) return;
         for(const auto &item:pose) next.emplace(item.first,composeTRS(item.second));
         applyClip(p,next);
+        p->playback=ModelState::Playback{};
         RETURN->v_int=1;
     } catch(...) {}
 }
@@ -1464,14 +1469,137 @@ CK_DLL_MFUN(model3d_blend_animations) {
             next.emplace(item.first,matrix);
         }
         applyClip(p,next);
+        p->playback=ModelState::Playback{};
         RETURN->v_int=1;
     } catch(...) {}
+}
+namespace {
+double playbackDuration(ModelState *p,t_CKINT clip) {
+    auto *a=animationAt(p,clip);
+    if(!a||!std::isfinite(a->mDuration)||!std::isfinite(a->mTicksPerSecond)||
+       a->mDuration<=0||a->mTicksPerSecond<=0) return -1;
+    double d=a->mDuration/a->mTicksPerSecond;
+    return std::isfinite(d)&&d>0?d:-1;
+}
+double playbackCursor(double t,double d,t_CKINT loop) {
+    if(!loop) return std::clamp(t,0.0,d);
+    double u=std::fmod(t,d); return u<0?u+d:u;
+}
+bool playbackPose(ModelState *p,const ModelState::Playback &v) {
+    ClipPose a,b; MatrixPose next;
+    if(!evaluateClip(p,v.clip,v.cursor,v.loop,a)) return false;
+    if(v.target>=0) {
+        if(!evaluateClip(p,v.target,v.targetCursor,v.loop,b)||a.size()!=b.size()) return false;
+        auto u=static_cast<ai_real>(std::clamp(v.elapsed/v.fade,0.0,1.0));
+        for(auto &item:a) {
+            auto it=b.find(item.first); if(it==b.end()) return false;
+            auto &x=item.second; const auto &y=it->second;
+            x.position=x.position+(y.position-x.position)*u;
+            x.scale=x.scale+(y.scale-x.scale)*u;
+            aiQuaternion q;
+            aiQuaternion::Interpolate(q,x.rotation,y.rotation,u);
+            if(!validQuaternion(q)) return false;
+            q.Normalize(); x.rotation=q;
+        }
+    }
+    for(const auto &item:a) {
+        auto matrix=composeTRS(item.second);
+        if(!finiteMatrix(matrix)) return false;
+        next.emplace(item.first,matrix);
+    }
+    applyClip(p,next); return true;
+}
+}
+CK_DLL_MFUN(model3d_play) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto clip=GET_NEXT_INT(ARGS),loop=GET_NEXT_INT(ARGS);
+        if(!p||(loop!=0&&loop!=1)||playbackDuration(p,clip)<=0) return;
+        ModelState::Playback v; v.clip=clip; v.loop=loop;
+        if(!playbackPose(p,v)) return;
+        p->playback=v; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_playback_speed) {
+    RETURN->v_int=0;
+    auto *p=modelState(SELF,API); double speed=GET_NEXT_FLOAT(ARGS);
+    if(!p||p->playback.clip<0||!std::isfinite(speed)||speed<0.0625||speed>16) return;
+    p->playback.speed=speed; RETURN->v_int=1;
+}
+CK_DLL_MFUN(model3d_playback_pause) {
+    RETURN->v_int=0;
+    auto *p=modelState(SELF,API); auto paused=GET_NEXT_INT(ARGS);
+    if(!p||p->playback.clip<0||(paused!=0&&paused!=1)) return;
+    p->playback.paused=paused; RETURN->v_int=1;
+}
+CK_DLL_MFUN(model3d_playback_seek) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API); double position=GET_NEXT_FLOAT(ARGS);
+        if(!p||p->playback.clip<0||p->playback.target>=0||!std::isfinite(position)) return;
+        auto v=p->playback; double d=playbackDuration(p,v.clip);
+        if(d<=0) return;
+        v.cursor=playbackCursor(position,d,v.loop); v.ended=!v.loop&&v.cursor>=d;
+        if(!playbackPose(p,v)) return;
+        p->playback=v; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_playback_fade) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto clip=GET_NEXT_INT(ARGS); double fade=GET_NEXT_FLOAT(ARGS);
+        if(!p||p->playback.clip<0||p->playback.target>=0||clip==p->playback.clip||
+           !std::isfinite(fade)||fade<=0||fade>3600||playbackDuration(p,clip)<=0) return;
+        auto v=p->playback;
+        v.target=clip; v.targetCursor=0; v.fade=fade; v.elapsed=0; v.ended=0;
+        if(!playbackPose(p,v)) return;
+        p->playback=v; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_playback_advance) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API); double delta=GET_NEXT_FLOAT(ARGS);
+        if(!p||p->playback.clip<0||!std::isfinite(delta)||delta<0||delta>86400) return;
+        auto v=p->playback;
+        if(v.paused||v.ended) { RETURN->v_int=1; return; }
+        double d=playbackDuration(p,v.clip);
+        if(d<=0) return;
+        v.cursor=playbackCursor(v.cursor+delta*v.speed,d,v.loop);
+        if(v.target>=0) {
+            double targetDuration=playbackDuration(p,v.target); if(targetDuration<=0) return;
+            v.targetCursor=playbackCursor(v.targetCursor+delta*v.speed,targetDuration,v.loop);
+            v.elapsed=std::min(v.fade,v.elapsed+delta);
+            if(v.elapsed>=v.fade) {
+                v.clip=v.target; v.cursor=v.targetCursor; v.target=-1;
+                v.fade=0; v.elapsed=0; v.ended=!v.loop&&v.cursor>=targetDuration;
+            }
+        } else v.ended=!v.loop&&v.cursor>=d;
+        if(!playbackPose(p,v)) return;
+        p->playback=v; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_playback_time) {
+    auto *p=modelState(SELF,API);
+    RETURN->v_float=p&&p->playback.clip>=0?p->playback.cursor:-1;
+}
+CK_DLL_MFUN(model3d_playback_clip) {
+    auto *p=modelState(SELF,API); RETURN->v_int=p?p->playback.clip:-1;
+}
+CK_DLL_MFUN(model3d_playback_ended) {
+    auto *p=modelState(SELF,API); RETURN->v_int=p&&p->playback.clip>=0&&p->playback.ended;
+}
+CK_DLL_MFUN(model3d_playback_stop) {
+    auto *p=modelState(SELF,API);
+    if(p) p->playback=ModelState::Playback{};
 }
 CK_DLL_MFUN(model3d_reset_animation) {
     RETURN->v_int=0;
     auto *p=modelState(SELF,API);
     if(!p||!p->scene||p->generated) return;
-    p->importedPose.clear(); RETURN->v_int=1;
+    p->importedPose.clear(); p->playback=ModelState::Playback{}; RETURN->v_int=1;
 }
 
 CK_DLL_QUERY(ModelIO) {
@@ -1691,6 +1819,24 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_arg(QUERY,"float","secondSeconds");
     QUERY->add_arg(QUERY,"float","weight");
     QUERY->add_arg(QUERY,"int","loop");
+    QUERY->add_mfun(QUERY,model3d_play,"int","playAnimation");
+    QUERY->add_arg(QUERY,"int","clip");
+    QUERY->add_arg(QUERY,"int","loop");
+    QUERY->add_mfun(QUERY,model3d_playback_speed,"int","playbackSpeed");
+    QUERY->add_arg(QUERY,"float","speed");
+    QUERY->add_mfun(QUERY,model3d_playback_pause,"int","pauseAnimation");
+    QUERY->add_arg(QUERY,"int","paused");
+    QUERY->add_mfun(QUERY,model3d_playback_seek,"int","seekAnimation");
+    QUERY->add_arg(QUERY,"float","position");
+    QUERY->add_mfun(QUERY,model3d_playback_fade,"int","fadeAnimation");
+    QUERY->add_arg(QUERY,"int","clip");
+    QUERY->add_arg(QUERY,"float","duration");
+    QUERY->add_mfun(QUERY,model3d_playback_advance,"int","advanceAnimation");
+    QUERY->add_arg(QUERY,"float","delta");
+    QUERY->add_mfun(QUERY,model3d_playback_time,"float","playbackTime");
+    QUERY->add_mfun(QUERY,model3d_playback_clip,"int","playbackClip");
+    QUERY->add_mfun(QUERY,model3d_playback_ended,"int","playbackEnded");
+    QUERY->add_mfun(QUERY,model3d_playback_stop,"void","stopAnimation");
     QUERY->add_mfun(QUERY,model3d_reset_animation,"int","resetAnimation");
     QUERY->add_mfun(QUERY,model3d_sample_animation,"int","sampleAnimation");
     QUERY->add_arg(QUERY,"int","index");
