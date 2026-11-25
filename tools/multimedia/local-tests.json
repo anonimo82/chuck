@@ -1,6 +1,7 @@
 {
   "version": 1,
   "groups": [
-    "transport-raster"
+    "transport-raster",
+    "transport-raster-stream"
   ]
 }
