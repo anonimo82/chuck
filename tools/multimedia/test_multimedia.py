@@ -7310,8 +7310,95 @@ check(pixels[4*5+1]==255);
         assert root[0][1].get("transform") == "matrix(1 0 0 1 4 0)"
         assert root[0][1].get("fill") == "#00ff00"
 
+
+def vector_editable_svg():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("vector", """
+VectorImage image;
+VectorImage restored;
+check(image.create(16,16));
+check(image.addRect(0,0,4,4,16711680,1));
+check(image.addCircle(12,12,2,65280,1));
+check(image.translateShape(0,4,2));
+check(image.setShapeStroke(0,255,1,2));
+check(image.setShapeOpacity(0,0.75));
+check(image.groupShapes(0,2)==0);
+check(image.duplicateShape(0)==1);
+check(image.groupShapes(0,2)==0);
+check(image.save("editable.svg"));
+check(restored.loadEditable("editable.svg"));
+check(restored.shapes()==1);
+check(restored.shapeType(0)=="g");
+check(restored.groupSize(0)==2);
+int beforePixels[1024];
+int afterPixels[1024];
+check(image.exportPixels(16,16,beforePixels));
+check(restored.exportPixels(16,16,afterPixels));
+1=>int equalPixels;
+for(0=>int k;k<1024;k++) if(beforePixels[k]!=afterPixels[k]) 0=>equalPixels;
+check(equalPixels);
+check(restored.ungroupShape(0)==2);
+check(restored.ungroupShape(0)==2);
+check(restored.shapeType(0)=="rect");
+float matrix[6];
+float paint[6];
+float geometry[4];
+check(restored.getShapeTransform(0,matrix));
+check(matrix[4]==4 && matrix[5]==2);
+check(restored.getShapeStyle(0,paint));
+check(paint[0]==16711680 && paint[2]==255 && paint[4]==2 && paint[5]==0.75);
+check(restored.getShapeGeometry(0,geometry));
+check(geometry[2]==4);
+6.0=>geometry[2];
+check(restored.setShapeGeometry(0,geometry));
+check(restored.setShapeFill(0,65280,1));
+check(restored.save("edited.svg"));
+check(!restored.loadEditable("missing.svg"));
+check(restored.shapes()==3);
+check(restored.getShapeGeometry(0,geometry));
+check(geometry[2]==6);
+"<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'>" => string prefix;
+check(!restored.setEditableSvg(prefix+"<rect x='0' y='0' width='2' height='2' onclick='bad'/></svg>"));
+check(!restored.setEditableSvg(prefix+"<image href='external.png'/></svg>"));
+check(!restored.setEditableSvg(prefix+"<rect x='0' y='0' width='-2' height='2'/></svg>"));
+check(!restored.setEditableSvg(prefix+"<rect x='0' y='0' width='2' height='2' fill='url(#a)'/></svg>"));
+check(!restored.setEditableSvg(prefix+"<g opacity='0.5'><circle cx='2' cy='2' r='1'/></g></svg>"));
+check(!restored.setEditableSvg(prefix+"<rect x='0' x='1' y='0' width='2' height='2'/></svg>"));
+check(!restored.setEditableSvg(prefix+"<rect x='0' y='0' width='2' height='2' transform='matrix(1 0 0 0 0 0)'/></svg>"));
+check(restored.shapes()==3);
+check(restored.setEditableSvg(prefix+"<rect x='0' y='0' width='2' height='2' fill='#ff0000'/></svg>"));
+check(restored.shapes()==1);
+check(restored.getShapeGeometry(0,geometry));
+check(geometry[2]==2);
+check(restored.load("editable.svg"));
+check(restored.shapes()==-1);
+check(restored.loadEditable("editable.svg"));
+check(restored.shapes()==1);
+[0.0,1.0] @=> float bounds[];
+check(image.importWaveform(16,16,bounds,255,1));
+check(image.save("wave.svg"));
+check(restored.loadEditable("wave.svg"));
+check(restored.shapeType(0)=="path");
+check(restored.translateShape(0,1,0));
+check(restored.setShapeFill(0,16711680,1));
+check(restored.save("wave-edited.svg"));
+check(restored.loadEditable("wave-edited.svg"));
+check(restored.getShapeTransform(0,matrix));
+check(matrix[4]==1);
+check(restored.create(16,16));
+check(restored.save("empty.svg"));
+check(restored.loadEditable("empty.svg"));
+check(restored.shapes()==0);
+""",63,p)
+        import xml.etree.ElementTree as ET
+        root = ET.parse(p / "edited.svg").getroot()
+        assert float(root[0].get("width")) == 6
+        assert root[0].get("fill") == "#00ff00"
+        assert root[0].get("transform") == "matrix(1 0 0 1 4 2)"
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
