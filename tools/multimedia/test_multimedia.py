@@ -2488,3 +2488,43 @@ check(model.load("triangle.obj"));
 check(model.animations()==0);
 check(!model.sampleAnimation(0,0.0,0));
 """,18,p)
+
+
+    run("model", """
+Model3D model;
+[0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0] @=> float xyz[];
+[0,1,2] @=> int tris[];
+[1.0,1.0,1.0] @=> float weights[];
+[0.0,2.0] @=> float times[];
+[0.0,0.0,0.0,0.0,0.0,0.0, 0.0,0.0,0.0,0.0,0.0,0.0] @=> float a[];
+[0.0,0.0,0.0,0.0,0.0,0.0, 4.0,0.0,0.0,0.0,0.0,90.0] @=> float b[];
+float out[9];
+check(model.createMesh(xyz,tris));
+check(model.setSkin(0,1,weights));
+check(model.addAnimation(0,"idle",times,a)==0);
+check(model.addAnimation(0,"move",times,b)==1);
+check(model.blendAnimations(0,0.0,1,2.0,0.0,0));
+check(model.exportPosedVertices(0,out) && Math.fabs(out[3]-1.0)<0.00001);
+check(model.blendAnimations(0,0.0,1,2.0,0.5,0));
+check(model.exportPosedVertices(0,out));
+check(Math.fabs(out[0]-2.0)<0.00001);
+check(Math.fabs(out[3]-2.70710678)<0.00001 && Math.fabs(out[4]-0.70710678)<0.00001);
+check(!model.blendAnimations(0,0.0,1,2.0,1.1,0));
+check(!model.blendAnimations(0,0.0,2,2.0,0.5,0));
+check(!model.blendAnimations(0,0.0,1,2.0,0.5,2));
+check(model.exportPosedVertices(0,out) && Math.fabs(out[0]-2.0)<0.00001);
+check(model.blendAnimations(0,0.0,1,2.0,1.0,0));
+check(model.exportPosedVertices(0,out) && Math.fabs(out[0]-4.0)<0.00001 && Math.fabs(out[4]-1.0)<0.00001);
+check(model.blendAnimations(0,0.0,1,-1.0,0.5,1));
+check(model.exportPosedVertices(0,out) && Math.fabs(out[0]-1.0)<0.00001);
+check(model.resetPose(0));
+check(model.save("blended/model.gltf"));
+Model3D imported;
+check(imported.load("blended/model.gltf"));
+check(imported.animations()==2);
+check(imported.blendAnimations(0,0.0,1,2.0,0.5,0));
+check(imported.exportPosedVertices(0,out));
+check(Math.fabs(out[0]-2.0)<0.00001 && Math.fabs(out[3]-2.70710678)<0.00001);
+check(imported.resetAnimation());
+check(imported.exportPosedVertices(0,out) && Math.fabs(out[0])<0.00001);
+""",27,p)

@@ -1004,6 +1004,56 @@ bool validQuaternion(const aiQuaternion &q) {
     double n=double(q.w)*q.w+double(q.x)*q.x+double(q.y)*q.y+double(q.z)*q.z;
     return std::isfinite(n)&&n>0;
 }
+struct LocalTRS { aiVector3D position; aiQuaternion rotation; aiVector3D scale; };
+using ClipPose=std::unordered_map<const aiNode*,LocalTRS>;
+using MatrixPose=std::unordered_map<const aiNode*,aiMatrix4x4>;
+aiMatrix4x4 composeTRS(const LocalTRS &v) {
+    aiMatrix4x4 m(v.rotation.GetMatrix()),s;
+    aiMatrix4x4::Scaling(v.scale,s); m=m*s;
+    m.a4=v.position.x; m.b4=v.position.y; m.c4=v.position.z;
+    return m;
+}
+bool evaluateClip(ModelState *p,t_CKINT index,double seconds,t_CKINT loop,ClipPose &next) {
+        auto *a=animationAt(p,index);
+        if(!a||!std::isfinite(seconds)||(loop!=0&&loop!=1)||
+           !std::isfinite(a->mDuration)||a->mDuration<=0||
+           !std::isfinite(a->mTicksPerSecond)||a->mTicksPerSecond<=0||
+           !a->mNumChannels||a->mNumMeshChannels||a->mNumMorphMeshChannels) return false;
+        double duration=a->mDuration/a->mTicksPerSecond;
+        if(!std::isfinite(duration)||duration<=0) return false;
+        double t=seconds;
+        if(loop) { t=std::fmod(t,duration); if(t<0) t+=duration; }
+        else t=std::clamp(t,0.0,duration);
+        t*=a->mTicksPerSecond;
+        auto linear=[](const aiVector3D &x,const aiVector3D &y,ai_real u){return x+(y-x)*u;};
+        auto spherical=[](const aiQuaternion &x,const aiQuaternion &y,ai_real u){
+            aiQuaternion q; aiQuaternion::Interpolate(q,x,y,u); return q;
+        };
+        for(unsigned i=0;i<a->mNumChannels;++i) {
+            auto *c=a->mChannels[i];
+            if(!c) return false;
+            auto *node=uniqueNode(p->scene->mRootNode,c->mNodeName);
+            if(!node) return false;
+            aiVector3D v,scale;
+            aiQuaternion q;
+            if(!sampleKeys(c->mPositionKeys,c->mNumPositionKeys,t,v,linear)||
+               !sampleKeys(c->mRotationKeys,c->mNumRotationKeys,t,q,spherical)||
+               !sampleKeys(c->mScalingKeys,c->mNumScalingKeys,t,scale,linear)||
+               !validQuaternion(q)) return false;
+            q.Normalize();
+            aiMatrix4x4 matrix(q.GetMatrix()),s;
+            aiMatrix4x4::Scaling(scale,s);
+            matrix=matrix*s;
+            matrix.a4=v.x; matrix.b4=v.y; matrix.c4=v.z;
+            if(!finiteMatrix(matrix)||!next.emplace(node,LocalTRS{v,q,scale}).second) return false;
+        }
+    return true;
+}
+void applyClip(ModelState *p,MatrixPose &next) {
+    if(p->generated) {
+        for(const auto &item:next) const_cast<aiNode*>(item.first)->mTransformation=item.second;
+    } else p->importedPose.swap(next);
+}
 }
 CK_DLL_MFUN(model3d_sample_animation) {
     RETURN->v_int=0;
@@ -1012,43 +1062,44 @@ CK_DLL_MFUN(model3d_sample_animation) {
         auto index=GET_NEXT_INT(ARGS);
         double seconds=GET_NEXT_FLOAT(ARGS);
         auto loop=GET_NEXT_INT(ARGS);
-        auto *a=animationAt(p,index);
-        if(!a||!std::isfinite(seconds)||(loop!=0&&loop!=1)||
-           !std::isfinite(a->mDuration)||a->mDuration<=0||
-           !std::isfinite(a->mTicksPerSecond)||a->mTicksPerSecond<=0||
-           !a->mNumChannels||a->mNumMeshChannels||a->mNumMorphMeshChannels) return;
-        double duration=a->mDuration/a->mTicksPerSecond;
-        if(!std::isfinite(duration)||duration<=0) return;
-        double t=seconds;
-        if(loop) { t=std::fmod(t,duration); if(t<0) t+=duration; }
-        else t=std::clamp(t,0.0,duration);
-        t*=a->mTicksPerSecond;
-        std::unordered_map<const aiNode*,aiMatrix4x4> next;
-        auto linear=[](const aiVector3D &x,const aiVector3D &y,ai_real u){return x+(y-x)*u;};
-        auto spherical=[](const aiQuaternion &x,const aiQuaternion &y,ai_real u){
-            aiQuaternion q; aiQuaternion::Interpolate(q,x,y,u); return q;
-        };
-        for(unsigned i=0;i<a->mNumChannels;++i) {
-            auto *c=a->mChannels[i];
-            if(!c) return;
-            auto *node=uniqueNode(p->scene->mRootNode,c->mNodeName);
-            if(!node) return;
-            aiVector3D v,scale;
-            aiQuaternion q;
-            if(!sampleKeys(c->mPositionKeys,c->mNumPositionKeys,t,v,linear)||
-               !sampleKeys(c->mRotationKeys,c->mNumRotationKeys,t,q,spherical)||
-               !sampleKeys(c->mScalingKeys,c->mNumScalingKeys,t,scale,linear)||
-               !validQuaternion(q)) return;
-            q.Normalize();
-            aiMatrix4x4 matrix(q.GetMatrix()),s;
-            aiMatrix4x4::Scaling(scale,s);
-            matrix=matrix*s;
-            matrix.a4=v.x; matrix.b4=v.y; matrix.c4=v.z;
-            if(!finiteMatrix(matrix)||!next.emplace(node,matrix).second) return;
+        ClipPose pose; MatrixPose next;
+        if(!evaluateClip(p,index,seconds,loop,pose)) return;
+        for(const auto &item:pose) next.emplace(item.first,composeTRS(item.second));
+        applyClip(p,next);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+// Blend local TRS, never already-skinned positions or matrix coefficients.
+// Require matching channel sets so missing tracks cannot depend on prior pose.
+CK_DLL_MFUN(model3d_blend_animations) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto first=GET_NEXT_INT(ARGS);
+        double firstTime=GET_NEXT_FLOAT(ARGS);
+        auto second=GET_NEXT_INT(ARGS);
+        double secondTime=GET_NEXT_FLOAT(ARGS);
+        double weight=GET_NEXT_FLOAT(ARGS);
+        auto loop=GET_NEXT_INT(ARGS);
+        if(!unit(weight)) return;
+        ClipPose x,y; MatrixPose next;
+        if(!evaluateClip(p,first,firstTime,loop,x)||!evaluateClip(p,second,secondTime,loop,y)||x.size()!=y.size()) return;
+        ai_real u=static_cast<ai_real>(weight);
+        for(const auto &item:x) {
+            auto it=y.find(item.first);
+            if(it==y.end()) return;
+            const auto &a=item.second; const auto &b=it->second;
+            LocalTRS v;
+            v.position=a.position+(b.position-a.position)*u;
+            v.scale=a.scale+(b.scale-a.scale)*u;
+            aiQuaternion::Interpolate(v.rotation,a.rotation,b.rotation,u);
+            if(!validQuaternion(v.rotation)) return;
+            v.rotation.Normalize();
+            auto matrix=composeTRS(v);
+            if(!finiteMatrix(matrix)) return;
+            next.emplace(item.first,matrix);
         }
-        if(p->generated) {
-            for(const auto &item:next) const_cast<aiNode*>(item.first)->mTransformation=item.second;
-        } else p->importedPose.swap(next);
+        applyClip(p,next);
         RETURN->v_int=1;
     } catch(...) {}
 }
@@ -1227,6 +1278,13 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_animations,"int","animations");
     QUERY->add_mfun(QUERY,model3d_animation_duration,"float","animationDuration");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,model3d_blend_animations,"int","blendAnimations");
+    QUERY->add_arg(QUERY,"int","first");
+    QUERY->add_arg(QUERY,"float","firstSeconds");
+    QUERY->add_arg(QUERY,"int","second");
+    QUERY->add_arg(QUERY,"float","secondSeconds");
+    QUERY->add_arg(QUERY,"float","weight");
+    QUERY->add_arg(QUERY,"int","loop");
     QUERY->add_mfun(QUERY,model3d_reset_animation,"int","resetAnimation");
     QUERY->add_mfun(QUERY,model3d_sample_animation,"int","sampleAnimation");
     QUERY->add_arg(QUERY,"int","index");
