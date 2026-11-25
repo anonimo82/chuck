@@ -9069,8 +9069,104 @@ check(server.port()==0);
 """,66,p)
 
 
+def transport_endpoints():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("transport", """
+MediaLoopback server;
+MediaLoopback client;
+check(!server.remoteEnabled());
+check(!client.remoteEnabled());
+check(server.peerAddress()=="");
+check(!server.allowRemote(2));
+check(!server.listenAt("0.0.0.0",0,"127.0.0.1"));
+check(!server.listenAt("localhost",0,"127.0.0.1"));
+check(!server.listenAt("127.0.0.1",0,""));
+check(!server.listenAt("127.0.0.1",0,"192.0.2.1"));
+check(!client.connectAt("192.0.2.1",12345,10));
+check(!client.connectAt("127.0.0.1",0,10));
+check(!client.connectAt("127.0.0.1",12345,0));
+check(!client.connectAt("127.0.0.1",12345,5001));
+check(!client.connectAt("127.0.0.1",65536,10));
+check(!client.connectAt("127.0.0.256",12345,10));
+check(server.allowRemote(1));
+check(server.remoteEnabled());
+check(!server.listenAt("0.0.0.0",0,"127.0.0.1"));
+check(!server.listenAt("127.0.0.1",0,"255.255.255.255"));
+check(!server.listenAt("127.0.0.1",0,"224.0.0.1"));
+check(!server.listenAt("127.0.0.1",0,"127.0.0.255"));
+check(server.listenAt("127.0.0.1",0,"192.0.2.1"));
+check(!server.allowRemote(0));
+check(client.connectAt("127.0.0.1",server.port(),1000));
+check(client.peerAddress()=="127.0.0.1");
+check(!client.allowRemote(1));
+for(0=>int i;i<100000 && client.connected();i++) {
+    server.accept();
+    client.poll();
+}
+check(!server.connected());
+check(!client.connected());
+check(client.peerAddress()=="");
+check(server.peerAddress()=="");
+server.close();
+check(server.allowRemote(0));
+check(!server.remoteEnabled());
+check(server.listenAt("127.0.0.1",0,"127.0.0.1"));
+check(client.connectAt("127.0.0.1",server.port(),1000));
+0=>int accepted;
+for(0=>int i;i<100000 && !accepted;i++) server.accept()=>accepted;
+check(accepted==1);
+check(server.peerAddress()=="127.0.0.1");
+check(client.peerAddress()=="127.0.0.1");
+int wire[34];
+int got[34];
+check(MediaTransport.encode(7,1,0,0,[1,2],wire));
+check(client.sendPacket(wire));
+for(0=>int i;i<100000 && !server.packetSize();i++) {
+    client.poll();
+    server.poll();
+}
+check(server.receivePacket(got));
+check(got[32]==1 && got[33]==2);
+server.close();
+client.close();
+check(server.peerAddress()=="" && client.peerAddress()=="");
+MediaSession s;
+MediaSession c;
+check(!s.remoteEnabled());
+check(!s.listenAt("127.0.0.1",0,"192.0.2.1"));
+check(s.allowRemote(1));
+check(s.remoteEnabled());
+check(s.listenAt("127.0.0.1",0,"127.0.0.1"));
+check(c.connectAt("127.0.0.1",s.port(),1000));
+0=>accepted;
+for(0=>int i;i<100000 && !accepted;i++) s.accept()=>accepted;
+check(accepted==1);
+for(0=>int i;i<100000 && (!s.connected()||!c.connected());i++) {
+    c.poll();
+    s.poll();
+}
+check(s.connected() && c.connected());
+check(s.peerAddress()=="127.0.0.1");
+check(c.peerAddress()=="127.0.0.1");
+check(!s.allowRemote(0));
+check(c.sendPacket(wire));
+for(0=>int i;i<100000 && !s.packetSize();i++) {
+    c.poll();
+    s.poll();
+}
+check(s.receivePacket(got));
+check(got[32]==1 && got[33]==2);
+s.close();
+c.close();
+check(s.peerAddress()=="" && c.peerAddress()=="");
+check(s.allowRemote(0));
+check(!s.remoteEnabled());
+""",58,p)
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing, "transport-loopback": transport_loopback, "transport-session": transport_session}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing, "transport-loopback": transport_loopback, "transport-session": transport_session, "transport-endpoints": transport_endpoints}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
