@@ -6549,8 +6549,79 @@ check(flow.frameText(255)=="");
 check(flow.overflowBytes()==0);
 """,49,p)
 
+
+def text_flow_consolidation():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextDocument doc;
+TextDocument copy;
+TextStyle style;
+TextStyle accent;
+TextRun run;
+TextFlow flow;
+TextFlow restored;
+TextFrame frame;
+TextContainer box;
+check(style.fontSize(16)==16);
+check(accent.fontSize(20)==20);
+check(doc.addParagraph("café\\n",style));
+check(run.set("Second",accent));
+check(doc.appendRun(0,run));
+check(doc.exportParagraphToFlow(0,flow));
+check(frame.setGeometry(10,10,200,25));
+check(flow.appendFrame(frame));
+check(frame.setGeometry(20,20,220,100));
+check(frame.page(1)==1);
+check(flow.appendFrame(frame));
+check(flow.layout());
+check(flow.pageCount()==2);
+check(flow.sourceText()=="café\\nSecond");
+check(flow.frameText(0)=="café\\n");
+check(flow.frameText(1)=="Second");
+check(flow.frameStartByte(1)==6 && flow.frameEndByte(1)==12);
+check(flow.overflowBytes()==0);
+check(flow.saveNative("integrated.ckflow"));
+check(flow.saveTXT("integrated.txt"));
+check(restored.loadNative("integrated.ckflow"));
+check(restored.ready()==0);
+check(restored.layout());
+check(restored.frameText(0)==flow.frameText(0));
+check(restored.frameText(1)==flow.frameText(1));
+int pixels[256*144*4];
+int other[256*144*4];
+check(flow.exportPage(1,256,144,-1,pixels));
+check(restored.exportPage(1,256,144,-1,other));
+1=>int same;
+for(0=>int i;i<pixels.size();i++) if(pixels[i]!=other[i]) 0=>same;
+check(same);
+check(restored.savePagePNG("integrated.png",1,256,144,-1));
+check(copy.appendFlow(restored));
+check(copy.paragraphText(0)==doc.paragraphText(0));
+check(copy.runCount(0)==1 && copy.runText(0,0)=="Second");
+check(copy.plainText()==flow.sourceText());
+check(copy.saveNative("integrated.cktxt"));
+check(restored.loadTXT("integrated.txt",style));
+check(restored.frameCount()==2);
+check(restored.sourceText()==flow.sourceText());
+check(restored.ready()==0);
+check(restored.layout());
+check(restored.overflowBytes()==0);
+check(restored.frameStartByte(1)==6);
+check(restored.saveTXT("integrated-copy.txt"));
+check(frame.height(1)==1);
+check(restored.setFrame(0,frame));
+check(restored.setFrame(1,frame));
+check(restored.layout());
+check(restored.overflowText()==restored.sourceText());
+check(restored.saveTXT("overflow.txt"));
+""",48,p)
+        assert (p / "integrated.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert (p / "integrated.cktxt").read_bytes().startswith(b"CKTXTDOC")
+        assert (p / "integrated.txt").read_bytes() == (p / "integrated-copy.txt").read_bytes() == (p / "overflow.txt").read_bytes()
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")

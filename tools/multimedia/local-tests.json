@@ -4,6 +4,7 @@
     "text-accessibility",
     "text-flow-txt",
     "text-flow-interop",
-    "text-flow-performance"
+    "text-flow-performance",
+    "text-flow-consolidation"
   ]
 }
