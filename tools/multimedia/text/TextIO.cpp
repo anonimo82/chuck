@@ -19,9 +19,23 @@ struct Style {
     double spacing=0,rise=0,opacity=1;
 };
 struct Run { std::string text; Style style; };
-struct Paragraph { std::string text; Style style; size_t baseBytes=0; std::vector<Run> runs; };
+struct ParagraphStyle {
+    int alignment=0;
+    int wrapMode=0;
+    int direction=0;
+    double lineSpacing=0;
+    double indent=0;
+    double marginLeft=0;
+    double marginRight=0;
+    double marginTop=0;
+    double marginBottom=0;
+};
+struct Paragraph { std::string text; Style style; size_t baseBytes=0; std::vector<Run> runs; ParagraphStyle layout; };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; };
-t_CKUINT styleOffset=0,docOffset=0,runOffset=0;
+t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0;
+ParagraphStyle *paragraphStyleState(Chuck_Object *self,CK_DL_API API) {
+    return self?reinterpret_cast<ParagraphStyle *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,paragraphStyleOffset))):nullptr;
+}
 Run *runState(Chuck_Object *self,CK_DL_API API) {
     return self?reinterpret_cast<Run *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,runOffset))):nullptr;
 }
@@ -253,31 +267,118 @@ CK_DLL_MFUN(text_doc_remove_run) {
         p.text.erase(offset,old); p.runs.erase(p.runs.begin()+j); d->bytes-=old; --d->runs; RETURN->v_int=1;
     } catch(...) {}
 }
-CK_DLL_MFUN(text_doc_measure) {
+CK_DLL_CTOR(text_paragraph_style_ctor) {
+    OBJ_MEMBER_UINT(SELF,paragraphStyleOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,paragraphStyleOffset)=reinterpret_cast<uintptr_t>(new ParagraphStyle); } catch(...) {}
+}
+CK_DLL_DTOR(text_paragraph_style_dtor) { delete paragraphStyleState(SELF,API); OBJ_MEMBER_UINT(SELF,paragraphStyleOffset)=0; }
+CK_DLL_MFUN(text_paragraph_style_inherit) {
     RETURN->v_int=0;
-    try {
-        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS),width=GET_NEXT_INT(ARGS);
-        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
-        if(!indexOK(d,i)||width<1||width>4096||!a||API->object->array_int_size(a)!=2) return;
-        auto &p=d->paragraphs[i];
-        std::unique_ptr<cairo_surface_t,decltype(&cairo_surface_destroy)> surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1),cairo_surface_destroy);
-        if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return;
-        std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
-        if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return;
-        std::unique_ptr<PangoLayout,decltype(&g_object_unref)> layout(pango_cairo_create_layout(cr.get()),g_object_unref);
-        if(!layout) return;
+    auto *p=paragraphStyleState(SELF,API); auto *s=paragraphStyleState(GET_NEXT_OBJECT(ARGS),API);
+    if(p&&s) { *p=*s; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_doc_set_paragraph_layout) {
+    RETURN->v_int=0;
+    auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *p=paragraphStyleState(GET_NEXT_OBJECT(ARGS),API);
+    if(indexOK(d,i)&&p) { d->paragraphs[i].layout=*p; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_doc_get_paragraph_layout) {
+    RETURN->v_int=0;
+    auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *p=paragraphStyleState(GET_NEXT_OBJECT(ARGS),API);
+    if(indexOK(d,i)&&p) { *p=d->paragraphs[i].layout; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_paragraph_alignment_get) {
+    auto *p=paragraphStyleState(SELF,API); RETURN->v_int=p?p->alignment:-1;
+}
+CK_DLL_MFUN(text_paragraph_alignment_set) {
+    auto *p=paragraphStyleState(SELF,API); t_CKINT v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=0&&v<=3) RETURN->v_int=p->alignment=v;
+}
+CK_DLL_MFUN(text_paragraph_wrapMode_get) {
+    auto *p=paragraphStyleState(SELF,API); RETURN->v_int=p?p->wrapMode:-1;
+}
+CK_DLL_MFUN(text_paragraph_wrapMode_set) {
+    auto *p=paragraphStyleState(SELF,API); t_CKINT v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=0&&v<=2) RETURN->v_int=p->wrapMode=v;
+}
+CK_DLL_MFUN(text_paragraph_direction_get) {
+    auto *p=paragraphStyleState(SELF,API); RETURN->v_int=p?p->direction:-1;
+}
+CK_DLL_MFUN(text_paragraph_direction_set) {
+    auto *p=paragraphStyleState(SELF,API); t_CKINT v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=0&&v<=2) RETURN->v_int=p->direction=v;
+}
+CK_DLL_MFUN(text_paragraph_lineSpacing_get) {
+    auto *p=paragraphStyleState(SELF,API); RETURN->v_float=p?p->lineSpacing:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_paragraph_lineSpacing_set) {
+    auto *p=paragraphStyleState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=512) RETURN->v_float=p->lineSpacing=v;
+}
+CK_DLL_MFUN(text_paragraph_indent_get) {
+    auto *p=paragraphStyleState(SELF,API); RETURN->v_float=p?p->indent:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_paragraph_indent_set) {
+    auto *p=paragraphStyleState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=-1024&&v<=1024) RETURN->v_float=p->indent=v;
+}
+CK_DLL_MFUN(text_paragraph_marginLeft_get) {
+    auto *p=paragraphStyleState(SELF,API); RETURN->v_float=p?p->marginLeft:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_paragraph_marginLeft_set) {
+    auto *p=paragraphStyleState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=2048) RETURN->v_float=p->marginLeft=v;
+}
+CK_DLL_MFUN(text_paragraph_marginRight_get) {
+    auto *p=paragraphStyleState(SELF,API); RETURN->v_float=p?p->marginRight:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_paragraph_marginRight_set) {
+    auto *p=paragraphStyleState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=2048) RETURN->v_float=p->marginRight=v;
+}
+CK_DLL_MFUN(text_paragraph_marginTop_get) {
+    auto *p=paragraphStyleState(SELF,API); RETURN->v_float=p?p->marginTop:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_paragraph_marginTop_set) {
+    auto *p=paragraphStyleState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=2048) RETURN->v_float=p->marginTop=v;
+}
+CK_DLL_MFUN(text_paragraph_marginBottom_get) {
+    auto *p=paragraphStyleState(SELF,API); RETURN->v_float=p?p->marginBottom:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_paragraph_marginBottom_set) {
+    auto *p=paragraphStyleState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=2048) RETURN->v_float=p->marginBottom=v;
+}
+namespace {
+using LayoutPtr=std::unique_ptr<PangoLayout,decltype(&g_object_unref)>;
+LayoutPtr makeLayout(cairo_t *cr,const Paragraph &p,int width) {
+    double inner=width-p.layout.marginLeft-p.layout.marginRight;
+    if(inner<1||std::abs(p.layout.indent)>=inner) return LayoutPtr(nullptr,g_object_unref);
+        std::unique_ptr<PangoLayout,decltype(&g_object_unref)> layout(pango_cairo_create_layout(cr),g_object_unref);
+        if(!layout) return LayoutPtr(nullptr,g_object_unref);
         std::unique_ptr<PangoFontDescription,decltype(&pango_font_description_free)> font(pango_font_description_new(),pango_font_description_free);
-        if(!font) return;
+        if(!font) return LayoutPtr(nullptr,g_object_unref);
         pango_font_description_set_family(font.get(),p.style.font.c_str());
         pango_font_description_set_absolute_size(font.get(),p.style.size*PANGO_SCALE);
         pango_font_description_set_weight(font.get(),static_cast<PangoWeight>(p.style.weight));
         pango_font_description_set_style(font.get(),p.style.italic?PANGO_STYLE_ITALIC:PANGO_STYLE_NORMAL);
         pango_layout_set_font_description(layout.get(),font.get());
         pango_layout_set_text(layout.get(),p.text.data(),static_cast<int>(p.text.size()));
-        pango_layout_set_width(layout.get(),width*PANGO_SCALE);
-        pango_layout_set_wrap(layout.get(),PANGO_WRAP_WORD_CHAR);
+        pango_layout_set_width(layout.get(),static_cast<int>(std::lround(inner*PANGO_SCALE)));
+        const auto &flow=p.layout;
+        pango_layout_set_wrap(layout.get(),flow.wrapMode==1?PANGO_WRAP_CHAR:flow.wrapMode==2?PANGO_WRAP_WORD:PANGO_WRAP_WORD_CHAR);
+        pango_layout_set_indent(layout.get(),static_cast<int>(std::lround(flow.indent*PANGO_SCALE)));
+        pango_layout_set_spacing(layout.get(),static_cast<int>(std::lround(flow.lineSpacing*PANGO_SCALE)));
+        pango_layout_set_alignment(layout.get(),flow.alignment==1?PANGO_ALIGN_CENTER:flow.alignment==2?PANGO_ALIGN_RIGHT:PANGO_ALIGN_LEFT);
+        pango_layout_set_justify(layout.get(),flow.alignment==3);
+        if(flow.direction!=0) {
+            pango_context_set_base_dir(pango_layout_get_context(layout.get()),flow.direction==1?PANGO_DIRECTION_LTR:PANGO_DIRECTION_RTL);
+            pango_layout_set_auto_dir(layout.get(),FALSE);
+            pango_layout_context_changed(layout.get());
+        }
         std::unique_ptr<PangoAttrList,decltype(&pango_attr_list_unref)> attrs(pango_attr_list_new(),pango_attr_list_unref);
-        if(!attrs) return;
+        if(!attrs) return LayoutPtr(nullptr,g_object_unref);
         auto apply=[&](const Style &style,guint begin,guint end) {
             auto add=[&](PangoAttribute *attr) { attr->start_index=begin; attr->end_index=end; pango_attr_list_insert(attrs.get(),attr); };
             add(pango_attr_family_new(style.font.c_str()));
@@ -305,9 +406,50 @@ CK_DLL_MFUN(text_doc_measure) {
         guint offset=static_cast<guint>(p.baseBytes);
         for(const auto &run:p.runs) { guint next=offset+static_cast<guint>(run.text.size()); apply(run.style,offset,next); offset=next; }
         pango_layout_set_attributes(layout.get(),attrs.get());
-        int w=0,h=0; pango_layout_get_pixel_size(layout.get(),&w,&h);
-        API->object->array_int_set_idx(a,0,w); API->object->array_int_set_idx(a,1,h);
-        RETURN->v_int=1;
+
+    return layout;
+}
+bool paragraphDimensions(cairo_t *cr,const Paragraph &p,int width,int &w,int &h) {
+    auto layout=makeLayout(cr,p,width);
+    if(!layout) return false;
+    int contentW=0,contentH=0; pango_layout_get_pixel_size(layout.get(),&contentW,&contentH);
+    double totalW=contentW+p.layout.marginLeft+p.layout.marginRight;
+    double totalH=contentH+p.layout.marginTop+p.layout.marginBottom;
+    if(totalW<0||totalH<0||totalW>100000000||totalH>100000000) return false;
+    w=static_cast<int>(std::ceil(totalW)); h=static_cast<int>(std::ceil(totalH)); return true;
+}
+}
+CK_DLL_MFUN(text_doc_measure) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS),width=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!indexOK(d,i)||width<1||width>4096||!a||API->object->array_int_size(a)!=2) return;
+        std::unique_ptr<cairo_surface_t,decltype(&cairo_surface_destroy)> surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1),cairo_surface_destroy);
+        if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return;
+        std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
+        if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return;
+        int w=0,h=0; if(!paragraphDimensions(cr.get(),d->paragraphs[i],width,w,h)) return;
+        API->object->array_int_set_idx(a,0,w); API->object->array_int_set_idx(a,1,h); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_measure_document) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto width=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!d||width<1||width>4096||!a||API->object->array_int_size(a)!=2) return;
+        std::unique_ptr<cairo_surface_t,decltype(&cairo_surface_destroy)> surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1),cairo_surface_destroy);
+        if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return;
+        std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
+        if(cairo_status(cr.get())!=CARO_STATUS_SUCCESS) return;
+        int maxW=0; int64_t totalH=0;
+        for(const auto &p:d->paragraphs) {
+            int w=0,h=0; if(!paragraphDimensions(cr.get(),p,width,w,h)) return;
+            if(w>maxW) maxW=w;
+            totalH+=h; if(totalH>100000000) return;
+        }
+        API->object->array_int_set_idx(a,0,maxW); API->object->array_int_set_idx(a,1,totalH); RETURN->v_int=1;
     } catch(...) {}
 }
 CK_DLL_QUERY(TextIO) {
@@ -373,6 +515,40 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_run_style,"int","setStyle");
     QUERY->add_arg(QUERY,"TextStyle","style");
     if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"TextParagraphStyle","Object");
+    paragraphStyleOffset=QUERY->add_mvar(QUERY,"int","@textParagraphStyleNative",FALSE);
+    if(paragraphStyleOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,text_paragraph_style_ctor); QUERY->add_dtor(QUERY,text_paragraph_style_dtor);
+    QUERY->add_mfun(QUERY,text_paragraph_alignment_get,"int","alignment");
+    QUERY->add_mfun(QUERY,text_paragraph_alignment_set,"int","alignment");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_paragraph_wrapMode_get,"int","wrapMode");
+    QUERY->add_mfun(QUERY,text_paragraph_wrapMode_set,"int","wrapMode");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_paragraph_direction_get,"int","direction");
+    QUERY->add_mfun(QUERY,text_paragraph_direction_set,"int","direction");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_paragraph_lineSpacing_get,"float","lineSpacing");
+    QUERY->add_mfun(QUERY,text_paragraph_lineSpacing_set,"float","lineSpacing");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_paragraph_indent_get,"float","indent");
+    QUERY->add_mfun(QUERY,text_paragraph_indent_set,"float","indent");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_paragraph_marginLeft_get,"float","marginLeft");
+    QUERY->add_mfun(QUERY,text_paragraph_marginLeft_set,"float","marginLeft");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_paragraph_marginRight_get,"float","marginRight");
+    QUERY->add_mfun(QUERY,text_paragraph_marginRight_set,"float","marginRight");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_paragraph_marginTop_get,"float","marginTop");
+    QUERY->add_mfun(QUERY,text_paragraph_marginTop_set,"float","marginTop");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_paragraph_marginBottom_get,"float","marginBottom");
+    QUERY->add_mfun(QUERY,text_paragraph_marginBottom_set,"float","marginBottom");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_paragraph_style_inherit,"int","inherit");
+    QUERY->add_arg(QUERY,"TextParagraphStyle","source");
+    if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextDocument","Object");
     docOffset=QUERY->add_mvar(QUERY,"int","@textDocumentNative",FALSE);
     if(docOffset==CK_INVALID_OFFSET) return FALSE;
@@ -411,6 +587,15 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_doc_remove_run,"int","removeRun");
     QUERY->add_arg(QUERY,"int","paragraph");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_doc_set_paragraph_layout,"int","setParagraphLayout");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextParagraphStyle","style");
+    QUERY->add_mfun(QUERY,text_doc_get_paragraph_layout,"int","getParagraphLayout");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextParagraphStyle","style");
+    QUERY->add_mfun(QUERY,text_doc_measure_document,"int","measureDocument");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int[]","dimensions");
     QUERY->add_mfun(QUERY,text_doc_measure,"int","measureParagraph");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"int","width");
