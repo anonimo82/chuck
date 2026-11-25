@@ -427,6 +427,26 @@ CK_DLL_MFUN(vector_image_waveform) {
         if(p->replaceShapes(w,h,{o.str()})) { p->reset(); RETURN->v_int=1; }
     } catch(...) {}
 }
+CK_DLL_MFUN(vector_image_alpha) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!a||w<1||w>4096||h<1||h>4096||
+           API->object->array_int_size(a)!=w*h) return;
+        auto surface=p->rasterize(w,h);
+        if(!surface) return;
+        auto *data=cairo_image_surface_get_data(surface.get());
+        int stride=cairo_image_surface_get_stride(surface.get());
+        if(!data) return;
+        for(int y=0;y<h;++y) for(int x=0;x<w;++x) {
+            uint32_t v; std::memcpy(&v,data+static_cast<size_t>(y)*stride+x*4,4);
+            API->object->array_int_set_idx(a,static_cast<size_t>(y)*w+x,v>>24);
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VectorIO) {
     QUERY->setname(QUERY, "VectorIO");
     QUERY->begin_class(QUERY, "VectorIO", "Object");
@@ -514,6 +534,10 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,vector_image_save,"int","save");
     QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,vector_image_alpha,"int","exportAlpha");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int[]","alpha");
     QUERY->add_mfun(QUERY,vector_image_export,"int","exportPixels");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
