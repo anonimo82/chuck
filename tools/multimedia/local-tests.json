@@ -4,6 +4,7 @@
     "transport-video-high-resolution",
     "transport-video-intraframe",
     "transport-video-interframe",
-    "transport-video-consolidation"
+    "transport-video-consolidation",
+    "transport-mesh-attributes"
   ]
 }
