@@ -21,6 +21,7 @@
     "text-flow-interop",
     "text-flow-performance",
     "text-flow-consolidation",
-    "text-flow-hit-test"
+    "text-flow-hit-test",
+    "text-flow-selection"
   ]
 }
