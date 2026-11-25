@@ -5,6 +5,7 @@
 #include "MediaVideoFrame.h"
 #include "MediaVideoStream.h"
 #include "MediaVideoBuffer.h"
+#include "MediaAudioVideo.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -919,6 +920,69 @@ CK_DLL_MFUN(vb_width) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->width():0; 
 CK_DLL_MFUN(vb_height) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->height():0; }
 CK_DLL_MFUN(vb_timestamp) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->timestamp():0; }
 CK_DLL_MFUN(vb_frameIndex) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->frameIndex():0; }
+namespace {
+t_CKUINT syncAVOffset=0;
+mediawire::AudioVideo *syncAVState(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<mediawire::AudioVideo*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,syncAVOffset)));
+}
+}
+CK_DLL_CTOR(sav_ctor) { OBJ_MEMBER_UINT(SELF,syncAVOffset)=0;try { OBJ_MEMBER_UINT(SELF,syncAVOffset)=reinterpret_cast<uintptr_t>(new mediawire::AudioVideo); } catch(...) {} }
+CK_DLL_DTOR(sav_dtor) { delete syncAVState(SELF,API);OBJ_MEMBER_UINT(SELF,syncAVOffset)=0; }
+CK_DLL_MFUN(sav_configure) {
+    RETURN->v_int=0;
+    try { auto *p=syncAVState(SELF,API);uint64_t a[13];for(auto &v:a)v=GET_NEXT_INT(ARGS);
+        if(p)RETURN->v_int=p->configure(a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12]);
+    } catch(...) {}
+}
+CK_DLL_MFUN(sav_clear) { if(auto *p=syncAVState(SELF,API))p->clear(); }
+CK_DLL_MFUN(sav_push) {
+    RETURN->v_int=0;auto *p=syncAVState(SELF,API);if(!p)return;
+    try { auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire;
+        if(!p->configured()){p->reject(1);return;}
+        if(!read(a,API,mediawire::headerSize+mediawire::maxPayload,wire)){p->reject(2);return;}
+        RETURN->v_int=p->push(wire);
+    } catch(...) {p->reject(2);}
+}
+CK_DLL_MFUN(sav_pullAudio) {
+    RETURN->v_int=0;auto *p=syncAVState(SELF,API);if(!p)return;
+    try {
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p->configured()){p->reject(1);return;}
+        if(!a){p->reject(2);return;}
+        auto n=API->object->array_float_size(a);
+        if(n<=0||n%p->channels()){p->reject(2);return;}
+        std::vector<double> data;
+        if(!p->pullAudio(n/p->channels(),data))return;
+        for(size_t i=0;i<data.size();++i)API->object->array_float_set_idx(a,i,data[i]);
+        RETURN->v_int=1;
+    } catch(...) {p->reject(2);}
+}
+CK_DLL_MFUN(sav_pullVideo) {
+    RETURN->v_int=0;auto *p=syncAVState(SELF,API);if(!p)return;
+    try { auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes pixels;
+        if(!a){p->reject(2);return;}
+        if(p->pullVideo(API->object->array_int_size(a),pixels)){write(a,API,pixels);RETURN->v_int=1;}
+    } catch(...) {p->reject(2);}
+}
+CK_DLL_MFUN(sav_configured) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->configured():0; }
+CK_DLL_MFUN(sav_started) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->started():0; }
+CK_DLL_MFUN(sav_ready) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->ready():0; }
+CK_DLL_MFUN(sav_videoDue) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->videoDue():0; }
+CK_DLL_MFUN(sav_playTimestamp) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->playTimestamp():0; }
+CK_DLL_MFUN(sav_consumedFrames) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->consumedFrames():0; }
+CK_DLL_MFUN(sav_channels) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->channels():0; }
+CK_DLL_MFUN(sav_availableAudio) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->availableAudio():0; }
+CK_DLL_MFUN(sav_pendingVideo) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->pendingVideo():0; }
+CK_DLL_MFUN(sav_videoBytes) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->videoBytes():0; }
+CK_DLL_MFUN(sav_videoWidth) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->videoWidth():0; }
+CK_DLL_MFUN(sav_videoHeight) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->videoHeight():0; }
+CK_DLL_MFUN(sav_videoTimestamp) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->videoTimestamp():0; }
+CK_DLL_MFUN(sav_videoIndex) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->videoIndex():0; }
+CK_DLL_MFUN(sav_videoLateness) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->videoLateness():0; }
+CK_DLL_MFUN(sav_error) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->error():0; }
+CK_DLL_MFUN(sav_audioError) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->audioError():0; }
+CK_DLL_MFUN(sav_videoError) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->videoError():0; }
+CK_DLL_MFUN(sav_audioLimit) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->audioLimit():0; }
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -1371,6 +1435,52 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_mfun(QUERY,vb_height,"int","height");
     QUERY->add_mfun(QUERY,vb_timestamp,"int","timestamp");
     QUERY->add_mfun(QUERY,vb_frameIndex,"int","frameIndex");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaAudioVideo","Object");
+    syncAVOffset=QUERY->add_mvar(QUERY,"int","@audioVideoNative",FALSE);
+    if(syncAVOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,sav_ctor);
+    QUERY->add_dtor(QUERY,sav_dtor);
+    QUERY->add_mfun(QUERY,sav_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","audioStream");
+    QUERY->add_arg(QUERY,"int","videoStream");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_arg(QUERY,"int","originUs");
+    QUERY->add_arg(QUERY,"int","audioSequence");
+    QUERY->add_arg(QUERY,"int","videoSequence");
+    QUERY->add_arg(QUERY,"int","firstFrame");
+    QUERY->add_arg(QUERY,"int","audioCapacity");
+    QUERY->add_arg(QUERY,"int","audioThreshold");
+    QUERY->add_arg(QUERY,"int","videoCapacity");
+    QUERY->add_arg(QUERY,"int","videoThreshold");
+    QUERY->add_arg(QUERY,"int","videoBudget");
+    QUERY->add_mfun(QUERY,sav_clear,"void","clear");
+    QUERY->add_mfun(QUERY,sav_push,"int","push");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,sav_pullAudio,"int","pullAudio");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,sav_pullVideo,"int","pullVideo");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,sav_configured,"int","configured");
+    QUERY->add_mfun(QUERY,sav_started,"int","started");
+    QUERY->add_mfun(QUERY,sav_ready,"int","ready");
+    QUERY->add_mfun(QUERY,sav_videoDue,"int","videoDue");
+    QUERY->add_mfun(QUERY,sav_playTimestamp,"int","playTimestamp");
+    QUERY->add_mfun(QUERY,sav_consumedFrames,"int","consumedFrames");
+    QUERY->add_mfun(QUERY,sav_channels,"int","channels");
+    QUERY->add_mfun(QUERY,sav_availableAudio,"int","availableAudio");
+    QUERY->add_mfun(QUERY,sav_pendingVideo,"int","pendingVideo");
+    QUERY->add_mfun(QUERY,sav_videoBytes,"int","videoBytes");
+    QUERY->add_mfun(QUERY,sav_videoWidth,"int","videoWidth");
+    QUERY->add_mfun(QUERY,sav_videoHeight,"int","videoHeight");
+    QUERY->add_mfun(QUERY,sav_videoTimestamp,"int","videoTimestamp");
+    QUERY->add_mfun(QUERY,sav_videoIndex,"int","videoIndex");
+    QUERY->add_mfun(QUERY,sav_videoLateness,"int","videoLateness");
+    QUERY->add_mfun(QUERY,sav_error,"int","error");
+    QUERY->add_mfun(QUERY,sav_audioError,"int","audioError");
+    QUERY->add_mfun(QUERY,sav_videoError,"int","videoError");
+    QUERY->add_mfun(QUERY,sav_audioLimit,"int","audioLimit");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"MediaGraphics","Object");
     QUERY->add_sfun(QUERY,gr_inspect,"int","inspect");
