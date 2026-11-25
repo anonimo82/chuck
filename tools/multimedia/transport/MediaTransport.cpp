@@ -1,7 +1,7 @@
 #include "MediaSession.h"
 #include "MediaPCMBuffer.h"
 #include "MediaAudioMidi.h"
-#include "MediaRaster.h"
+#include "MediaRasterStream.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -587,6 +587,67 @@ CK_DLL_SFUN(ra_decode) {
         write(dst,API,rgba); RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_SFUN(rf_size) { auto n=GET_NEXT_INT(ARGS); RETURN->v_int=mediawire::fragmentPacketSize(n); }
+CK_DLL_SFUN(rf_encode) {
+    RETURN->v_int=0;
+    try {
+        uint64_t a[7]; for(auto &v:a) v=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(!a[0]||a[0]>=0xffffffffu||a[1]>0xffffffffu||a[2]>0x7fffffffffffffffull||
+           !mediawire::imagePixels(a[3],a[4])||a[5]>0xffffffffu||a[6]>=mediawire::maxImagePixels) return;
+        if(!src) return;
+        auto n=API->object->array_int_size(src);
+        if(n<=0||n%4||!mediawire::fragmentPacketSize(n/4)||!exact(dst,API,mediawire::fragmentPacketSize(n/4))) return;
+        mediawire::Bytes pixels,wire;
+        if(!read(src,API,mediawire::maxPayload,pixels)) return;
+        mediawire::Header h{1,static_cast<uint32_t>(a[0]),static_cast<uint32_t>(a[1]),a[2]};
+        mediawire::Fragment f{static_cast<uint32_t>(a[3]),static_cast<uint32_t>(a[4]),static_cast<uint32_t>(a[5]),static_cast<uint32_t>(a[6]),static_cast<uint32_t>(n/4)};
+        if(mediawire::encodeFragment(h,f,pixels,wire)) { write(dst,API,wire);RETURN->v_int=1; }
+    } catch(...) {}
+}
+namespace {
+t_CKUINT rsOffset=0;
+mediawire::RasterStream *rsState(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<mediawire::RasterStream*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,rsOffset)));
+}
+}
+CK_DLL_CTOR(rs_ctor) { OBJ_MEMBER_UINT(SELF,rsOffset)=0;try { OBJ_MEMBER_UINT(SELF,rsOffset)=reinterpret_cast<uintptr_t>(new mediawire::RasterStream); } catch(...) {} }
+CK_DLL_DTOR(rs_dtor) { delete rsState(SELF,API);OBJ_MEMBER_UINT(SELF,rsOffset)=0; }
+CK_DLL_MFUN(rs_configure) {
+    auto *p=rsState(SELF,API);uint64_t a[4];for(auto &v:a)v=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p&&p->configure(a[0],a[1],a[2],a[3]);
+}
+CK_DLL_MFUN(rs_clear) { if(auto *p=rsState(SELF,API))p->clear(); }
+CK_DLL_MFUN(rs_push) {
+    RETURN->v_int=0;auto *p=rsState(SELF,API);if(!p)return;
+    try {
+        auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire;
+        if(!p->configured()){p->reject(1);return;}
+        if(!read(a,API,mediawire::headerSize+mediawire::maxPayload,wire)){p->reject(2);return;}
+        RETURN->v_int=p->push(wire);
+    } catch(...) {p->reject(2);}
+}
+CK_DLL_MFUN(rs_take) {
+    RETURN->v_int=0;auto *p=rsState(SELF,API);if(!p)return;
+    try {
+        auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes pixels;
+        if(!p->configured()){p->reject(1);return;}
+        if(!p->ready()||!exact(a,API,p->pixelBytes())){p->reject(5);return;}
+        if(p->take(p->pixelBytes(),pixels)){write(a,API,pixels);RETURN->v_int=1;}
+    } catch(...) {p->reject(2);}
+}
+CK_DLL_MFUN(rs_configured) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->configured():0; }
+CK_DLL_MFUN(rs_ready) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->ready():0; }
+CK_DLL_MFUN(rs_nextSequence) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->nextSequence():0; }
+CK_DLL_MFUN(rs_nextImage) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->nextImage():0; }
+CK_DLL_MFUN(rs_receivedPixels) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->receivedPixels():0; }
+CK_DLL_MFUN(rs_completed) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->completed():0; }
+CK_DLL_MFUN(rs_timestamp) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->timestamp():0; }
+CK_DLL_MFUN(rs_width) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->width():0; }
+CK_DLL_MFUN(rs_height) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->height():0; }
+CK_DLL_MFUN(rs_pixelBytes) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->pixelBytes():0; }
+CK_DLL_MFUN(rs_error) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->error():0; }
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -864,5 +925,46 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_sfun(QUERY,ra_decode,"int","decode");
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"int[]","pixels");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaRasterFragment","Object");
+    QUERY->add_sfun(QUERY,rf_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","pixelCount");
+    QUERY->add_sfun(QUERY,rf_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","imageIndex");
+    QUERY->add_arg(QUERY,"int","pixelOffset");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaRasterStream","Object");
+    rsOffset=QUERY->add_mvar(QUERY,"int","@rasterStreamNative",FALSE);
+    if(rsOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,rs_ctor);
+    QUERY->add_dtor(QUERY,rs_dtor);
+    QUERY->add_mfun(QUERY,rs_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","firstSequence");
+    QUERY->add_arg(QUERY,"int","firstImage");
+    QUERY->add_arg(QUERY,"int","originUs");
+    QUERY->add_mfun(QUERY,rs_clear,"void","clear");
+    QUERY->add_mfun(QUERY,rs_push,"int","push");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,rs_take,"int","take");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,rs_configured,"int","configured");
+    QUERY->add_mfun(QUERY,rs_ready,"int","ready");
+    QUERY->add_mfun(QUERY,rs_nextSequence,"int","nextSequence");
+    QUERY->add_mfun(QUERY,rs_nextImage,"int","nextImage");
+    QUERY->add_mfun(QUERY,rs_receivedPixels,"int","receivedPixels");
+    QUERY->add_mfun(QUERY,rs_completed,"int","completed");
+    QUERY->add_mfun(QUERY,rs_timestamp,"int","timestamp");
+    QUERY->add_mfun(QUERY,rs_width,"int","width");
+    QUERY->add_mfun(QUERY,rs_height,"int","height");
+    QUERY->add_mfun(QUERY,rs_pixelBytes,"int","pixelBytes");
+    QUERY->add_mfun(QUERY,rs_error,"int","error");
     return QUERY->end_class(QUERY);
 }
