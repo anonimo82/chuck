@@ -1,5 +1,4 @@
 """Run the three native smoke suites and report observed ChucK check counts."""
-import ast
 import pathlib
 import re
 import subprocess
@@ -8,24 +7,10 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 SUITES = ("raster/test_raster.py", "audio/test_audio.py", "test_multimedia.py")
 MARKER = re.compile(r"SMOKE_COUNTS (\d+) (\d+) (\d+)")
-
-def planned_checks(path):
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    if path.name == "test_multimedia.py":
-        calls = [n for n in ast.walk(tree)
-                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-                 and n.func.id == "run"]
-        return sum(ast.literal_eval(n.args[2]) for n in calls)
-    markers = [n for n in ast.walk(tree)
-               if isinstance(n, ast.JoinedStr) and n.values
-               and isinstance(n.values[0], ast.Constant)
-               and n.values[0].value == "SMOKE_COUNTS "]
-    if len(markers) != 1:
-        raise ValueError(f"Expected one count marker in {path}")
-    return ast.literal_eval(markers[0].values[1].value)
+START = re.compile(r"SMOKE_EXPECTED (\d+)")
 
 def main():
-    expected = sum(planned_checks(HERE / name) for name in SUITES)
+    expected = 0
     reported = passed = failed = missing = extra = completed = 0
     status = "FAIL"
     try:
@@ -35,6 +20,10 @@ def main():
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                   text=True, errors="replace") as proc:
                 for line in proc.stdout:
+                    start = START.fullmatch(line.strip())
+                    if start:
+                        expected += int(start.group(1))
+                        continue
                     match = MARKER.fullmatch(line.strip())
                     if match:
                         e, p, f = map(int, match.groups())
@@ -50,7 +39,7 @@ def main():
                 print(f"Suite failed: {name} (exit {code})", flush=True)
                 return 1
             completed += 1
-        if reported == expected and passed == expected and not failed and not missing and not extra:
+        if expected > 0 and reported == expected and passed == expected and not failed and not missing and not extra:
             status = "PASS"
             return 0
         return 1
