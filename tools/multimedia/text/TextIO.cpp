@@ -65,13 +65,18 @@ struct Table {
     std::vector<Paragraph> cells;
     std::vector<double> weights;
     size_t bytes=0;
+    int columnGap=0,rowGap=0;
+    bool grid=false;
 };
 bool cellOK(Table *t,t_CKINT row,t_CKINT col) {
     return t&&row>=0&&col>=0&&row<t->rows&&col<t->cols;
 }
 struct TableBlock { size_t after=0; Table table; };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; };
-t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0;
+t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0;
+Table *gridState(Chuck_Object *self,CK_DL_API API) {
+    return self?reinterpret_cast<Table *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,gridOffset))):nullptr;
+}
 Table *tableState(Chuck_Object *self,CK_DL_API API) {
     return self?reinterpret_cast<Table *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,tableOffset))):nullptr;
 }
@@ -589,32 +594,130 @@ CK_DLL_MFUN(text_table_weight_set) {
     RETURN->v_float=-1;
     if(t&&c>=0&&c<t->cols&&std::isfinite(w)&&w>=0.01&&w<=100) RETURN->v_float=t->weights[c]=w;
 }
+CK_DLL_CTOR(text_grid_ctor) {
+    OBJ_MEMBER_UINT(SELF,gridOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,gridOffset)=reinterpret_cast<uintptr_t>(new Table); } catch(...) {}
+}
+CK_DLL_DTOR(text_grid_dtor) { delete gridState(SELF,API); OBJ_MEMBER_UINT(SELF,gridOffset)=0; }
+CK_DLL_MFUN(text_grid_create) {
+    RETURN->v_int=0;
+    try {
+        auto *t=gridState(SELF,API); auto r=GET_NEXT_INT(ARGS),c=GET_NEXT_INT(ARGS);
+        if(!t||r<1||r>256||c<1||c>32||r*c>1024) return;
+        Table next; next.rows=r; next.cols=c; next.grid=true;
+        next.cells.resize(r*c); next.weights.assign(c,1.0);
+        *t=std::move(next); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_grid_rows) { auto *t=gridState(SELF,API); RETURN->v_int=t?t->rows:0; }
+CK_DLL_MFUN(text_grid_cols) { auto *t=gridState(SELF,API); RETURN->v_int=t?t->cols:0; }
+CK_DLL_MFUN(text_grid_set_cell) {
+    RETURN->v_int=0;
+    try {
+        auto *t=gridState(SELF,API); auto r=GET_NEXT_INT(ARGS),c=GET_NEXT_INT(ARGS);
+        auto text=GET_NEXT_STRING_SAFE(ARGS); auto *st=styleState(GET_NEXT_OBJECT(ARGS),API);
+        if(!cellOK(t,r,c)||!st||!validText(text,65536)) return;
+        auto &p=t->cells[r*t->cols+c]; size_t next=t->bytes-p.text.size()+text.size();
+        if(next>1048576) return;
+        Paragraph copy=p; copy.text=std::move(text); copy.baseBytes=copy.text.size(); copy.style=*st;
+        p=std::move(copy); t->bytes=next; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_grid_cell_text) {
+    auto *t=gridState(SELF,API); auto r=GET_NEXT_INT(ARGS),c=GET_NEXT_INT(ARGS);
+    RETURN->v_string=API->object->create_string(VM,cellOK(t,r,c)?t->cells[r*t->cols+c].text.c_str():"",FALSE);
+}
+CK_DLL_MFUN(text_grid_layout) {
+    RETURN->v_int=0;
+    auto *t=gridState(SELF,API); auto r=GET_NEXT_INT(ARGS),c=GET_NEXT_INT(ARGS); auto *p=paragraphStyleState(GET_NEXT_OBJECT(ARGS),API);
+    if(cellOK(t,r,c)&&p) { t->cells[r*t->cols+c].layout=*p; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_grid_box) {
+    RETURN->v_int=0;
+    auto *t=gridState(SELF,API); auto r=GET_NEXT_INT(ARGS),c=GET_NEXT_INT(ARGS); auto *p=containerState(GET_NEXT_OBJECT(ARGS),API);
+    if(cellOK(t,r,c)&&p) { t->cells[r*t->cols+c].box=*p; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_grid_weight_get) {
+    auto *t=gridState(SELF,API); auto c=GET_NEXT_INT(ARGS);
+    RETURN->v_float=t&&c>=0&&c<t->cols?t->weights[c]:-1;
+}
+CK_DLL_MFUN(text_grid_weight_set) {
+    auto *t=gridState(SELF,API); auto c=GET_NEXT_INT(ARGS); double w=GET_NEXT_FLOAT(ARGS);
+    RETURN->v_float=-1;
+    if(t&&c>=0&&c<t->cols&&std::isfinite(w)&&w>=0.01&&w<=100) RETURN->v_float=t->weights[c]=w;
+}
+CK_DLL_MFUN(text_grid_columnGap_get) {
+    auto *t=gridState(SELF,API); RETURN->v_int=t?t->columnGap:-1;
+}
+CK_DLL_MFUN(text_grid_columnGap_set) {
+    auto *t=gridState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(t&&v>=0&&v<=512) RETURN->v_int=t->columnGap=v;
+}
+CK_DLL_MFUN(text_grid_rowGap_get) {
+    auto *t=gridState(SELF,API); RETURN->v_int=t?t->rowGap:-1;
+}
+CK_DLL_MFUN(text_grid_rowGap_set) {
+    auto *t=gridState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(t&&v>=0&&v<=512) RETURN->v_int=t->rowGap=v;
+}
+namespace {
+size_t blockIndex(const Document &d,t_CKINT index,bool grid) {
+    if(index<0) return d.tables.size();
+    for(size_t i=0;i<d.tables.size();++i) if(d.tables[i].table.grid==grid) {
+        if(index==0) return i;
+        --index;
+    }
+    return d.tables.size();
+}
+bool appendBlock(Document *d,const Table *t,bool grid) {
+    if(!d||!t||!t->rows||t->grid!=grid||d->tables.size()>=256||d->tableCells+t->cells.size()>4096||d->tableBytes+t->bytes>1048576) return false;
+    d->tables.push_back({d->paragraphs.size(),*t});
+    d->tableCells+=t->cells.size(); d->tableBytes+=t->bytes; return true;
+}
+bool replaceBlock(Document *d,t_CKINT i,const Table *t,bool grid) {
+    if(!d||!t||!t->rows||t->grid!=grid) return false;
+    size_t at=blockIndex(*d,i,grid); if(at==d->tables.size()) return false;
+    auto &old=d->tables[at].table;
+    auto cells=d->tableCells-old.cells.size()+t->cells.size(),bytes=d->tableBytes-old.bytes+t->bytes;
+    if(cells>4096||bytes>1048576) return false;
+    Table next=*t; old=std::move(next); d->tableCells=cells; d->tableBytes=bytes; return true;
+}
+bool removeBlock(Document *d,t_CKINT i,bool grid) {
+    if(!d) return false;
+    size_t at=blockIndex(*d,i,grid); if(at==d->tables.size()) return false;
+    d->tableCells-=d->tables[at].table.cells.size(); d->tableBytes-=d->tables[at].table.bytes;
+    d->tables.erase(d->tables.begin()+at); return true;
+}
+}
 CK_DLL_MFUN(text_doc_append_table) {
     RETURN->v_int=0;
-    try {
-        auto *d=docState(SELF,API); auto *t=tableState(GET_NEXT_OBJECT(ARGS),API);
-        if(!d||!t||!t->rows||d->tables.size()>=256||d->tableCells+t->cells.size()>4096||d->tableBytes+t->bytes>1048576) return;
-        d->tables.push_back({d->paragraphs.size(),*t});
-        d->tableCells+=t->cells.size(); d->tableBytes+=t->bytes; RETURN->v_int=1;
-    } catch(...) {}
+    try { auto *d=docState(SELF,API); auto *t=tableState(GET_NEXT_OBJECT(ARGS),API); RETURN->v_int=appendBlock(d,t,false); } catch(...) {}
 }
-CK_DLL_MFUN(text_doc_table_count) { auto *d=docState(SELF,API); RETURN->v_int=d?d->tables.size():0; }
+CK_DLL_MFUN(text_doc_table_count) {
+    auto *d=docState(SELF,API); RETURN->v_int=0;
+    if(d) for(const auto &b:d->tables) if(b.table.grid==false) ++RETURN->v_int;
+}
 CK_DLL_MFUN(text_doc_set_table) {
     RETURN->v_int=0;
-    try {
-        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *t=tableState(GET_NEXT_OBJECT(ARGS),API);
-        if(!d||!t||!t->rows||i<0||static_cast<size_t>(i)>=d->tables.size()) return;
-        auto &old=d->tables[i].table;
-        auto cells=d->tableCells-old.cells.size()+t->cells.size(),bytes=d->tableBytes-old.bytes+t->bytes;
-        if(cells>4096||bytes>1048576) return;
-        Table next=*t; old=std::move(next); d->tableCells=cells; d->tableBytes=bytes; RETURN->v_int=1;
-    } catch(...) {}
+    try { auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *t=tableState(GET_NEXT_OBJECT(ARGS),API); RETURN->v_int=replaceBlock(d,i,t,false); } catch(...) {}
 }
 CK_DLL_MFUN(text_doc_remove_table) {
-    RETURN->v_int=0; auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS);
-    if(!d||i<0||static_cast<size_t>(i)>=d->tables.size()) return;
-    d->tableCells-=d->tables[i].table.cells.size(); d->tableBytes-=d->tables[i].table.bytes;
-    d->tables.erase(d->tables.begin()+i); RETURN->v_int=1;
+    auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); RETURN->v_int=removeBlock(d,i,false);
+}
+CK_DLL_MFUN(text_doc_append_grid) {
+    RETURN->v_int=0;
+    try { auto *d=docState(SELF,API); auto *t=gridState(GET_NEXT_OBJECT(ARGS),API); RETURN->v_int=appendBlock(d,t,true); } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_grid_count) {
+    auto *d=docState(SELF,API); RETURN->v_int=0;
+    if(d) for(const auto &b:d->tables) if(b.table.grid==true) ++RETURN->v_int;
+}
+CK_DLL_MFUN(text_doc_set_grid) {
+    RETURN->v_int=0;
+    try { auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *t=gridState(GET_NEXT_OBJECT(ARGS),API); RETURN->v_int=replaceBlock(d,i,t,true); } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_remove_grid) {
+    auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); RETURN->v_int=removeBlock(d,i,true);
 }
 namespace {
 using LayoutPtr=std::unique_ptr<PangoLayout,decltype(&g_object_unref)>;
@@ -695,8 +798,10 @@ bool paragraphDimensions(cairo_t *cr,const Paragraph &p,int width,int &w,int &h)
 }
 bool tableGeometry(cairo_t *cr,const Table &t,int width,std::vector<int> &xs,std::vector<int> &heights,int &height) {
     xs.assign(t.cols+1,0); heights.assign(t.rows,0); height=0;
+    int available=width-(t.cols-1)*t.columnGap;
+    if(available<t.cols) return false;
     double sum=0,partial=0; for(double w:t.weights) sum+=w;
-    for(int c=0;c<t.cols;c++) { partial+=t.weights[c]; xs[c+1]=c+1==t.cols?width:static_cast<int>(std::lround(width*partial/sum)); }
+    for(int c=0;c<t.cols;c++) { partial+=t.weights[c]; xs[c+1]=c+1==t.cols?available:static_cast<int>(std::lround(available*partial/sum)); }
     for(int r=0;r<t.rows;r++) {
         for(int c=0;c<t.cols;c++) {
             int w=0,h=0,cw=xs[c+1]-xs[c];
@@ -705,6 +810,7 @@ bool tableGeometry(cairo_t *cr,const Table &t,int width,std::vector<int> &xs,std
         }
         if(heights[r]>100000000-height) return false;
         height+=heights[r];
+        if(r+1<t.rows) { if(t.rowGap>100000000-height) return false; height+=t.rowGap; }
     }
     return true;
 }
@@ -717,7 +823,7 @@ bool drawTable(cairo_t *cr,const Table &t,int width,int canvasHeight,int64_t &y,
             if(b.opacity==0) continue;
             int cw=xs[c+1]-xs[c];
             auto l=makeLayout(cr,p,cw); if(!l) return false;
-            double x=xs[c]+p.layout.marginLeft,top=y+p.layout.marginTop;
+            double x=xs[c]+c*t.columnGap+p.layout.marginLeft,top=y+p.layout.marginTop;
             double bw=cw-p.layout.marginLeft-p.layout.marginRight,bh=heights[r]-p.layout.marginTop-p.layout.marginBottom;
             auto color=[&](t_CKINT rgb){cairo_set_source_rgb(cr,((rgb>>16)&255)/255.0,((rgb>>8)&255)/255.0,(rgb&255)/255.0);};
             cairo_save(cr); cairo_rectangle(cr,x,top,bw,bh); cairo_clip(cr);
@@ -734,7 +840,7 @@ bool drawTable(cairo_t *cr,const Table &t,int width,int canvasHeight,int64_t &y,
             if(b.opacity<1) { cairo_pop_group_to_source(cr); cairo_paint_with_alpha(cr,b.opacity); }
             cairo_restore(cr);
         }
-        y+=heights[r];
+        y+=heights[r]; if(r+1<t.rows) y+=t.rowGap;
     }
     return cairo_status(cr)==CAIRO_STATUS_SUCCESS;
 }
@@ -1089,6 +1195,43 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","column");
     QUERY->add_arg(QUERY,"float","value");
     if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"TextGrid","Object");
+    gridOffset=QUERY->add_mvar(QUERY,"int","@textGridNative",FALSE);
+    if(gridOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,text_grid_ctor); QUERY->add_dtor(QUERY,text_grid_dtor);
+    QUERY->add_mfun(QUERY,text_grid_create,"int","create");
+    QUERY->add_arg(QUERY,"int","rows");
+    QUERY->add_arg(QUERY,"int","columns");
+    QUERY->add_mfun(QUERY,text_grid_rows,"int","rows");
+    QUERY->add_mfun(QUERY,text_grid_cols,"int","columns");
+    QUERY->add_mfun(QUERY,text_grid_set_cell,"int","setPanel");
+    QUERY->add_arg(QUERY,"int","row");
+    QUERY->add_arg(QUERY,"int","column");
+    QUERY->add_arg(QUERY,"string","text");
+    QUERY->add_arg(QUERY,"TextStyle","style");
+    QUERY->add_mfun(QUERY,text_grid_cell_text,"string","panelText");
+    QUERY->add_arg(QUERY,"int","row");
+    QUERY->add_arg(QUERY,"int","column");
+    QUERY->add_mfun(QUERY,text_grid_layout,"int","setPanelLayout");
+    QUERY->add_arg(QUERY,"int","row");
+    QUERY->add_arg(QUERY,"int","column");
+    QUERY->add_arg(QUERY,"TextParagraphStyle","style");
+    QUERY->add_mfun(QUERY,text_grid_box,"int","setPanelContainer");
+    QUERY->add_arg(QUERY,"int","row");
+    QUERY->add_arg(QUERY,"int","column");
+    QUERY->add_arg(QUERY,"TextContainer","container");
+    QUERY->add_mfun(QUERY,text_grid_weight_get,"float","columnWeight");
+    QUERY->add_arg(QUERY,"int","column");
+    QUERY->add_mfun(QUERY,text_grid_weight_set,"float","columnWeight");
+    QUERY->add_arg(QUERY,"int","column");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_grid_columnGap_get,"int","columnGap");
+    QUERY->add_mfun(QUERY,text_grid_columnGap_set,"int","columnGap");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_grid_rowGap_get,"int","rowGap");
+    QUERY->add_mfun(QUERY,text_grid_rowGap_set,"int","rowGap");
+    QUERY->add_arg(QUERY,"int","value");
+    if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextDocument","Object");
     docOffset=QUERY->add_mvar(QUERY,"int","@textDocumentNative",FALSE);
     if(docOffset==CK_INVALID_OFFSET) return FALSE;
@@ -1154,6 +1297,14 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"TextTable","table");
     QUERY->add_mfun(QUERY,text_doc_remove_table,"int","removeTable");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_doc_append_grid,"int","appendGrid");
+    QUERY->add_arg(QUERY,"TextGrid","grid");
+    QUERY->add_mfun(QUERY,text_doc_grid_count,"int","gridCount");
+    QUERY->add_mfun(QUERY,text_doc_set_grid,"int","setGrid");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextGrid","grid");
+    QUERY->add_mfun(QUERY,text_doc_remove_grid,"int","removeGrid");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_doc_measure_document,"int","measureDocument");
     QUERY->add_arg(QUERY,"int","width");
