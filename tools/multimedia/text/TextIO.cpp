@@ -834,6 +834,24 @@ CK_DLL_MFUN(text_flow_set_text) {
         p->source=std::move(next); p->planned=false; RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(text_flow_append_run) {
+    RETURN->v_int=0;
+    try {
+        auto *p=flowState(SELF,API); auto *r=runState(GET_NEXT_OBJECT(ARGS),API);
+        if(!p||!r||r->text.empty()||p->source.runs.size()>=1024||r->text.size()>65536-p->source.text.size()) return;
+        auto next=p->source.text+r->text;
+        p->source.runs.push_back(*r); p->source.text.swap(next);
+        p->planned=false; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_flow_overflow_bytes) {
+    auto *p=flowState(SELF,API);
+    RETURN->v_int=p&&p->planned?static_cast<t_CKINT>(p->source.text.size()-p->consumed):-1;
+}
+CK_DLL_MFUN(text_flow_overflow_text) {
+    auto *p=flowState(SELF,API);
+    RETURN->v_string=API->object->create_string(VM,p&&p->planned?p->source.text.c_str()+p->consumed:"",FALSE);
+}
 CK_DLL_MFUN(text_flow_append_frame) {
     RETURN->v_int=0;
     try {
@@ -1392,7 +1410,20 @@ bool planFrameFlow(FrameFlow &flow) {
         if(dw<1||dh<1) return false;
         int w=static_cast<int>(std::floor(dw)),h=static_cast<int>(std::floor(dh));
         if(consumed==flow.source.text.size()) { fragments.emplace_back(); continue; }
-        Paragraph rest=flow.source; rest.text=flow.source.text.substr(consumed); rest.baseBytes=rest.text.size();
+        Paragraph rest=flow.source;
+        rest.text=flow.source.text.substr(consumed);
+        rest.baseBytes=consumed<flow.source.baseBytes?flow.source.baseBytes-consumed:0;
+        rest.runs.clear();
+        size_t offset=flow.source.baseBytes;
+        for(const auto &run:flow.source.runs) {
+            size_t next=offset+run.text.size();
+            if(next>consumed) {
+                size_t skip=consumed>offset?consumed-offset:0;
+                rest.runs.push_back(Run{run.text.substr(skip),run.style});
+            }
+            offset=next;
+        }
+        if(!rest.baseBytes&&!rest.runs.empty()) rest.style=rest.runs.front().style;
         auto layout=makeLayout(cr.get(),rest,w);
         if(!layout) return false;
         std::unique_ptr<PangoLayoutIter,decltype(&pango_layout_iter_free)> it(pango_layout_get_iter(layout.get()),pango_layout_iter_free);
@@ -2657,6 +2688,10 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_flow_set_text,"int","setText");
     QUERY->add_arg(QUERY,"string","text");
     QUERY->add_arg(QUERY,"TextStyle","style");
+    QUERY->add_mfun(QUERY,text_flow_append_run,"int","appendRun");
+    QUERY->add_arg(QUERY,"TextRun","run");
+    QUERY->add_mfun(QUERY,text_flow_overflow_bytes,"int","overflowBytes");
+    QUERY->add_mfun(QUERY,text_flow_overflow_text,"string","overflowText");
     QUERY->add_mfun(QUERY,text_flow_append_frame,"int","appendFrame");
     QUERY->add_arg(QUERY,"TextFrame","frame");
     QUERY->add_mfun(QUERY,text_flow_frame_count,"int","frameCount");

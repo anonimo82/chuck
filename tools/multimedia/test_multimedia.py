@@ -6058,8 +6058,69 @@ check(flow.ready()==1);
 """,43,p)
 
 
+
+def text_frame_mixed():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextFlow flow;
+TextFrame frame;
+TextStyle base;
+TextStyle large;
+TextRun run;
+check(flow.overflowBytes()==-1);
+check(flow.overflowText()=="");
+check(base.fontSize(16)==16);
+check(large.fontSize(64)==64);
+check(flow.setText("small\\n",base));
+check(run.set("café",large));
+check(flow.appendRun(run));
+check(run.setText("changed"));
+check(frame.setGeometry(0,0,200,25));
+check(flow.appendFrame(frame));
+check(flow.layout());
+check(flow.ready()==1);
+check(flow.frameText(0)=="small\\n");
+check(flow.overflowText()=="café");
+check(flow.overflowBytes()==5);
+check(frame.setGeometry(0,0,320,150));
+check(flow.appendFrame(frame));
+check(flow.overflowBytes()==-1);
+check(flow.overflowText()=="");
+check(flow.layout());
+check(flow.frameText(1)=="café");
+check(flow.overflowBytes()==0);
+check(flow.overflowText()=="");
+check(flow.setText("",base));
+check(flow.overflowBytes()==-1);
+check(run.set("MMMMMMMMMMMMMMMMMMMMMMMM",large));
+check(flow.appendRun(run));
+check(frame.setGeometry(0,0,100,100));
+check(flow.setFrame(0,frame));
+check(frame.setGeometry(0,0,2000,300));
+check(flow.setFrame(1,frame));
+check(flow.layout());
+check(flow.frameText(0)!="");
+check(flow.frameText(1)!="");
+check(flow.frameText(0)+flow.frameText(1)+flow.overflowText()=="MMMMMMMMMMMMMMMMMMMMMMMM");
+check(flow.overflowBytes()==0);
+flow.clearFrames();
+check(flow.layout());
+check(flow.overflowBytes()==24);
+check(flow.overflowText()=="MMMMMMMMMMMMMMMMMMMMMMMM");
+check(flow.setText("reset",base));
+check(flow.layout());
+check(flow.overflowBytes()==5);
+check(flow.overflowText()=="reset");
+check(frame.setGeometry(0,0,200,1));
+check(flow.appendFrame(frame));
+check(flow.layout());
+check(flow.frameText(0)=="");
+check(flow.overflowText()=="reset");
+""",48,p)
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
