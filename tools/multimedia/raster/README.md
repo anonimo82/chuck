@@ -77,3 +77,7 @@ exportAudioSamples(channels,float[] samples) maps each pixel to one PCM frame in
 ## Heightmap export
 
 exportHeightmap(float[] heights) writes width*height normalized heights, in row-major order, using weighted sRGB brightness multiplied by alpha. The current color and opacity controls apply, with the same component rounding as exportPixels. Transparent pixels map to zero height. Exact preallocated array size required; failure preserves the output and the image. Compatible with Model3D.createHeightmap. Native validation pending.
+
+## Raster-to-MIDI sonification
+
+exportPitches(lowPitch,highPitch,alphaThreshold,scan,int[] pitches) maps each pixel to a MIDI pitch by rounded weighted sRGB brightness across the inclusive pitch range 0–127. Alpha below threshold (1–255) maps to -1 (rest). Current color/opacity controls apply with RGBA8 rounding. Scan 0 is row-major, 1 column-major, 2 alternating horizontal rows (serpentine). Exact array size width*height, maximum 100000 pixels. Invalid input preserves output. Compatible with MidiSequence.importPitches; each pixel is a fixed-duration slot, adjacent equal pitches merge, velocity is configured by the MIDI importer. This is creative mapping, not optical music recognition. No new dependencies. Native validation pending.
