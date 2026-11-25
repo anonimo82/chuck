@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "groups": [
+    "raster",
+    "audio",
+    "legacy",
+    "text-core",
+    "text-recent"
+  ]
+}
