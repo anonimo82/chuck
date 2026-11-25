@@ -3,6 +3,7 @@
 #include "MediaRasterCompressed.h"
 #include "MediaRasterPng.h"
 #include "MediaRasterPhoto.h"
+#include "MediaRasterCompressedFragment.h"
 #include "MediaVector.h"
 #include "MediaModel.h"
 
@@ -23,8 +24,9 @@ inline int graphicsKind(const Bytes &wire,Header &h,uint64_t &a,uint64_t &b) {
         } else if(decodeRasterPng(wire,candidate,info,pixels)) {
             kind=6;x=info.width;y=info.height;
         } else {
-            bool lossless=false;
-            if(decodeRasterPhoto(wire,candidate,info,false,lossless,pixels))kind=7;
+            bool lossless=false;CompressedFragment strip;
+            if(decodeCompressedFragment(wire,candidate,strip,pixels)){kind=9;info={strip.width,strip.height};}
+            else if(decodeRasterPhoto(wire,candidate,info,false,lossless,pixels))kind=7;
             else if(decodeRasterPhoto(wire,candidate,info,true,lossless,pixels))kind=8;
             if(kind){x=info.width;y=info.height;}
         }
