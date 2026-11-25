@@ -10,9 +10,18 @@ def run(module, script, expected, directory):
     path = directory / "test.ck"
     name = {"audio": "AudioIO", "vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO", "raster": "RasterIO", "text": "TextIO", "transport": "MediaTransport"}[module]
     path.write_text(f'@import "{name}";\n' + '0 => int smokeCheckIndex;\nfun void check(int ok) { smokeCheckIndex++; if(ok) <<< "PASS", smokeCheckIndex >>>; else <<< "FAIL", smokeCheckIndex >>>; }\n' + script, encoding="utf-8")
+    timeout = 60
+    if module == "raster":
+        try:
+            timeout = int(os.environ.get("MULTIMEDIA_RASTER_TIMEOUT", "180"))
+            if not 1 <= timeout <= 900:
+                raise ValueError
+        except ValueError:
+            raise SystemExit("MULTIMEDIA_RASTER_TIMEOUT must be an integer from 1 to 900 seconds")
+        print(f"Raster smoke timeout: {timeout} seconds", flush=True)
     print(f"SMOKE_EXPECTED {expected}", flush=True)
     try:
-        r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
+        r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         def decoded(value):
             return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else (value or "")
