@@ -74,19 +74,19 @@ O = usable foundational capability; P = partial capability; M = specific capabil
 | Type | Synthesis | Manipulation | Input | Output | Capture | Conversion | Transmission | Automation |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Raster | O | O | O | O | M | O | M | O |
-| Vector | O | P | O | O | N/A | O | M | O |
+| Vector | O | O | O | O | N/A | O | M | O |
 | 3D | O | O | O | O | N/A | O | M | O |
 | Audio Wave | O | O | O | O | O | O | M | O |
 | Audio MIDI | O | O | O | O | P | O | P | O |
 | Video | O | O | O | O | M | O | M | O |
 | Text | O | O | O | O | P | O | P | O |
 
-42 O, 5 P, 7 M, 2 N/A = 56. Weighted coverage over 54 applicable cells (O=1, P=0.5) = 82.41%; this is a new static rubric, not a comparable measured increase over the earlier historical estimate, nor a percentage of engineering effort.
+43 O, 4 P, 7 M, 2 N/A = 56. Weighted coverage over 54 applicable cells (O=1, P=0.5) = 83.33%; this is a new static rubric, not a comparable measured increase over the earlier historical estimate, nor a percentage of engineering effort.
 
 ### Evidence and gaps by type
 
 - Raster: RasterImage create/fill/line/composite/crop/resize, load/save, RasterIO.convert, typed pixel/audio/pitch/heightmap export and numeric controls/keyframe animation. No dedicated live screen/camera acquisition or media transport identified.
-- Vector: VectorImage.create/addRect/addCircle/addLine/addPolygon/removeShape/load/save/render/exportPixels and cross-type exports; global transforms and numeric automation. Partial manipulation: imported arbitrary SVG is not fully editable as independent shapes; provide bounded editable shape operations without tracing. Vector capture excluded; transport remains missing.
+- Vector: VectorImage.create/addRect/addCircle/addLine/addPolygon/removeShape/load/save/render/exportPixels and cross-type exports; global transforms and numeric automation. Operational foundational manipulation after #169 and Windows local validation: individual geometry, affine transforms, solid paint, structural groups, duplication, stacking order and explicit editable SVG subset loading. Arbitrary SVG DOM editing is not claimed; tracing remains excluded. Vector capture excluded; transport remains missing.
 - 3D: Model3D.createMesh/createBoxes/setVertex/transformMesh, materials, skinning and animation controller, load/save, orthographic rendering/projection and sonification. Optional ChuGL geometry/scene bridge documented, graphical runtime not certified by headless baseline. Live geometry capture excluded; no dedicated network scene transport identified.
 - Wave: AudioBuffer.create/importSamples, crop/mix/resample/filters, load/save, format conversion and visualization/pitch analysis. Native ChucK adc/dac, SndBuf and WvOut cover foundational local device acquisition/playback/recording and scheduling. No dedicated network waveform streaming/transport identified.
 - MIDI: MidiSequence.create/addNote/addCC/addTempo, edit/quantize, load/save, renderSamples and visual/geometry export. Native MidiIn/MidiOut provide live event I/O; partial capture because no direct timestamped MidiSequence recording bridge was identified; partial transmission because MIDI device protocol is supported but network transport is not established.
@@ -117,3 +117,7 @@ User prioritized vector manipulation before transmission and capture. #165: gene
 #168: nested structural groups, duplication and z-order; 65 new checks, global 4519, local 237; functional cadence 4/20. Native validation pending.
 
 #169: explicit editable SVG subset loading and end-to-end regression; 63 new checks, global 4582, local 300; functional cadence 5/20. Local native validation required. Vector manipulation classification remains partial until validation and scope review; arbitrary SVG editing not claimed.
+
+## Validation checkpoint after #169
+
+Developer-reported Windows Local: expected=300, PASS=300, FAIL=0, missing=0, unreported=0, extra=0, suites=1/1, status=PASS. All five vector groups validated. Cumulative validated checks 4582; last Full baseline remains 4282 after #161; cadence 5/20, next local cycle 0/5. Clear the validated local groups, retain global manifest. Promote vector manipulation to O under foundational coverage rubric (not full SVG editor parity). Remaining 11 applicable gaps: raster and video capture missing; MIDI and text capture partial; raster, vector, 3D, waveform and video transmission missing; MIDI and text transmission partial. Next priority to be selected by user; no new implementation choice committed. No workflow changes.
