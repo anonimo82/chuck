@@ -6349,7 +6349,7 @@ def text_flow_txt():
         p = pathlib.Path(directory)
         (p / "input.txt").write_bytes(b"\xef\xbb\xbf" + "café\r\n\rsecond\n".encode("utf-8"))
         (p / "invalid.txt").write_bytes(b"\xff")
-        (p / "nul.txt").write_bytes(b"a\x00b")
+        (p / "embedded-nul.txt").write_bytes(b"a\x00b")
         (p / "long.txt").write_bytes(b"a" * 65537)
         (p / "oversize.txt").write_bytes(b"a" * 131076)
         (p / "empty.txt").write_bytes(b"")
@@ -6370,7 +6370,7 @@ check(flow.appendFrame(frame));
 check(flow.layout());
 check(!flow.loadTXT("missing.txt",style));
 check(!flow.loadTXT("invalid.txt",style));
-check(!flow.loadTXT("nul.txt",style));
+check(!flow.loadTXT("embedded-nul.txt",style));
 check(!flow.loadTXT("long.txt",style));
 check(!flow.loadTXT("oversize.txt",style));
 check(!flow.loadTXT("wrong.ckflow",style));
