@@ -3422,3 +3422,64 @@ clip.clear();
 check(!clip.exportPixels(4,4,pixels));
 check(pixels[2]==128);
 """,26,p)
+
+    run("audio", """
+AudioBuffer audio;
+int pixels[24];
+check(!audio.exportWaveform(0,0,2,2,3,pixels));
+check(audio.importSamples(8000,1,[-1.0,1.0,0.0,0.0]));
+check(audio.exportWaveform(0,0,2,2,3,pixels));
+check(pixels[0]==0 && pixels[4]==255 && pixels[16]==255 && pixels[20]==0);
+check(pixels[3]==255 && pixels[23]==255);
+check(audio.exportWaveform(0,2,2,2,3,pixels));
+check(pixels[0]==0 && pixels[4]==0 && pixels[8]==255 && pixels[12]==255 && pixels[16]==0);
+check(!audio.exportWaveform(0,-1,2,2,3,pixels));
+check(!audio.exportWaveform(0,3,2,2,3,pixels));
+check(!audio.exportWaveform(0,0,0,2,3,pixels));
+check(!audio.exportWaveform(1,0,2,2,3,pixels));
+check(!audio.exportWaveform(0,0,2,3,3,pixels));
+check(pixels[8]==255 && pixels[0]==0);
+check(audio.exportWaveform(0,1,1,2,3,pixels));
+check(pixels[0]==255 && pixels[4]==255 && pixels[8]==0);
+0.0=>audio.gain;
+check(audio.exportWaveform(0,0,2,2,3,pixels));
+check(pixels[8]==255 && pixels[12]==255 && pixels[0]==0);
+audio.reset();
+check(audio.exportWaveform(0,0,4,2,3,pixels));
+int whole[24];
+check(audio.exportWaveform(0,2,3,whole));
+check(whole[0]==pixels[0] && whole[8]==pixels[8] && whole[20]==pixels[20]);
+check(audio.frames()==4 && audio.sampleAt(0,0)==-1.0);
+""",21,p)
+
+    run("video", """
+@import "AudioIO";
+AudioBuffer audio;
+VideoWriter writer;
+VideoClip clip;
+VideoAudio soundtrack;
+float source[8000];
+for(0=>int i;i<4000;i++) 0.5=>source[i];
+for(4000=>int i;i<8000;i++) -0.5=>source[i];
+check(audio.importSamples(8000,1,source));
+check(writer.openAV("waveform-animation.mkv",16,16,2,8000,1));
+int pixels[1024];
+float samples[4000];
+for(0=>int i;i<2;i++) {
+    check(audio.exportWaveform(0,i*4000,4000,16,16,pixels));
+    check(audio.readSamples(i*4000,samples));
+    check(writer.appendAV(pixels,samples));
+}
+check(writer.audioFrames()==8000 && writer.frames()==2);
+check(writer.finish());
+check(clip.load("waveform-animation.mkv"));
+check(clip.exportPixels(pixels));
+check(pixels[4*16*4]==255 && pixels[11*16*4]==0);
+check(clip.next()==1);
+check(clip.exportPixels(pixels));
+check(pixels[4*16*4]==0 && pixels[11*16*4]==255);
+check(soundtrack.load("waveform-animation.mkv",0));
+check(soundtrack.frames()==8000 && soundtrack.sampleRate()==8000);
+check(soundtrack.exportSamples(source));
+check(source[0]==0.5 && source[7999]==-0.5);
+""",20,p)
