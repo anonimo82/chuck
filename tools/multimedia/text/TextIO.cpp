@@ -114,7 +114,7 @@ struct PageStyle {
 };
 struct FrameStyle { t_CKINT x=0,y=0,width=320,height=240,page=0; Container box; };
 struct FlowSlice { size_t start=0,end=0; int bottom=0; };
-struct FrameFlow { std::vector<FrameStyle> frames; Paragraph source; std::vector<FlowSlice> slices; size_t consumed=0; bool planned=false; };
+struct FrameFlow { std::vector<FrameStyle> frames; Paragraph source; std::vector<FlowSlice> slices; size_t consumed=0,selectionAnchor=0,selectionFocus=0; bool planned=false; };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; std::vector<NodeBlock> nodes; size_t nextOrder=0; };
 t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0,frameOffset=0,flowOffset=0;
 FrameFlow *flowState(Chuck_Object *self,CK_DL_API API) {
@@ -832,7 +832,7 @@ CK_DLL_MFUN(text_flow_set_text) {
         auto *style=styleState(GET_NEXT_OBJECT(ARGS),API);
         if(!p||!style||!validText(value,65536)) return;
         Paragraph next; next.text=value; next.baseBytes=value.size(); next.style=*style;
-        p->source=std::move(next); p->planned=false; RETURN->v_int=1;
+        p->source=std::move(next); p->selectionAnchor=p->selectionFocus=0; p->planned=false; RETURN->v_int=1;
     } catch(...) {}
 }
 // Interchange only inline content: paragraph layout and frame geometry are independent.
@@ -858,7 +858,7 @@ CK_DLL_MFUN(text_doc_export_flow) {
         auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *f=flowState(GET_NEXT_OBJECT(ARGS),API);
         if(!indexOK(d,i)||!f) return;
         auto next=inlineContent(d->paragraphs[i]);
-        f->source=std::move(next); f->planned=false; RETURN->v_int=1;
+        f->source=std::move(next); f->selectionAnchor=f->selectionFocus=0; f->planned=false; RETURN->v_int=1;
     } catch(...) {}
 }
 CK_DLL_MFUN(text_flow_append_run) {
@@ -920,6 +920,38 @@ CK_DLL_MFUN(text_flow_frame_text) {
         }
     } catch(...) { out.clear(); }
     RETURN->v_string=API->object->create_string(VM,out.c_str(),FALSE);
+}
+bool flowByteBoundary(const std::string &text,t_CKINT offset) {
+    return offset>=0&&static_cast<uint64_t>(offset)<=text.size()&&
+        (static_cast<size_t>(offset)==text.size()||(static_cast<unsigned char>(text[static_cast<size_t>(offset)])&0xc0)!=0x80);
+}
+CK_DLL_MFUN(text_flow_set_selection) {
+    RETURN->v_int=0;
+    auto *p=flowState(SELF,API); auto a=GET_NEXT_INT(ARGS),b=GET_NEXT_INT(ARGS);
+    if(!p||!flowByteBoundary(p->source.text,a)||!flowByteBoundary(p->source.text,b)) return;
+    p->selectionAnchor=static_cast<size_t>(a); p->selectionFocus=static_cast<size_t>(b); RETURN->v_int=1;
+}
+CK_DLL_MFUN(text_flow_selection_anchor) {
+    auto *p=flowState(SELF,API); RETURN->v_int=p?static_cast<t_CKINT>(p->selectionAnchor):-1;
+}
+CK_DLL_MFUN(text_flow_selection_focus) {
+    auto *p=flowState(SELF,API); RETURN->v_int=p?static_cast<t_CKINT>(p->selectionFocus):-1;
+}
+CK_DLL_MFUN(text_flow_selection_start) {
+    auto *p=flowState(SELF,API); RETURN->v_int=p?static_cast<t_CKINT>(std::min(p->selectionAnchor,p->selectionFocus)):-1;
+}
+CK_DLL_MFUN(text_flow_selection_end) {
+    auto *p=flowState(SELF,API); RETURN->v_int=p?static_cast<t_CKINT>(std::max(p->selectionAnchor,p->selectionFocus)):-1;
+}
+CK_DLL_MFUN(text_flow_selected_text) {
+    auto *p=flowState(SELF,API); std::string out;
+    try {
+        if(p) { auto a=std::min(p->selectionAnchor,p->selectionFocus),b=std::max(p->selectionAnchor,p->selectionFocus); out=p->source.text.substr(a,b-a); }
+    } catch(...) { out.clear(); }
+    RETURN->v_string=API->object->create_string(VM,out.c_str(),FALSE);
+}
+CK_DLL_MFUN(text_flow_clear_selection) {
+    auto *p=flowState(SELF,API); if(p) p->selectionAnchor=p->selectionFocus;
 }
 CK_DLL_MFUN(text_flow_source_text) {
     auto *p=flowState(SELF,API);
@@ -2617,7 +2649,7 @@ CK_DLL_MFUN(text_flow_load_txt) {
             if(next.text.size()>65536) return;
         }
         next.baseBytes=next.text.size();
-        p->source=std::move(next); p->planned=false; RETURN->v_int=1;
+        p->source=std::move(next); p->selectionAnchor=p->selectionFocus=0; p->planned=false; RETURN->v_int=1;
     } catch(...) {}
 }
 CK_DLL_MFUN(text_flow_save_txt) {
@@ -3014,6 +3046,15 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_flow_clear_frames,"void","clearFrames");
     QUERY->add_mfun(QUERY,text_flow_frame_text,"string","frameText");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_flow_set_selection,"int","setSelection");
+    QUERY->add_arg(QUERY,"int","anchor");
+    QUERY->add_arg(QUERY,"int","focus");
+    QUERY->add_mfun(QUERY,text_flow_selection_anchor,"int","selectionAnchor");
+    QUERY->add_mfun(QUERY,text_flow_selection_focus,"int","selectionFocus");
+    QUERY->add_mfun(QUERY,text_flow_selection_start,"int","selectionStart");
+    QUERY->add_mfun(QUERY,text_flow_selection_end,"int","selectionEnd");
+    QUERY->add_mfun(QUERY,text_flow_selected_text,"string","selectedText");
+    QUERY->add_mfun(QUERY,text_flow_clear_selection,"void","clearSelection");
     QUERY->add_mfun(QUERY,text_flow_source_text,"string","sourceText");
     QUERY->add_mfun(QUERY,text_flow_frame_start,"int","frameStartByte");
     QUERY->add_arg(QUERY,"int","index");
