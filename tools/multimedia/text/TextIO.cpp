@@ -110,6 +110,7 @@ struct PageStyle {
     std::vector<t_CKINT> breaks;
     Paragraph header,footer;
     int headerHeight=0,footerHeight=0;
+    t_CKINT numbering=0,firstNumber=1;
 };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; std::vector<NodeBlock> nodes; size_t nextOrder=0; };
 t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0;
@@ -855,6 +856,42 @@ PAGE_FURNITURE(header,header)
 PAGE_FURNITURE(footer,footer)
 #undef PAGE_FURNITURE
 
+
+CK_DLL_MFUN(text_page_numbering_get) {
+    auto *p=pageState(SELF,API); RETURN->v_int=p?p->numbering:-1;
+}
+CK_DLL_MFUN(text_page_numbering_set) {
+    auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&(v==0||v==1)) RETURN->v_int=p->numbering=v;
+}
+CK_DLL_MFUN(text_page_first_number_get) {
+    auto *p=pageState(SELF,API); RETURN->v_int=p?p->firstNumber:-1;
+}
+CK_DLL_MFUN(text_page_first_number_set) {
+    auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=1&&v<=999999) RETURN->v_int=p->firstNumber=v;
+}
+namespace {
+bool expandPageBand(const Paragraph &source,const PageStyle &p,int index,int count,Paragraph &out) {
+    out=source;
+    if(!p.numbering) return true;
+    std::string expanded;
+    const auto &input=source.text;
+    const auto number=std::to_string(p.firstNumber+index);
+    const auto total=std::to_string(count);
+    for(size_t i=0;i<input.size();) {
+        if(input.compare(i,2,"{{")==0) { expanded+='{'; i+=2; }
+        else if(input.compare(i,2,"}}")==0) { expanded+='}'; i+=2; }
+        else if(input.compare(i,6,"{page}")==0) { expanded+=number; i+=6; }
+        else if(input.compare(i,7,"{pages}")==0) { expanded+=total; i+=7; }
+        else expanded+=input[i++];
+        if(expanded.size()>65536) return false;
+    }
+    out.text=std::move(expanded); out.baseBytes=out.text.size();
+    return true;
+}
+}
+
 CK_DLL_CTOR(text_node_ctor) {
     OBJ_MEMBER_UINT(SELF,nodeOffset)=0;
     try { OBJ_MEMBER_UINT(SELF,nodeOffset)=reinterpret_cast<uintptr_t>(new Node); } catch(...) {}
@@ -1535,9 +1572,7 @@ bool planPages(const Document &d,const PageStyle &p,std::vector<PageEntry> &entr
     if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return false;
     int width=p.width-p.marginLeft-p.marginRight, height=p.height-p.marginTop-p.marginBottom-p.headerHeight-p.footerHeight;
     if(height<=0) return false;
-    int fw=0,fh=0;
-    if(p.headerHeight&&(!paragraphDimensions(cr.get(),p.header,width,fw,fh)||fh>p.headerHeight)) return false;
-    if(p.footerHeight&&(!paragraphDimensions(cr.get(),p.footer,width,fw,fh)||fh>p.footerHeight)) return false;
+
     const size_t blocks=d.paragraphs.size()+d.tables.size()+d.nodes.size();
     if(!p.breaks.empty()&&static_cast<size_t>(p.breaks.back())>=blocks) return false;
     count=1; int used=0; size_t nextBreak=0;
@@ -1567,15 +1602,26 @@ bool planPages(const Document &d,const PageStyle &p,std::vector<PageEntry> &entr
         int w=0,h=0;
         if(!paragraphDimensions(cr.get(),d.paragraphs[pi],width,w,h)||!place(0,pi,h)) return false;
     }
+    // Validate actual expanded strings only after the final page count is known.
+    auto fits=[&](const Paragraph &source,int bandHeight,int index) {
+        if(!bandHeight) return true;
+        Paragraph expanded; int fw=0,fh=0;
+        return expandPageBand(source,p,index,count,expanded)&&
+               paragraphDimensions(cr.get(),expanded,width,fw,fh)&&fh<=bandHeight;
+    };
+    for(int i=0;i<(p.numbering?count:1);++i)
+        if(!fits(p.header,p.headerHeight,i)||!fits(p.footer,p.footerHeight,i)) return false;
     return true;
 }
 
-bool drawPageContent(cairo_t *cr,const Document &selected,const PageStyle &p) {
+bool drawPageContent(cairo_t *cr,const Document &selected,const PageStyle &p,int index,int count) {
     int w=p.width-p.marginLeft-p.marginRight;
     int h=p.height-p.marginTop-p.marginBottom-p.headerHeight-p.footerHeight;
     auto band=[&](const Paragraph &paragraph,int y,int height) {
         if(!height) return true;
-        Document d; d.paragraphs.push_back(paragraph);
+        Paragraph expanded;
+        if(!expandPageBand(paragraph,p,index,count,expanded)) return false;
+        Document d; d.paragraphs.push_back(std::move(expanded));
         cairo_save(cr); cairo_translate(cr,p.marginLeft,y);
         cairo_rectangle(cr,0,0,w,height); cairo_clip(cr);
         bool ok=drawDocument(cr,d,w,height);
@@ -1606,7 +1652,7 @@ SurfacePtr renderPage(const Document &d,const PageStyle &p,t_CKINT page) {
     if(p.backgroundColor<0) cairo_set_source_rgba(cr.get(),0,0,0,0);
     else cairo_set_source_rgb(cr.get(),((p.backgroundColor>>16)&255)/255.0,((p.backgroundColor>>8)&255)/255.0,(p.backgroundColor&255)/255.0);
     cairo_paint(cr.get()); cairo_set_operator(cr.get(),CAIRO_OPERATOR_OVER);
-    if(!drawPageContent(cr.get(),selected,p)) return SurfacePtr(nullptr,cairo_surface_destroy);
+    if(!drawPageContent(cr.get(),selected,p,static_cast<int>(page),count)) return SurfacePtr(nullptr,cairo_surface_destroy);
     cairo_surface_flush(surface.get());
     if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
     return surface;
@@ -1720,7 +1766,7 @@ CK_DLL_MFUN(text_doc_save_pdf) {
                         cairo_save(cr.get());
                         cairo_scale(cr.get(),scale,scale);
                         if(p->backgroundColor>=0) { nodeColor(cr.get(),p->backgroundColor); cairo_paint(cr.get()); }
-                        ok=drawPageContent(cr.get(),selected,*p);
+                        ok=drawPageContent(cr.get(),selected,*p,page,count);
                         cairo_restore(cr.get());
                         if(ok) cairo_show_page(cr.get());
                         ok=ok&&cairo_status(cr.get())==CAIRO_STATUS_SUCCESS;
@@ -2364,6 +2410,12 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_mfun(QUERY,text_page_clear_footer,"void","clearFooter");
     QUERY->add_mfun(QUERY,text_page_footer_height,"int","footerHeight");
+    QUERY->add_mfun(QUERY,text_page_numbering_get,"int","numbering");
+    QUERY->add_mfun(QUERY,text_page_numbering_set,"int","numbering");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_page_first_number_get,"int","firstNumber");
+    QUERY->add_mfun(QUERY,text_page_first_number_set,"int","firstNumber");
+    QUERY->add_arg(QUERY,"int","value");
     QUERY->add_mfun(QUERY,text_page_add_break,"int","addBreak");
     QUERY->add_arg(QUERY,"int","blockIndex");
     QUERY->add_mfun(QUERY,text_page_remove_break,"int","removeBreak");
