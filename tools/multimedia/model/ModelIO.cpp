@@ -16,6 +16,7 @@
 #include <limits>
 #include <new>
 #include <vector>
+#include <utility>
 #include <assimp/material.h>
 
 namespace {
@@ -845,6 +846,129 @@ CK_DLL_MFUN(model3d_export_posed) {
     } catch(...) {}
 }
 
+
+namespace {
+const aiAnimation *animationAt(ModelState *p,t_CKINT index) {
+    return p&&p->scene&&index>=0&&static_cast<uint64_t>(index)<p->scene->mNumAnimations
+        ? p->scene->mAnimations[index] : nullptr;
+}
+}
+// Generated clips use seconds as ticks and a shared time grid for all bones.
+// Each frame stores six values per bone: local XYZ and Euler XYZ in degrees.
+CK_DLL_MFUN(model3d_add_animation) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=modelState(SELF,API);
+        auto mesh=GET_NEXT_INT(ARGS);
+        auto name=GET_NEXT_STRING_SAFE(ARGS);
+        auto times=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto poses=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto *m=editableMesh(p,mesh);
+        if(!m||!m->HasBones()||!times||!poses||name.empty()||name.size()>255||
+           name.find('\0')!=std::string::npos||p->generated->mNumAnimations>=256) return;
+        auto count=API->object->array_float_size(times);
+        if(count<2||count>10000||uint64_t(count)*m->mNumBones*6>6000000||
+           API->object->array_float_size(poses)!=count*m->mNumBones*6) return;
+        auto *scene=p->generated.get();
+        for(unsigned i=0;i<scene->mNumAnimations;++i)
+            if(scene->mAnimations[i]->mName==aiString(name)) return;
+        std::vector<double> t(count);
+        for(unsigned i=0;i<t.size();++i) {
+            t[i]=API->object->array_float_get_idx(times,i);
+            if(!std::isfinite(t[i])||t[i]>1e6||
+               (i==0?t[i]!=0:t[i]<=t[i-1])) return;
+        }
+        auto clip=std::make_unique<aiAnimation>();
+        clip->mName=aiString(name); clip->mTicksPerSecond=1; clip->mDuration=t.back();
+        clip->mChannels=new aiNodeAnim*[m->mNumBones]();
+        clip->mNumChannels=m->mNumBones;
+        constexpr double rad=3.14159265358979323846/180.0;
+        for(unsigned b=0;b<m->mNumBones;++b) {
+            if(!skinNode(p,mesh,b)) return;
+            auto channel=std::make_unique<aiNodeAnim>();
+            channel->mNodeName=m->mBones[b]->mName;
+            channel->mPositionKeys=new aiVectorKey[count];
+            channel->mRotationKeys=new aiQuatKey[count];
+            channel->mScalingKeys=new aiVectorKey[count];
+            channel->mNumPositionKeys=channel->mNumRotationKeys=channel->mNumScalingKeys=count;
+            for(unsigned k=0;k<t.size();++k) {
+                double v[6];
+                for(unsigned j=0;j<6;++j) {
+                    v[j]=API->object->array_float_get_idx(poses,(uint64_t(k)*m->mNumBones+b)*6+j);
+                    if(!coordinate(v[j])) return;
+                }
+                aiMatrix4x4 rx,ry,rz;
+                aiMatrix4x4::RotationX(std::remainder(v[3],360.0)*rad,rx);
+                aiMatrix4x4::RotationY(std::remainder(v[4],360.0)*rad,ry);
+                aiMatrix4x4::RotationZ(std::remainder(v[5],360.0)*rad,rz);
+                auto q=aiQuaternion(aiMatrix3x3(rz*ry*rx));
+                q.Normalize();
+                if(k) {
+                    const auto &prev=channel->mRotationKeys[k-1].mValue;
+                    if(prev.w*q.w+prev.x*q.x+prev.y*q.y+prev.z*q.z<0)
+                        q=aiQuaternion(-q.w,-q.x,-q.y,-q.z);
+                }
+                channel->mPositionKeys[k]=aiVectorKey(t[k],aiVector3D(v[0],v[1],v[2]));
+                channel->mRotationKeys[k]=aiQuatKey(t[k],q);
+                channel->mScalingKeys[k]=aiVectorKey(t[k],aiVector3D(1,1,1));
+            }
+            clip->mChannels[b]=channel.release();
+        }
+        auto list=std::make_unique<aiAnimation*[]>(scene->mNumAnimations+1);
+        for(unsigned i=0;i<scene->mNumAnimations;++i) list[i]=scene->mAnimations[i];
+        list[scene->mNumAnimations]=clip.release();
+        delete[] scene->mAnimations; scene->mAnimations=list.release();
+        RETURN->v_int=scene->mNumAnimations++;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_animations) {
+    auto *p=modelState(SELF,API);
+    RETURN->v_int=p&&p->scene?static_cast<t_CKINT>(p->scene->mNumAnimations):-1;
+}
+CK_DLL_MFUN(model3d_animation_duration) {
+    auto *p=modelState(SELF,API);
+    auto *a=animationAt(p,GET_NEXT_INT(ARGS));
+    RETURN->v_float=a&&a->mTicksPerSecond>0?a->mDuration/a->mTicksPerSecond:-1;
+}
+CK_DLL_MFUN(model3d_sample_animation) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto index=GET_NEXT_INT(ARGS);
+        double seconds=GET_NEXT_FLOAT(ARGS);
+        auto loop=GET_NEXT_INT(ARGS);
+        auto *a=animationAt(p,index);
+        if(!p||!p->generated||!a||!std::isfinite(seconds)||
+           (loop!=0&&loop!=1)||a->mDuration<=0) return;
+        double t=seconds;
+        if(loop) { t=std::fmod(t,a->mDuration); if(t<0) t+=a->mDuration; }
+        else t=std::clamp(t,0.0,a->mDuration);
+        std::vector<std::pair<aiNode*,aiMatrix4x4>> next;
+        for(unsigned i=0;i<a->mNumChannels;++i) {
+            auto *c=a->mChannels[i];
+            auto *node=p->generated->mRootNode->FindNode(c->mNodeName);
+            if(!node||c->mNumPositionKeys<2||c->mNumPositionKeys!=c->mNumRotationKeys) return;
+            auto *keys=c->mPositionKeys;
+            auto upper=std::upper_bound(keys,keys+c->mNumPositionKeys,t,
+                [](double value,const aiVectorKey &key){return value<key.mTime;});
+            unsigned hi=std::min<unsigned>(upper-keys,c->mNumPositionKeys-1);
+            if(!hi) hi=1;
+            unsigned lo=hi-1;
+            ai_real u=static_cast<ai_real>((t-keys[lo].mTime)/(keys[hi].mTime-keys[lo].mTime));
+            auto v=keys[lo].mValue+(keys[hi].mValue-keys[lo].mValue)*u;
+            aiQuaternion q;
+            aiQuaternion::Interpolate(q,c->mRotationKeys[lo].mValue,c->mRotationKeys[hi].mValue,u);
+            q.Normalize();
+            aiMatrix4x4 matrix(q.GetMatrix());
+            matrix.a4=v.x; matrix.b4=v.y; matrix.c4=v.z;
+            if(!finiteMatrix(matrix)) return;
+            next.emplace_back(node,matrix);
+        }
+        for(const auto &item:next) item.first->mTransformation=item.second;
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+
 CK_DLL_QUERY(ModelIO) {
     QUERY->setname(QUERY, "ModelIO");
     QUERY->begin_class(QUERY, "ModelIO", "Object");
@@ -1005,5 +1129,17 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_export_posed,"int","exportPosedVertices");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"float[]","xyz");
+    QUERY->add_mfun(QUERY,model3d_add_animation,"int","addAnimation");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"string","name");
+    QUERY->add_arg(QUERY,"float[]","times");
+    QUERY->add_arg(QUERY,"float[]","poses");
+    QUERY->add_mfun(QUERY,model3d_animations,"int","animations");
+    QUERY->add_mfun(QUERY,model3d_animation_duration,"float","animationDuration");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,model3d_sample_animation,"int","sampleAnimation");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"float","seconds");
+    QUERY->add_arg(QUERY,"int","loop");
     return QUERY->end_class(QUERY);
 }
