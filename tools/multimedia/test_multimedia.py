@@ -7066,8 +7066,87 @@ check(!image.setShapeGeometry(0,rect));
         assert float(root[0].get("r")) == 3
         assert float(root[1].get("stroke-width")) == 3
 
+
+def vector_shape_transform():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("vector", """
+VectorImage image;
+float matrix[6];
+float geometry[4];
+float wrong[5];
+check(!image.getShapeTransform(0,matrix));
+check(image.create(16,16));
+check(image.addRect(0,0,2,2,16711680,1));
+check(image.addCircle(12,12,2,65280,1));
+check(image.getShapeTransform(0,matrix));
+check(matrix[0]==1 && matrix[1]==0 && matrix[2]==0 && matrix[3]==1 && matrix[4]==0 && matrix[5]==0);
+check(!image.getShapeTransform(0,wrong));
+check(!image.setShapeTransform(0,wrong));
+check(!image.translateShape(-1,1,1));
+check(image.translateShape(0,4,2));
+check(image.getShapeTransform(0,matrix));
+check(matrix[4]==4 && matrix[5]==2);
+check(image.getShapeGeometry(0,geometry));
+check(geometry[0]==0 && geometry[1]==0 && geometry[2]==2 && geometry[3]==2);
+int pixels[1024];
+check(image.exportPixels(16,16,pixels));
+check(pixels[3]==0);
+check(pixels[(2*16+4)*4]==255 && pixels[(2*16+4)*4+3]==255);
+check(pixels[(12*16+12)*4+1]==255);
+check(image.scaleShape(0,2,3,4,2));
+check(image.getShapeTransform(0,matrix));
+check(matrix[0]==2 && matrix[3]==3 && matrix[4]==4 && matrix[5]==2);
+check(image.rotateShape(0,90,4,2));
+check(image.getShapeTransform(0,matrix));
+check(Math.fabs(matrix[0])<0.000001 && Math.fabs(matrix[1]-2)<0.000001);
+check(Math.fabs(matrix[2]+3)<0.000001 && Math.fabs(matrix[3])<0.000001);
+check(Math.fabs(matrix[4]-4)<0.000001 && Math.fabs(matrix[5]-2)<0.000001);
+check(!image.scaleShape(0,0,1,0,0));
+check(!image.translateShape(0,1000001,0));
+check(image.getShapeTransform(0,matrix));
+check(Math.fabs(matrix[1]-2)<0.000001);
+[1.0,0.0,0.0,0.0,0.0,0.0] @=> float singular[];
+check(!image.setShapeTransform(0,singular));
+check(image.getShapeTransform(0,matrix));
+check(Math.fabs(matrix[1]-2)<0.000001);
+check(image.resetShapeTransform(0));
+check(image.getShapeTransform(0,matrix));
+check(matrix[0]==1 && matrix[3]==1 && matrix[4]==0 && matrix[5]==0);
+check(image.scaleShape(0,-1,1,4,0));
+check(image.getShapeTransform(0,matrix));
+check(matrix[0]==-1 && matrix[4]==8);
+check(image.resetShapeTransform(0));
+[1.0,0.0,0.5,1.0,3.0,4.0] @=> float shear[];
+check(image.setShapeTransform(0,shear));
+check(image.getShapeTransform(0,matrix));
+check(matrix[2]==0.5 && matrix[4]==3 && matrix[5]==4);
+3.0=>geometry[2];
+check(image.setShapeGeometry(0,geometry));
+check(image.getShapeTransform(0,matrix));
+check(matrix[2]==0.5 && matrix[4]==3);
+check(image.x(2)==2);
+check(image.getShapeTransform(0,matrix));
+check(matrix[4]==3);
+image.reset();
+check(image.x()==0);
+check(image.getShapeTransform(0,matrix));
+check(matrix[4]==3);
+check(image.getShapeTransform(1,matrix));
+check(matrix[0]==1 && matrix[4]==0);
+check(image.save("transformed.svg"));
+check(image.load("transformed.svg"));
+check(!image.getShapeTransform(0,matrix));
+check(image.exportPixels(16,16,pixels));
+""",58,p)
+        import xml.etree.ElementTree as ET
+        root = ET.parse(p / "transformed.svg").getroot()
+        assert root[0].get("transform") == "matrix(1 0 0.5 1 3 4)"
+        assert float(root[0].get("width")) == 3
+        assert root[1].get("transform") is None
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
