@@ -609,6 +609,41 @@ CK_DLL_MFUN(model3d_material_at) {
     auto *m=meshAt(modelState(SELF,API),GET_NEXT_INT(ARGS));
     RETURN->v_int=m?static_cast<t_CKINT>(m->mMaterialIndex):-1;
 }
+namespace {
+const aiMaterial *materialByIndex(ModelState *p,t_CKINT index) {
+    if(!p||!p->scene||index<0||static_cast<uint64_t>(index)>=p->scene->mNumMaterials) return nullptr;
+    return p->scene->mMaterials[index];
+}
+}
+CK_DLL_MFUN(model3d_export_material) {
+    RETURN->v_int=0;
+    try {
+        auto index=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto *m=materialByIndex(modelState(SELF,API),index);
+        if(!m||!a||API->object->array_float_size(a)!=6) return;
+        aiColor4D color(1,1,1,1);
+        if(m->Get(AI_MATKEY_BASE_COLOR,color)!=AI_SUCCESS)
+            if(m->Get(AI_MATKEY_COLOR_DIFFUSE,color)!=AI_SUCCESS) color=aiColor4D(1,1,1,1);
+        ai_real opacity=color.a,metallic=0,roughness=1;
+        // Assimp opacity may duplicate base-color alpha; do not multiply them.
+        if(m->Get(AI_MATKEY_OPACITY,opacity)!=AI_SUCCESS) opacity=color.a;
+        if(m->Get(AI_MATKEY_METALLIC_FACTOR,metallic)!=AI_SUCCESS) metallic=0;
+        if(m->Get(AI_MATKEY_ROUGHNESS_FACTOR,roughness)!=AI_SUCCESS) roughness=1;
+        double values[]={color.r,color.g,color.b,opacity,metallic,roughness};
+        for(double v:values) if(!std::isfinite(v)) return;
+        for(unsigned i=0;i<6;++i)
+            API->object->array_float_set_idx(a,i,std::clamp(values[i],0.0,1.0));
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_base_texture_count) {
+    RETURN->v_int=-1;
+    auto *m=materialByIndex(modelState(SELF,API),GET_NEXT_INT(ARGS));
+    if(!m) return;
+    auto n=m->GetTextureCount(aiTextureType_BASE_COLOR);
+    RETURN->v_int=n?n:m->GetTextureCount(aiTextureType_DIFFUSE);
+}
 CK_DLL_MFUN(model3d_assign_material) {
     RETURN->v_int=0;
     auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS),material=GET_NEXT_INT(ARGS);
@@ -1388,6 +1423,11 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_material_count,"int","materials");
     QUERY->add_mfun(QUERY,model3d_material_at,"int","materialAt");
     QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_mfun(QUERY,model3d_export_material,"int","exportMaterial");
+    QUERY->add_arg(QUERY,"int","materialIndex");
+    QUERY->add_arg(QUERY,"float[]","properties");
+    QUERY->add_mfun(QUERY,model3d_base_texture_count,"int","baseColorTextures");
+    QUERY->add_arg(QUERY,"int","materialIndex");
     QUERY->add_mfun(QUERY,model3d_assign_material,"int","assignMaterial");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"int","material");

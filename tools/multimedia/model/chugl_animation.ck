@@ -1,6 +1,7 @@
 @import "ModelIO";
 @import "ChuGL";
 @import "ModelGeometryBridge.ck";
+@import "ModelMaterialBridge.ck";
 
 Model3D model;
 if(me.args() > 0) {
@@ -24,7 +25,11 @@ if(me.args() > 0) {
 }
 ModelGeometryBridge bridge;
 if(!bridge.bind(model,0)) { <<< "Mesh zero requires triangles and normals" >>>; me.exit(); }
-GMesh mesh(bridge.geometry, new PBRMaterial) --> GG.scene();
+ModelMaterialBridge appearance;
+if(!appearance.bind(model,0)) { <<< "Cannot read material" >>>; me.exit(); }
+// Optional caller-selected image; use a trusted local texture with matching UVs.
+if(me.args()>1) appearance.colorTexture(Texture.load(me.arg(1)));
+GMesh mesh(bridge.geometry, appearance.material) --> GG.scene();
 GG.windowTitle("ModelIO / ChuGL animated mesh");
 now => time start;
 while(true) {
