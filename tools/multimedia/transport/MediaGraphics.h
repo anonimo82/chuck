@@ -36,6 +36,9 @@ inline int graphicsKind(const Bytes &wire,Header &h,uint64_t &a,uint64_t &b) {
     } else if(candidate.type==3) {
         std::vector<double> xyz;std::vector<uint32_t> indices;
         if(decodeModel(wire,candidate,xyz,indices)) {kind=4;x=xyz.size()/3;y=indices.size()/3;}
+        else {uint64_t vertices=0,mask=0;
+            if(decodeMeshAttributes(wire,candidate,vertices,mask,xyz,indices)){kind=10;x=vertices;y=indices.size()/3;}
+        }
     }
     if(kind){h=candidate;a=x;b=y;}
     return kind;
