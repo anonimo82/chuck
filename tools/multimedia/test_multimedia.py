@@ -6097,7 +6097,7 @@ check(run.set("MMMMMMMMMMMMMMMMMMMMMMMM",large));
 check(flow.appendRun(run));
 check(frame.setGeometry(0,0,100,100));
 check(flow.setFrame(0,frame));
-check(frame.setGeometry(0,0,400,300));
+check(frame.setGeometry(0,0,2000,300));
 check(flow.setFrame(1,frame));
 check(flow.layout());
 check(flow.frameText(0)!="");
