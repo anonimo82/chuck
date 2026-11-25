@@ -1,4 +1,4 @@
-#include "MediaLoopback.h"
+#include "MediaSession.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -104,6 +104,61 @@ CK_DLL_MFUN(loop_receive) {
         if(p->take(b)) { write(a,API,b); RETURN->v_int=1; }
     } catch(...) {}
 }
+namespace {
+t_CKUINT sessionOffset=0;
+mediawire::Session *session(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<mediawire::Session*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,sessionOffset)));
+}
+}
+CK_DLL_CTOR(session_ctor) {
+    OBJ_MEMBER_UINT(SELF,sessionOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,sessionOffset)=reinterpret_cast<uintptr_t>(new mediawire::Session); } catch(...) {}
+}
+CK_DLL_DTOR(session_dtor) {
+    delete session(SELF,API); OBJ_MEMBER_UINT(SELF,sessionOffset)=0;
+}
+CK_DLL_MFUN(session_listen) {
+    auto *p=session(SELF,API); auto port=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p&&port>=0&&port<=65535&&p->listenOn(static_cast<unsigned>(port));
+}
+CK_DLL_MFUN(session_connect) {
+    auto *p=session(SELF,API); auto port=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p&&port>0&&port<=65535&&p->connectTo(static_cast<unsigned>(port));
+}
+CK_DLL_MFUN(session_accept) { auto *p=session(SELF,API); RETURN->v_int=p?p->acceptOne():-1; }
+CK_DLL_MFUN(session_port) { auto *p=session(SELF,API); RETURN->v_int=p?p->port():0; }
+CK_DLL_MFUN(session_connected) { auto *p=session(SELF,API); RETURN->v_int=p&&p->state()==2; }
+CK_DLL_MFUN(session_busy) { auto *p=session(SELF,API); RETURN->v_int=p&&p->busy(); }
+CK_DLL_MFUN(session_size) { auto *p=session(SELF,API); RETURN->v_int=p?p->packetSize():0; }
+CK_DLL_MFUN(session_poll) { auto *p=session(SELF,API); RETURN->v_int=p?p->poll():-1; }
+CK_DLL_MFUN(session_disconnect) { if(auto *p=session(SELF,API)) p->disconnect(); }
+CK_DLL_MFUN(session_stop) { if(auto *p=session(SELF,API)) p->stop(); }
+CK_DLL_MFUN(session_send) {
+    RETURN->v_int=0;
+    try {
+        auto *p=session(SELF,API); auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes b;
+        if(p&&p->state()==2&&!p->busy()&&read(a,API,mediawire::headerSize+mediawire::maxPayload,b))
+            RETURN->v_int=p->enqueue(std::move(b));
+    } catch(...) {}
+}
+CK_DLL_MFUN(session_receive) {
+    RETURN->v_int=0;
+    try {
+        auto *p=session(SELF,API); auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->packetSize()||!exact(a,API,p->packetSize())) return;
+        mediawire::Bytes b;
+        if(p->take(b)) { write(a,API,b); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(session_configure) {
+    auto *p=session(SELF,API); auto mask=GET_NEXT_INT(ARGS),limit=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p&&mask>0&&mask<=127&&limit>0&&limit<=mediawire::maxPayload&&p->configure(static_cast<unsigned>(mask),static_cast<unsigned>(limit));
+}
+CK_DLL_MFUN(session_state) { auto *p=session(SELF,API); RETURN->v_int=p?p->state():0; }
+CK_DLL_MFUN(session_error) { auto *p=session(SELF,API); RETURN->v_int=p?p->error():0; }
+CK_DLL_MFUN(session_mask) { auto *p=session(SELF,API); RETURN->v_int=p?p->mask():0; }
+CK_DLL_MFUN(session_limit) { auto *p=session(SELF,API); RETURN->v_int=p?p->limit():0; }
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -142,5 +197,34 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_mfun(QUERY,loop_receive,"int","receivePacket");
     QUERY->add_arg(QUERY,"int[]","packet");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaSession","Object");
+    sessionOffset=QUERY->add_mvar(QUERY,"int","@sessionNative",FALSE);
+    if(sessionOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,session_ctor);
+    QUERY->add_dtor(QUERY,session_dtor);
+    QUERY->add_mfun(QUERY,session_listen,"int","listen");
+    QUERY->add_arg(QUERY,"int","port");
+    QUERY->add_mfun(QUERY,session_connect,"int","connect");
+    QUERY->add_arg(QUERY,"int","port");
+    QUERY->add_mfun(QUERY,session_accept,"int","accept");
+    QUERY->add_mfun(QUERY,session_port,"int","port");
+    QUERY->add_mfun(QUERY,session_connected,"int","connected");
+    QUERY->add_mfun(QUERY,session_busy,"int","sendPending");
+    QUERY->add_mfun(QUERY,session_size,"int","packetSize");
+    QUERY->add_mfun(QUERY,session_poll,"int","poll");
+    QUERY->add_mfun(QUERY,session_disconnect,"void","disconnect");
+    QUERY->add_mfun(QUERY,session_stop,"void","close");
+    QUERY->add_mfun(QUERY,session_send,"int","sendPacket");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,session_receive,"int","receivePacket");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,session_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","mediaMask");
+    QUERY->add_arg(QUERY,"int","maxPayload");
+    QUERY->add_mfun(QUERY,session_state,"int","state");
+    QUERY->add_mfun(QUERY,session_error,"int","error");
+    QUERY->add_mfun(QUERY,session_mask,"int","mediaMask");
+    QUERY->add_mfun(QUERY,session_limit,"int","payloadLimit");
     return QUERY->end_class(QUERY);
 }

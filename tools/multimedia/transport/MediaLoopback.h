@@ -115,6 +115,7 @@ public:
         if(!connected()||busy()||!decode(packet,h,payload)) return false;
         tx_.swap(packet); sent_=0; return true;
     }
+    const Bytes &front() const { return rx_; }
     bool take(Bytes &packet) {
         if(!ready_) return false;
         packet.swap(rx_); rx_.clear(); target_=headerSize; ready_=false; return true;
