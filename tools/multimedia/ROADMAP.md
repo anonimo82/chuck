@@ -131,3 +131,5 @@ User selected all capture before transmission. Proposed three five-functional-PR
 #173: explicit MIDI session start/pause/resume/stop and active elapsed time; 57 new checks, global 4739, local 157; functional cadence 8/20. Native and device validation pending.
 
 #174: bounded UTF-8 text capture buffer with codepoint insertion, cursor and editing; 64 new checks, global 4803, local 221; functional cadence 9/20. Native validation pending. Interactive device adapter and document/flow integration follow.
+
+#175: native terminal key adapter and capture snapshots into TextDocument/TextFlow; 56 new checks, global 4859, local 277; functional cadence 10/20. Local validation required. MIDI and text capture classification pending validation and scope review. Terminal ASCII keys and caller-supplied committed Unicode text supported; no global keyboard hook or IME implementation. Physical MIDI and terminal device behavior not certified by headless tests.
