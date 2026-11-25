@@ -78,6 +78,7 @@
     "transport-raster-lossless",
     "transport-raster-png",
     "transport-raster-photo",
-    "transport-raster-compressed-fragments"
+    "transport-raster-compressed-fragments",
+    "transport-raster-auto"
   ]
 }
