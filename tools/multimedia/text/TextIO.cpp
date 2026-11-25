@@ -60,6 +60,25 @@ std::string listLabel(const ListStyle &p) {
 }
 double listSpace(const ListStyle &p) { return p.mode?p.level*p.levelIndent+p.markerWidth:0; }
 struct Paragraph { std::string text; Style style; size_t baseBytes=0; std::vector<Run> runs; ParagraphStyle layout; Container box; ListStyle list; };
+// Value-owned tree: children are snapshots, not references to VM objects.
+struct Node {
+    int kind=0; // 0 group, 1 paragraph
+    Paragraph paragraph;
+    std::vector<Node> children;
+};
+struct NodeStats { size_t nodes=0,bytes=0; int depth=0; };
+bool nodeStats(const Node &n,NodeStats &out,int depth=1) {
+    if(depth>32||++out.nodes>4096) return false;
+    out.depth=std::max(out.depth,depth);
+    if(n.paragraph.text.size()>1048576-out.bytes) return false;
+    out.bytes+=n.paragraph.text.size();
+    if(n.kind==1&&!n.children.empty()) return false;
+    for(const auto &child:n.children) if(!nodeStats(child,out,depth+1)) return false;
+    return true;
+}
+bool nodeChildOK(const Node *n,t_CKINT i) {
+    return n&&i>=0&&static_cast<uint64_t>(i)<n->children.size();
+}
 struct Table {
     int rows=0,cols=0;
     std::vector<Paragraph> cells;
@@ -82,7 +101,10 @@ struct PageStyle {
     t_CKINT backgroundColor=16777215;
 };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; };
-t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0;
+t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0;
+Node *nodeState(Chuck_Object *self,CK_DL_API API) {
+    return self?reinterpret_cast<Node *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,nodeOffset))):nullptr;
+}
 PageStyle *pageState(Chuck_Object *self,CK_DL_API API) {
     return self?reinterpret_cast<PageStyle *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,pageOffset))):nullptr;
 }
@@ -771,6 +793,94 @@ CK_DLL_MFUN(text_page_backgroundColor_set) {
     auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-2;
     if(p&&v>=-1&&v<=16777215) RETURN->v_int=p->backgroundColor=v;
 }
+CK_DLL_CTOR(text_node_ctor) {
+    OBJ_MEMBER_UINT(SELF,nodeOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,nodeOffset)=reinterpret_cast<uintptr_t>(new Node); } catch(...) {}
+}
+CK_DLL_DTOR(text_node_dtor) { delete nodeState(SELF,API); OBJ_MEMBER_UINT(SELF,nodeOffset)=0; }
+CK_DLL_MFUN(text_node_kind) { auto *n=nodeState(SELF,API); RETURN->v_int=n?n->kind:-1; }
+CK_DLL_MFUN(text_node_clear) {
+    auto *n=nodeState(SELF,API); RETURN->v_int=0;
+    try { if(n) { Node next; *n=std::move(next); RETURN->v_int=1; } } catch(...) {}
+}
+CK_DLL_MFUN(text_node_set_paragraph) {
+    RETURN->v_int=0;
+    try {
+        auto *n=nodeState(SELF,API); auto text=GET_NEXT_STRING_SAFE(ARGS); auto *style=styleState(GET_NEXT_OBJECT(ARGS),API);
+        if(!n||!style||!validText(text,65536)) return;
+        Node next; next.kind=1; next.paragraph.text=std::move(text);
+        next.paragraph.baseBytes=next.paragraph.text.size(); next.paragraph.style=*style;
+        *n=std::move(next); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_node_text) {
+    auto *n=nodeState(SELF,API);
+    RETURN->v_string=API->object->create_string(VM,n&&n->kind==1?n->paragraph.text.c_str():"",FALSE);
+}
+CK_DLL_MFUN(text_node_child_count) {
+    auto *n=nodeState(SELF,API); RETURN->v_int=n?n->children.size():0;
+}
+CK_DLL_MFUN(text_node_depth) {
+    auto *n=nodeState(SELF,API); NodeStats st;
+    RETURN->v_int=n&&nodeStats(*n,st)?st.depth:-1;
+}
+CK_DLL_MFUN(text_node_count) {
+    auto *n=nodeState(SELF,API); NodeStats st;
+    RETURN->v_int=n&&nodeStats(*n,st)?static_cast<t_CKINT>(st.nodes):-1;
+}
+CK_DLL_MFUN(text_node_bytes) {
+    auto *n=nodeState(SELF,API); NodeStats st;
+    RETURN->v_int=n&&nodeStats(*n,st)?static_cast<t_CKINT>(st.bytes):-1;
+}
+CK_DLL_MFUN(text_node_copy) {
+    RETURN->v_int=0;
+    try {
+        auto *n=nodeState(SELF,API); auto *source=nodeState(GET_NEXT_OBJECT(ARGS),API);
+        if(n&&source) { Node next=*source; *n=std::move(next); RETURN->v_int=1; }
+    } catch(...) {}
+}
+namespace {
+bool changeNodeChild(Node *n,t_CKINT index,const Node *child,bool replace) {
+    if(!n||!child||n==child||n->kind!=0||index<0) return false;
+    if(static_cast<uint64_t>(index)>n->children.size()||(replace&&static_cast<uint64_t>(index)==n->children.size())) return false;
+    NodeStats st;
+    if(!nodeStats(*n,st)) return false;
+    if(replace) {
+        NodeStats old;
+        if(!nodeStats(n->children[index],old)) return false;
+        st.nodes-=old.nodes; st.bytes-=old.bytes;
+    }
+    if(!nodeStats(*child,st,2)) return false;
+    Node copy=*child;
+    if(replace) n->children[index]=std::move(copy);
+    else n->children.insert(n->children.begin()+index,std::move(copy));
+    return true;
+}
+}
+CK_DLL_MFUN(text_node_append) {
+    RETURN->v_int=0;
+    try { auto *n=nodeState(SELF,API); auto *c=nodeState(GET_NEXT_OBJECT(ARGS),API); if(n) RETURN->v_int=changeNodeChild(n,n->children.size(),c,false); } catch(...) {}
+}
+CK_DLL_MFUN(text_node_insert) {
+    RETURN->v_int=0;
+    try { auto *n=nodeState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *c=nodeState(GET_NEXT_OBJECT(ARGS),API); RETURN->v_int=changeNodeChild(n,i,c,false); } catch(...) {}
+}
+CK_DLL_MFUN(text_node_replace) {
+    RETURN->v_int=0;
+    try { auto *n=nodeState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *c=nodeState(GET_NEXT_OBJECT(ARGS),API); RETURN->v_int=changeNodeChild(n,i,c,true); } catch(...) {}
+}
+CK_DLL_MFUN(text_node_get) {
+    RETURN->v_int=0;
+    try {
+        auto *n=nodeState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *dest=nodeState(GET_NEXT_OBJECT(ARGS),API);
+        if(nodeChildOK(n,i)&&dest&&dest!=n) { Node copy=n->children[i]; *dest=std::move(copy); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_node_remove) {
+    RETURN->v_int=0;
+    auto *n=nodeState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    if(nodeChildOK(n,i)) { n->children.erase(n->children.begin()+i); RETURN->v_int=1; }
+}
 namespace {
 using LayoutPtr=std::unique_ptr<PangoLayout,decltype(&g_object_unref)>;
 LayoutPtr makeLayout(cairo_t *cr,const Paragraph &p,int width) {
@@ -1415,6 +1525,36 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_page_backgroundColor_get,"int","backgroundColor");
     QUERY->add_mfun(QUERY,text_page_backgroundColor_set,"int","backgroundColor");
     QUERY->add_arg(QUERY,"int","value");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"TextNode","Object");
+    nodeOffset=QUERY->add_mvar(QUERY,"int","@textNodeNative",FALSE);
+    if(nodeOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,text_node_ctor); QUERY->add_dtor(QUERY,text_node_dtor);
+    QUERY->add_mfun(QUERY,text_node_kind,"int","kind");
+    QUERY->add_mfun(QUERY,text_node_clear,"int","clear");
+    QUERY->add_mfun(QUERY,text_node_set_paragraph,"int","setParagraph");
+    QUERY->add_arg(QUERY,"string","text");
+    QUERY->add_arg(QUERY,"TextStyle","style");
+    QUERY->add_mfun(QUERY,text_node_text,"string","text");
+    QUERY->add_mfun(QUERY,text_node_child_count,"int","childCount");
+    QUERY->add_mfun(QUERY,text_node_depth,"int","depth");
+    QUERY->add_mfun(QUERY,text_node_count,"int","nodeCount");
+    QUERY->add_mfun(QUERY,text_node_bytes,"int","textBytes");
+    QUERY->add_mfun(QUERY,text_node_copy,"int","copyFrom");
+    QUERY->add_arg(QUERY,"TextNode","source");
+    QUERY->add_mfun(QUERY,text_node_append,"int","appendChild");
+    QUERY->add_arg(QUERY,"TextNode","child");
+    QUERY->add_mfun(QUERY,text_node_insert,"int","insertChild");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextNode","child");
+    QUERY->add_mfun(QUERY,text_node_replace,"int","setChild");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextNode","child");
+    QUERY->add_mfun(QUERY,text_node_get,"int","getChild");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextNode","destination");
+    QUERY->add_mfun(QUERY,text_node_remove,"int","removeChild");
+    QUERY->add_arg(QUERY,"int","index");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextDocument","Object");
     docOffset=QUERY->add_mvar(QUERY,"int","@textDocumentNative",FALSE);
