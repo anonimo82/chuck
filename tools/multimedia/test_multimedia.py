@@ -6816,8 +6816,97 @@ check(restored.deleteText(0,65536));
 check(restored.sourceText()=="");
 """,60,p)
 
+
+def text_flow_styled_edit():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextFlow flow;
+TextFlow restored;
+TextStyle baseStyle;
+TextStyle accent;
+TextStyle other;
+TextStyle found;
+TextFrame frame;
+check(baseStyle.fontSize(16)==16);
+check(accent.fontSize(24)==24);
+check(other.fontSize(30)==30);
+check(flow.setText("abcd",baseStyle));
+check(flow.insertText(2,"é",accent));
+check(flow.sourceText()=="abécd");
+check(flow.selectionFocus()==4);
+check(flow.styleAt(0,found));
+check(found.fontSize()==16);
+check(flow.styleAt(2,found));
+check(found.fontSize()==24);
+check(!flow.styleAt(3,found));
+check(found.fontSize()==24);
+check(flow.styleAt(4,found));
+check(found.fontSize()==16);
+check(!flow.styleAt(6,found));
+check(!flow.styleAt(-1,found));
+check(accent.fontSize(26)==26);
+check(flow.styleAt(2,found));
+check(found.fontSize()==24);
+check(flow.setSelection(5,1));
+check(flow.applyStyle(1,5,other));
+check(flow.sourceText()=="abécd");
+check(flow.selectionAnchor()==5 && flow.selectionFocus()==1);
+check(flow.styleAt(0,found));
+check(found.fontSize()==16);
+check(flow.styleAt(1,found));
+check(found.fontSize()==30);
+check(flow.styleAt(2,found));
+check(found.fontSize()==30);
+check(flow.styleAt(4,found));
+check(found.fontSize()==30);
+check(flow.styleAt(5,found));
+check(found.fontSize()==16);
+check(frame.setGeometry(0,0,220,100));
+check(flow.appendFrame(frame));
+check(flow.layout());
+check(!flow.applyStyle(3,5,accent));
+check(!flow.applyStyle(5,1,accent));
+check(flow.ready()==1);
+check(flow.applyStyle(2,2,accent));
+check(flow.ready()==1);
+check(flow.selectionAnchor()==5 && flow.selectionFocus()==1);
+check(flow.replaceSelection("猫",accent));
+check(flow.sourceText()=="a猫d");
+check(flow.selectionFocus()==4);
+check(flow.ready()==0);
+check(flow.styleAt(1,found));
+check(found.fontSize()==26);
+check(flow.styleAt(4,found));
+check(found.fontSize()==16);
+check(flow.replaceText(1,4,"XY",other));
+check(flow.sourceText()=="aXYd");
+check(flow.styleAt(2,found));
+check(found.fontSize()==30);
+check(flow.insertText(2,"!"));
+check(flow.sourceText()=="aX!Yd");
+check(flow.styleAt(2,found));
+check(found.fontSize()==16);
+check(flow.styleAt(3,found));
+check(found.fontSize()==30);
+check(flow.saveNative("styled.ckflow"));
+check(restored.loadNative("styled.ckflow"));
+check(restored.sourceText()==flow.sourceText());
+check(restored.styleAt(1,found));
+check(found.fontSize()==30);
+check(restored.styleAt(2,found));
+check(found.fontSize()==16);
+check(restored.styleAt(4,found));
+check(found.fontSize()==16);
+check(restored.applyStyle(0,5,accent));
+check(restored.styleAt(4,found));
+check(found.fontSize()==26);
+check(restored.deleteText(0,5));
+check(!restored.styleAt(0,found));
+""",75,p)
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")

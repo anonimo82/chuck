@@ -49,3 +49,5 @@ Update this checkpoint at each validated cycle, with the last full baseline, fun
 #158: directional UTF-8 source selection implemented; 57 new checks, global 4091, local 92; cadence 17/20, native validation pending.
 
 #159: transactional insertion/deletion/replacement; 60 new checks, global 4151, local 152; cadence 18/20, native validation pending.
+
+#160: explicit styled insertion/replacement, range formatting and style lookup; 75 new checks, global 4226, local 227; cadence 19/20, native validation pending.
