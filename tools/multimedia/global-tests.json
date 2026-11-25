@@ -43,6 +43,7 @@
     "raster-capture-consolidation",
     "video-camera-session",
     "video-screen-recording",
-    "video-audio-capture"
+    "video-audio-capture",
+    "video-av-recording"
   ]
 }
