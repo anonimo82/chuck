@@ -1,10 +1,4 @@
 {
   "version": 1,
-  "groups": [
-    "video-opengl-framebuffer",
-    "video-chugl-texture",
-    "video-offscreen-render",
-    "video-indexed-av",
-    "video-graphics-consolidation"
-  ]
+  "groups": []
 }
