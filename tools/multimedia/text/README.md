@@ -61,3 +61,7 @@ TextDocument.appendNode(TextNode), nodeCount(), getNode(index,destination), setN
 ## Native document persistence (version 1)
 
 TextDocument.saveNative(path) saves a new lowercase .cktxt file, returns 1 on success, 0 on failure, never overwrites. The format uses magic CKTXTDOC, little-endian uint32 version 1, fixed-width little-endian integer fields, IEEE-754 binary64 and length-prefixed UTF-8. Paragraphs include base byte count, text runs, typography, layout, decoration and list settings. Tables, grids and recursive nodes preserve their complete properties and canonical relative insertion order. No pointers, native struct dumps, derived counters or external font files are serialized. Maximum encoded size 32 MiB. Separate TextPage and KeyframeCurve objects are not part of TextDocument and are not stored. Loading is deferred to the next stage. See native-format.md for the field order.
+
+### Native loading
+
+TextDocument.loadNative(path) reads version 1 .cktxt into a temporary document and commits only after all validation succeeds. Invalid extension, magic/version, UTF-8, out-of-range or nonfinite fields, inconsistent run text, geometry, depth, aggregate budgets, block ordering, truncation or trailing bytes are rejected. Existing content is preserved on failure. Round-trip serialization is canonical; external page/keyframe objects remain outside this format. No checksum means structurally valid content changes cannot always be detected. Native validation pending.
