@@ -1,6 +1,6 @@
 #include "MediaSession.h"
 #include "MediaPCMBuffer.h"
-#include "MediaMIDI.h"
+#include "MediaAudioMidi.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -473,6 +473,72 @@ CK_DLL_MFUN(ms_nextSequence) { auto *p=midiStream(SELF,API); RETURN->v_int=p?p->
 CK_DLL_MFUN(ms_lastTimestamp) { auto *p=midiStream(SELF,API); RETURN->v_int=p?p->lastTimestamp():0; }
 CK_DLL_MFUN(ms_events) { auto *p=midiStream(SELF,API); RETURN->v_int=p?p->events():0; }
 CK_DLL_MFUN(ms_error) { auto *p=midiStream(SELF,API); RETURN->v_int=p?p->error():0; }
+namespace {
+t_CKUINT avOffset=0;
+mediawire::AudioMidi *avState(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<mediawire::AudioMidi*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,avOffset)));
+}
+}
+CK_DLL_CTOR(av_ctor) {
+    OBJ_MEMBER_UINT(SELF,avOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,avOffset)=reinterpret_cast<uintptr_t>(new mediawire::AudioMidi); } catch(...) {}
+}
+CK_DLL_DTOR(av_dtor) { delete avState(SELF,API); OBJ_MEMBER_UINT(SELF,avOffset)=0; }
+CK_DLL_MFUN(av_configure) {
+    RETURN->v_int=0;
+    try {
+        auto *p=avState(SELF,API);
+        uint64_t a[10]; for(auto &v:a) v=GET_NEXT_INT(ARGS);
+        if(p) RETURN->v_int=p->configure(a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9]);
+    } catch(...) {}
+}
+CK_DLL_MFUN(av_clear) { if(auto *p=avState(SELF,API)) p->clear(); }
+CK_DLL_MFUN(av_push) {
+    RETURN->v_int=0;
+    auto *p=avState(SELF,API); if(!p) return;
+    try {
+        auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;
+        if(!p->configured()) { p->reject(1); return; }
+        if(!read(a,API,mediawire::headerSize+mediawire::maxPayload,wire)) { p->reject(2); return; }
+        RETURN->v_int=p->push(wire);
+    } catch(...) { p->reject(2); }
+}
+CK_DLL_MFUN(av_pull) {
+    RETURN->v_int=0;
+    auto *p=avState(SELF,API); if(!p) return;
+    try {
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p->configured()) { p->reject(1); return; }
+        if(!a) { p->reject(2); return; }
+        auto n=API->object->array_float_size(a);
+        if(n<=0||n%p->channels()) { p->reject(2); return; }
+        std::vector<double> data;
+        if(!p->pullAudio(n/p->channels(),data)) return;
+        for(size_t i=0;i<data.size();++i) API->object->array_float_set_idx(a,i,data[i]);
+        RETURN->v_int=1;
+    } catch(...) { p->reject(2); }
+}
+CK_DLL_MFUN(av_pop) {
+    RETURN->v_int=0;
+    auto *p=avState(SELF,API); if(!p) return;
+    auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+    if(!exact(a,API,6)) { p->reject(2); return; }
+    std::array<uint64_t,6> event{};
+    if(!p->popMidi(event)) return;
+    for(size_t i=0;i<6;++i) API->object->array_int_set_idx(a,i,event[i]);
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(av_configured) { auto *p=avState(SELF,API); RETURN->v_int=p?p->configured():0; }
+CK_DLL_MFUN(av_ready) { auto *p=avState(SELF,API); RETURN->v_int=p?p->ready():0; }
+CK_DLL_MFUN(av_available) { auto *p=avState(SELF,API); RETURN->v_int=p?p->available():0; }
+CK_DLL_MFUN(av_pendingMidi) { auto *p=avState(SELF,API); RETURN->v_int=p?p->pendingMidi():0; }
+CK_DLL_MFUN(av_channels) { auto *p=avState(SELF,API); RETURN->v_int=p?p->channels():0; }
+CK_DLL_MFUN(av_playTimestamp) { auto *p=avState(SELF,API); RETURN->v_int=p?p->playTimestamp():0; }
+CK_DLL_MFUN(av_consumedFrames) { auto *p=avState(SELF,API); RETURN->v_int=p?p->consumedFrames():0; }
+CK_DLL_MFUN(av_error) { auto *p=avState(SELF,API); RETURN->v_int=p?p->error():0; }
+CK_DLL_MFUN(av_audioError) { auto *p=avState(SELF,API); RETURN->v_int=p?p->audioError():0; }
+CK_DLL_MFUN(av_midiDue) { auto *p=avState(SELF,API); RETURN->v_int=p?p->midiDue():0; }
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -697,5 +763,39 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_mfun(QUERY,ms_lastTimestamp,"int","lastTimestamp");
     QUERY->add_mfun(QUERY,ms_events,"int","events");
     QUERY->add_mfun(QUERY,ms_error,"int","error");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaAudioMidi","Object");
+    avOffset=QUERY->add_mvar(QUERY,"int","@audioMidiNative",FALSE);
+    if(avOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,av_ctor);
+    QUERY->add_dtor(QUERY,av_dtor);
+    QUERY->add_mfun(QUERY,av_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","audioStream");
+    QUERY->add_arg(QUERY,"int","midiStream");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_arg(QUERY,"int","originUs");
+    QUERY->add_arg(QUERY,"int","audioSequence");
+    QUERY->add_arg(QUERY,"int","midiSequence");
+    QUERY->add_arg(QUERY,"int","capacityFrames");
+    QUERY->add_arg(QUERY,"int","prebufferFrames");
+    QUERY->add_arg(QUERY,"int","capacityEvents");
+    QUERY->add_mfun(QUERY,av_clear,"void","clear");
+    QUERY->add_mfun(QUERY,av_push,"int","push");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,av_pull,"int","pullAudio");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,av_pop,"int","popMidi");
+    QUERY->add_arg(QUERY,"int[]","event");
+    QUERY->add_mfun(QUERY,av_configured,"int","configured");
+    QUERY->add_mfun(QUERY,av_ready,"int","ready");
+    QUERY->add_mfun(QUERY,av_available,"int","available");
+    QUERY->add_mfun(QUERY,av_pendingMidi,"int","pendingMidi");
+    QUERY->add_mfun(QUERY,av_channels,"int","channels");
+    QUERY->add_mfun(QUERY,av_playTimestamp,"int","playTimestamp");
+    QUERY->add_mfun(QUERY,av_consumedFrames,"int","consumedFrames");
+    QUERY->add_mfun(QUERY,av_error,"int","error");
+    QUERY->add_mfun(QUERY,av_audioError,"int","audioError");
+    QUERY->add_mfun(QUERY,av_midiDue,"int","midiDue");
     return QUERY->end_class(QUERY);
 }
