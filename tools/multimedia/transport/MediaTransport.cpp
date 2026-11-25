@@ -9,6 +9,7 @@
 #include "MediaAVPacket.h"
 #include "MediaText.h"
 #include "MediaTextFragment.h"
+#include "MediaTextBuffer.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -1107,6 +1108,45 @@ CK_DLL_MFUN(ta_text) {
     try{auto *p=textAssembler(SELF,API);if(p&&p->ready())result.assign(p->data().begin(),p->data().end());}catch(...){}
     RETURN->v_string=API->object->create_string(VM,result.c_str(),FALSE);
 }
+namespace {
+t_CKUINT textBufferOffset=0;
+mediawire::TextBuffer *textBuffer(Chuck_Object *self,CK_DL_API API){
+    return reinterpret_cast<mediawire::TextBuffer*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,textBufferOffset)));
+}
+}
+CK_DLL_CTOR(tb_ctor){
+    OBJ_MEMBER_UINT(SELF,textBufferOffset)=0;
+    try{OBJ_MEMBER_UINT(SELF,textBufferOffset)=reinterpret_cast<uintptr_t>(new mediawire::TextBuffer);}catch(...){}
+}
+CK_DLL_DTOR(tb_dtor){delete textBuffer(SELF,API);OBJ_MEMBER_UINT(SELF,textBufferOffset)=0;}
+CK_DLL_MFUN(tb_clear){if(auto *p=textBuffer(SELF,API))p->clear();}
+CK_DLL_MFUN(tb_configure){
+    RETURN->v_int=0;
+    try{
+        auto s=GET_NEXT_INT(ARGS),q=GET_NEXT_INT(ARGS),d=GET_NEXT_INT(ARGS),c=GET_NEXT_INT(ARGS),b=GET_NEXT_INT(ARGS);
+        auto *p=textBuffer(SELF,API);
+        if(p&&s>0&&q>=0&&d>=0&&c>0&&b>0)RETURN->v_int=p->configure(s,q,d,c,b);
+    }catch(...){}
+}
+CK_DLL_MFUN(tb_push){
+    RETURN->v_int=0;
+    try{auto *p=textBuffer(SELF,API);auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes w;
+        if(p&&read(a,API,mediawire::headerSize+mediawire::maxPayload,w))RETURN->v_int=p->push(w);
+    }catch(...){}
+}
+CK_DLL_MFUN(tb_advance){auto *p=textBuffer(SELF,API);auto t=GET_NEXT_INT(ARGS);RETURN->v_int=p&&t>=0&&p->advance(t);}
+CK_DLL_MFUN(tb_ready){auto *p=textBuffer(SELF,API);RETURN->v_int=p&&p->ready();}
+CK_DLL_MFUN(tb_available){auto *p=textBuffer(SELF,API);RETURN->v_int=p?p->available():0;}
+CK_DLL_MFUN(tb_buffered){auto *p=textBuffer(SELF,API);RETURN->v_int=p?p->bufferedBytes():0;}
+CK_DLL_MFUN(tb_reserved){auto *p=textBuffer(SELF,API);RETURN->v_int=p?p->reservedBytes():0;}
+CK_DLL_MFUN(tb_sequence){auto *p=textBuffer(SELF,API);RETURN->v_int=p?p->nextSequence():0;}
+CK_DLL_MFUN(tb_timestamp){auto *p=textBuffer(SELF,API);RETURN->v_int=p?p->timestamp():0;}
+CK_DLL_MFUN(tb_pull){
+    std::string result;auto *p=textBuffer(SELF,API);
+    try{if(p&&p->ready())result.assign(p->front().begin(),p->front().end());}catch(...){}
+    RETURN->v_string=API->object->create_string(VM,result.c_str(),FALSE);
+    if(p&&!result.empty()&&RETURN->v_string)p->pop();
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -1653,6 +1693,30 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_mfun(QUERY,ta_push,"int","push");
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_mfun(QUERY,ta_text,"string","text");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaTextBuffer","Object");
+    textBufferOffset=QUERY->add_mvar(QUERY,"int","@textBufferNative",FALSE);
+    if(textBufferOffset==CK_INVALID_OFFSET)return FALSE;
+    QUERY->add_ctor(QUERY,tb_ctor);
+    QUERY->add_dtor(QUERY,tb_dtor);
+    QUERY->add_mfun(QUERY,tb_clear,"void","clear");
+    QUERY->add_mfun(QUERY,tb_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","firstSequence");
+    QUERY->add_arg(QUERY,"int","delayUs");
+    QUERY->add_arg(QUERY,"int","capacityMessages");
+    QUERY->add_arg(QUERY,"int","byteBudget");
+    QUERY->add_mfun(QUERY,tb_push,"int","push");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,tb_advance,"int","advance");
+    QUERY->add_arg(QUERY,"int","nowUs");
+    QUERY->add_mfun(QUERY,tb_ready,"int","ready");
+    QUERY->add_mfun(QUERY,tb_available,"int","available");
+    QUERY->add_mfun(QUERY,tb_buffered,"int","bufferedBytes");
+    QUERY->add_mfun(QUERY,tb_reserved,"int","reservedBytes");
+    QUERY->add_mfun(QUERY,tb_sequence,"int","nextSequence");
+    QUERY->add_mfun(QUERY,tb_timestamp,"int","timestamp");
+    QUERY->add_mfun(QUERY,tb_pull,"string","pull");
     if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaGraphics","Object");
     QUERY->add_sfun(QUERY,gr_inspect,"int","inspect");
