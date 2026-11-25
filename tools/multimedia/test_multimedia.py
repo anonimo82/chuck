@@ -6180,8 +6180,97 @@ check(!flow.exportPage(0,160,100,-1,pixels));
         assert (p / "flow.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
         assert not (p / "bad.png").exists()
 
+
+def text_frame_native():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextFlow flow;
+TextFlow restored;
+TextFrame frame;
+TextFrame copy;
+TextContainer box;
+TextContainer decoration;
+TextStyle style;
+TextStyle large;
+TextRun run;
+check(style.fontSize(16)==16);
+check(large.fontSize(64)==64);
+check(flow.setText("small\\n",style));
+check(run.set("café",large));
+check(flow.appendRun(run));
+check(frame.setGeometry(10,20,200,25));
+0xff0000=>box.backgroundColor;
+2=>box.paddingLeft;
+check(frame.setContainer(box));
+check(flow.appendFrame(frame));
+check(frame.setGeometry(30,40,300,150));
+check(frame.page(2)==2);
+check(flow.appendFrame(frame));
+check(flow.layout());
+check(flow.frameText(0)=="small\\n");
+check(flow.frameText(1)=="café");
+check(flow.saveNative("flow.ckflow"));
+check(!flow.saveNative("flow.ckflow"));
+check(!flow.saveNative("flow.cktxt"));
+check(restored.setText("old",style));
+check(restored.loadNative("flow.ckflow"));
+check(restored.ready()==0);
+check(restored.pageCount()==-1);
+check(restored.frameCount()==2);
+check(restored.getFrame(0,copy));
+check(copy.x()==10 && copy.y()==20 && copy.width()==200 && copy.height()==25);
+check(copy.page()==0);
+check(copy.getContainer(decoration));
+check(decoration.backgroundColor==0xff0000 && decoration.paddingLeft==2);
+check(restored.getFrame(1,copy));
+check(copy.page()==2 && copy.width()==300 && copy.height()==150);
+check(restored.layout());
+check(restored.frameText(0)==flow.frameText(0));
+check(restored.frameText(1)==flow.frameText(1));
+check(restored.overflowBytes()==0);
+check(restored.pageCount()==3);
+check(restored.saveNative("roundtrip.ckflow"));
+check(!restored.loadNative("missing.ckflow"));
+check(!restored.loadNative("flow.cktxt"));
+check(restored.ready()==1);
+check(restored.frameText(1)=="café");
+TextFlow empty;
+check(empty.saveNative("empty.ckflow"));
+check(restored.loadNative("empty.ckflow"));
+check(restored.frameCount()==0);
+check(restored.layout());
+check(restored.overflowBytes()==0);
+""",44,p)
+        data = (p / "flow.ckflow").read_bytes()
+        assert data.startswith(b"CKTXFLOW\x01\x00\x00\x00")
+        assert data == (p / "roundtrip.ckflow").read_bytes()
+        (p / "bad-magic.ckflow").write_bytes(b"X" + data[1:])
+        (p / "bad-version.ckflow").write_bytes(data[:8] + b"\x02" + data[9:])
+        (p / "truncated.ckflow").write_bytes(data[:-1])
+        (p / "trailing.ckflow").write_bytes(data + b"x")
+        # Final frame occupies 76 bytes: width begins eight bytes into it.
+        offset = len(data) - 76 + 8
+        (p / "bad-geometry.ckflow").write_bytes(data[:offset] + b"\x00"*4 + data[offset+4:])
+        run("text", """
+TextFlow flow;
+TextStyle style;
+TextFrame frame;
+check(flow.setText("preserve",style));
+check(flow.appendFrame(frame));
+check(flow.layout());
+check(!flow.loadNative("bad-magic.ckflow"));
+check(!flow.loadNative("bad-version.ckflow"));
+check(!flow.loadNative("truncated.ckflow"));
+check(!flow.loadNative("trailing.ckflow"));
+check(!flow.loadNative("bad-geometry.ckflow"));
+check(flow.ready()==1);
+check(flow.frameCount()==1);
+check(flow.frameText(0)=="preserve");
+""",11,p)
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
