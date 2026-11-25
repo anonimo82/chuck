@@ -793,6 +793,149 @@ CK_DLL_MFUN(vector_image_ungroup_shape) {
         if(p->replaceShapes(p->canvasW,p->canvasH,std::move(next))) RETURN->v_int=static_cast<t_CKINT>(children.size());
     } catch(...) {}
 }
+namespace {
+// Strict editable subset. Never adopt arbitrary XML into the generated-shape
+// string representation; normalize only whitelisted elements and attributes.
+struct EditableParser {
+    const std::string &source;
+    size_t pos=0,nodes=0;
+    void space() { while(pos<source.size()&&(source[pos]==' '||source[pos]=='\n'||source[pos]=='\r'||source[pos]=='\t')) ++pos; }
+    bool take(const std::string &s) {
+        if(source.compare(pos,s.size(),s)!=0) return false;
+        pos+=s.size(); return true;
+    }
+    bool name(std::string &s) {
+        size_t start=pos;
+        while(pos<source.size()&&((source[pos]>='a'&&source[pos]<='z')||
+              (source[pos]>='A'&&source[pos]<='Z')||(source[pos]>='0'&&source[pos]<='9')||
+              source[pos]=='-'||source[pos]==':')) ++pos;
+        s=source.substr(start,pos-start); return !s.empty();
+    }
+    using Attrs=std::vector<std::pair<std::string,std::string>>;
+    bool attrs(Attrs &a) {
+        while(true) {
+            size_t before=pos; space();
+            if(pos>=source.size()) return false;
+            if(source[pos]=='>'||source[pos]=='/') return true;
+            if(before==pos||a.size()>=16) return false;
+            std::string key,value;
+            if(!name(key)) return false;
+            for(const auto &p:a) if(p.first==key) return false;
+            space(); if(!take("=")) return false; space();
+            if(pos>=source.size()||(source[pos]!='"'&&source[pos]!='\'')) return false;
+            char quote=source[pos++]; auto end=source.find(quote,pos);
+            if(end==std::string::npos) return false;
+            value=source.substr(pos,end-pos); pos=end+1;
+            if(value.find_first_of("<>&\"'")!=std::string::npos) return false;
+            a.emplace_back(std::move(key),std::move(value));
+        }
+    }
+    static bool allowed(const std::string &tag,const std::string &key) {
+        if(key=="fill"||key=="fill-opacity"||key=="stroke"||key=="stroke-opacity"||
+           key=="stroke-width"||key=="opacity"||key=="transform") return true;
+        if(tag=="rect") return key=="x"||key=="y"||key=="width"||key=="height";
+        if(tag=="circle") return key=="cx"||key=="cy"||key=="r";
+        if(tag=="line") return key=="x1"||key=="y1"||key=="x2"||key=="y2";
+        if(tag=="polygon") return key=="points";
+        if(tag=="path") return key=="d";
+        return false;
+    }
+    static bool leafValid(std::string &s,const std::string &tag) {
+        ShapeMatrix m; ShapePaint v;
+        if(!readTransform(s,m)||!validTransform(m)||!readStyle(s,v)||
+           !validPaint(v[0])||!validPaint(v[2])||!validAlpha(v[1])||
+           !validAlpha(v[3])||!validAlpha(v[5])||!coord(v[4])||v[4]<=0||
+           (tag=="line"&&v[0]!=-1)) return false;
+        if(tag=="path") {
+            std::string d;
+            return shapeAttribute(s,"d",d)&&!d.empty()&&d.size()<=1024*1024&&
+                d.find_first_not_of("0123456789.eE+- ,\t\r\nMHVZ")==std::string::npos;
+        }
+        // Lines without explicit stroke-width use the SVG default.
+        if(tag=="line"&&!putAttribute(s,"stroke-width",numberAttribute(v[4]))) return false;
+        std::vector<double> geometry;
+        return parseGeometry(s,geometry)&&updateGeometry(s,geometry);
+    }
+    bool item(std::string &out,int depth) {
+        if(++nodes>4096||!take("<")) return false;
+        std::string tag; Attrs a;
+        if(!name(tag)||!attrs(a)) return false;
+        if(tag=="g") {
+            if(depth>=16||!a.empty()||!take(">")) return false;
+            out="<g>"; size_t count=0;
+            while(true) {
+                space(); if(take("</g>")) break;
+                std::string child;
+                if(!item(child,depth+1)) return false;
+                out+=child; ++count;
+            }
+            out+="</g>"; return count>0;
+        }
+        if(tag!="rect"&&tag!="circle"&&tag!="line"&&tag!="polygon"&&tag!="path") return false;
+        if(!take("/>")) return false;
+        out="<"+tag;
+        for(const auto &p:a) {
+            if(!allowed(tag,p.first)) return false;
+            out+=" "+p.first+"=\""+p.second+"\"";
+        }
+        out+="/>";
+        return leafValid(out,tag);
+    }
+    static bool dimension(const std::string &s,int &n) {
+        if(s.empty()||s.size()>4||s.find_first_not_of("0123456789")!=std::string::npos) return false;
+        n=std::stoi(s); return n>=1&&n<=4096;
+    }
+    bool parse(int &w,int &h,std::vector<std::string> &items) {
+        if(source.empty()||source.size()>16*1024*1024) return false;
+        space(); if(!take("<svg")) return false;
+        Attrs a;
+        if(!attrs(a)||!take(">")) return false;
+        std::string view; bool ns=false; w=h=0;
+        for(const auto &p:a) {
+            if(p.first=="xmlns") ns=p.second=="http://www.w3.org/2000/svg";
+            else if(p.first=="width") { if(!dimension(p.second,w)) return false; }
+            else if(p.first=="height") { if(!dimension(p.second,h)) return false; }
+            else if(p.first=="viewBox") view=p.second;
+            else return false;
+        }
+        if(!ns||!w||!h||view!="0 0 "+std::to_string(w)+" "+std::to_string(h)) return false;
+        while(true) {
+            space(); if(take("</svg>")) break;
+            std::string shape;
+            if(!item(shape,0)) return false;
+            items.push_back(std::move(shape));
+        }
+        space(); return pos==source.size();
+    }
+};
+bool adoptEditable(VectorImageState *p,const std::string &svg) {
+    if(!p) return false;
+    EditableParser parser{svg}; int w=0,h=0; std::vector<std::string> items;
+    if(!parser.parse(w,h,items)) return false;
+    if(!p->replaceShapes(w,h,std::move(items))) return false;
+    p->reset(); return true;
+}
+}
+CK_DLL_MFUN(vector_image_set_editable_svg) {
+    RETURN->v_int=0;
+    try { auto *p=vectorState(SELF,API); auto svg=GET_NEXT_STRING_SAFE(ARGS);
+        RETURN->v_int=adoptEditable(p,svg);
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_load_editable) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(!p) return;
+        std::ifstream in(path,std::ios::binary);
+        if(!in) return;
+        in.seekg(0,std::ios::end); auto n=in.tellg();
+        if(n<=0||n>16*1024*1024) return;
+        in.seekg(0,std::ios::beg); std::string svg(static_cast<size_t>(n),'\0');
+        if(!in.read(svg.data(),static_cast<std::streamsize>(n))) return;
+        RETURN->v_int=adoptEditable(p,svg);
+    } catch(...) {}
+}
 CK_DLL_MFUN(vector_image_save) {
     RETURN->v_int=0;
     try {
@@ -1202,6 +1345,10 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,vector_image_ungroup_shape,"int","ungroupShape");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,vector_image_set_editable_svg,"int","setEditableSvg");
+    QUERY->add_arg(QUERY,"string","svg");
+    QUERY->add_mfun(QUERY,vector_image_load_editable,"int","loadEditable");
+    QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,vector_image_save,"int","save");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,vector_image_export_pitches,"int","exportPitches");
