@@ -132,6 +132,20 @@ struct VectorImageState {
         svg+="</svg>\n"; return svg;
     }
     bool replaceShapes(int w,int h,std::vector<std::string> next) {
+        size_t nodes=0;
+        for(const auto &item:next) {
+            int depth=0;
+            for(size_t i=0;i<item.size();++i) {
+                if(item[i]=='<') {
+                    if(i+1<item.size()&&item[i+1]=='/') --depth;
+                    else {
+                        if(++nodes>4096) return false;
+                        if(item.compare(i,3,"<g>")==0&&++depth>16) return false;
+                    }
+                }
+            }
+            if(depth!=0) return false;
+        }
         auto svg=document(w,h,next);
         if(svg.empty()) return false;
         Handle candidate(rsvg_handle_new_from_data(reinterpret_cast<const guint8 *>(svg.data()),svg.size(),nullptr),g_object_unref);
@@ -375,13 +389,13 @@ const std::string *shapeAt(VectorImageState *p,t_CKINT i) {
     return p&&p->canvasW&&i>=0&&static_cast<uint64_t>(i)<p->shapes.size()?&p->shapes[i]:nullptr;
 }
 std::string shapeTag(const std::string &s) {
-    auto end=s.find(' ');
+    auto end=s.find_first_of(" >");
     return end==std::string::npos?"":s.substr(1,end-1);
 }
 bool shapeAttribute(const std::string &s,const std::string &name,std::string &value) {
     auto key=" "+name+"=\"";
     auto start=s.find(key);
-    if(start==std::string::npos) return false;
+    if(start==std::string::npos||start>=s.find('>')) return false;
     start+=key.size();
     auto end=s.find('"',start);
     if(end==std::string::npos) return false;
@@ -490,6 +504,7 @@ CK_DLL_MFUN(vector_image_set_geometry) {
 namespace {
 using ShapeMatrix=std::array<double,6>;
 bool readTransform(const std::string &s,ShapeMatrix &m) {
+    if(shapeTag(s)=="g") return false;
     m={{1,0,0,1,0,0}};
     std::string value;
     if(!shapeAttribute(s,"transform",value)) return true;
@@ -506,6 +521,7 @@ bool validTransform(const ShapeMatrix &m) {
     return std::isfinite(det)&&std::abs(det)>=1e-12;
 }
 bool writeTransform(std::string &s,const ShapeMatrix &m) {
+    if(shapeTag(s)=="g") return false;
     if(!validTransform(m)) return false;
     auto o=svgStream(); o<<"matrix(";
     for(size_t k=0;k<m.size();++k) { if(k) o<<' '; o<<m[k]; }
@@ -622,6 +638,7 @@ bool readPaint(const std::string &s,const std::string &name,t_CKINT fallback,dou
 }
 using ShapePaint=std::array<double,6>;
 bool readStyle(const std::string &s,ShapePaint &v) {
+    if(shapeTag(s)=="g") return false;
     return readPaint(s,"fill",shapeTag(s)=="line"?-1:0,v[0])&&
         readNumber(s,"fill-opacity",1,v[1])&&readPaint(s,"stroke",-1,v[2])&&
         readNumber(s,"stroke-opacity",1,v[3])&&readNumber(s,"stroke-width",1,v[4])&&
@@ -634,7 +651,7 @@ bool setStyle(VectorImageState *p,t_CKINT i,const ShapePaint &v) {
        !validAlpha(v[1])||!validAlpha(v[3])||!validAlpha(v[5])||
        !coord(v[4])||v[4]<=0) return false;
     auto next=p->shapes; auto &s=next[i];
-    if(shapeTag(s)=="line"&&v[0]!=-1) return false;
+    if(shapeTag(s)=="g"||(shapeTag(s)=="line"&&v[0]!=-1)) return false;
     if(!putAttribute(s,"fill",paintAttribute(static_cast<t_CKINT>(v[0])))||
        !putAttribute(s,"fill-opacity",numberAttribute(v[1]))||
        !putAttribute(s,"stroke",paintAttribute(static_cast<t_CKINT>(v[2])))||
@@ -692,6 +709,88 @@ CK_DLL_MFUN(vector_image_set_shape_opacity) {
         double alpha=GET_NEXT_FLOAT(ARGS); auto *s=shapeAt(p,i); ShapePaint v;
         if(!s||!readStyle(*s,v)) return;
         v[5]=alpha; RETURN->v_int=setStyle(p,i,v);
+    } catch(...) {}
+}
+namespace {
+// Only internally generated groups are editable: no arbitrary XML parsing.
+bool groupChildren(const std::string &s,std::vector<std::string> &out) {
+    if(s.size()<7||s.compare(0,3,"<g>")!=0||s.compare(s.size()-4,4,"</g>")!=0) return false;
+    size_t pos=3,end=s.size()-4;
+    while(pos<end) {
+        if(s[pos]!='<') return false;
+        size_t start=pos;
+        if(s.compare(pos,3,"<g>")==0) {
+            int depth=1; pos+=3;
+            while(pos<end&&depth>0) {
+                if(s.compare(pos,3,"<g>")==0) { ++depth; pos+=3; }
+                else if(s.compare(pos,4,"</g>")==0) { --depth; pos+=4; }
+                else ++pos;
+            }
+            if(depth) return false;
+        } else {
+            auto close=s.find("/>",pos);
+            if(close==std::string::npos||close+2>end) return false;
+            pos=close+2;
+        }
+        out.push_back(s.substr(start,pos-start));
+    }
+    return pos==end&&!out.empty();
+}
+}
+CK_DLL_MFUN(vector_image_duplicate_shape) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=vectorState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+        auto *s=shapeAt(p,i);
+        if(!s||p->shapes.size()>=4096) return;
+        auto next=p->shapes; auto copy=*s;
+        next.insert(next.begin()+i+1,std::move(copy));
+        if(p->replaceShapes(p->canvasW,p->canvasH,std::move(next))) RETURN->v_int=i+1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_move_shape) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API); auto from=GET_NEXT_INT(ARGS),to=GET_NEXT_INT(ARGS);
+        if(!shapeAt(p,from)||!shapeAt(p,to)) return;
+        if(from==to) { RETURN->v_int=1; return; }
+        auto next=p->shapes; auto item=std::move(next[from]);
+        next.erase(next.begin()+from); next.insert(next.begin()+to,std::move(item));
+        RETURN->v_int=p->replaceShapes(p->canvasW,p->canvasH,std::move(next));
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_group_shapes) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=vectorState(SELF,API); auto first=GET_NEXT_INT(ARGS),count=GET_NEXT_INT(ARGS);
+        if(!shapeAt(p,first)||count<2||static_cast<uint64_t>(count)>p->shapes.size()-first) return;
+        std::string group="<g>";
+        for(t_CKINT k=0;k<count;++k) group+=p->shapes[first+k];
+        group+="</g>";
+        auto next=p->shapes;
+        next.erase(next.begin()+first,next.begin()+first+count);
+        next.insert(next.begin()+first,std::move(group));
+        if(p->replaceShapes(p->canvasW,p->canvasH,std::move(next))) RETURN->v_int=first;
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_group_size) {
+    RETURN->v_int=-1;
+    try {
+        auto *s=shapeAt(vectorState(SELF,API),GET_NEXT_INT(ARGS));
+        std::vector<std::string> children;
+        if(s&&groupChildren(*s,children)) RETURN->v_int=static_cast<t_CKINT>(children.size());
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_ungroup_shape) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=vectorState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+        auto *s=shapeAt(p,i); std::vector<std::string> children;
+        if(!s||!groupChildren(*s,children)) return;
+        auto next=p->shapes;
+        next.erase(next.begin()+i);
+        next.insert(next.begin()+i,children.begin(),children.end());
+        if(p->replaceShapes(p->canvasW,p->canvasH,std::move(next))) RETURN->v_int=static_cast<t_CKINT>(children.size());
     } catch(...) {}
 }
 CK_DLL_MFUN(vector_image_save) {
@@ -1091,6 +1190,18 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_mfun(QUERY,vector_image_set_shape_opacity,"int","setShapeOpacity");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"float","alpha");
+    QUERY->add_mfun(QUERY,vector_image_duplicate_shape,"int","duplicateShape");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,vector_image_move_shape,"int","moveShape");
+    QUERY->add_arg(QUERY,"int","from");
+    QUERY->add_arg(QUERY,"int","to");
+    QUERY->add_mfun(QUERY,vector_image_group_shapes,"int","groupShapes");
+    QUERY->add_arg(QUERY,"int","first");
+    QUERY->add_arg(QUERY,"int","count");
+    QUERY->add_mfun(QUERY,vector_image_group_size,"int","groupSize");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,vector_image_ungroup_shape,"int","ungroupShape");
+    QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,vector_image_save,"int","save");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,vector_image_export_pitches,"int","exportPitches");
