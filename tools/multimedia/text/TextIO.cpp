@@ -110,7 +110,7 @@ struct PageStyle {
     std::vector<t_CKINT> breaks;
     Paragraph header,footer;
     int headerHeight=0,footerHeight=0;
-    t_CKINT numbering=0,firstNumber=1;
+    t_CKINT numbering=0,firstNumber=1,splitParagraphs=0;
 };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; std::vector<NodeBlock> nodes; size_t nextOrder=0; };
 t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0;
@@ -892,6 +892,13 @@ bool expandPageBand(const Paragraph &source,const PageStyle &p,int index,int cou
 }
 }
 
+CK_DLL_MFUN(text_page_split_paragraphs_get) {
+    auto *p=pageState(SELF,API); RETURN->v_int=p?p->splitParagraphs:-1;
+}
+CK_DLL_MFUN(text_page_split_paragraphs_set) {
+    auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&(v==0||v==1)) RETURN->v_int=p->splitParagraphs=v;
+}
 CK_DLL_CTOR(text_node_ctor) {
     OBJ_MEMBER_UINT(SELF,nodeOffset)=0;
     try { OBJ_MEMBER_UINT(SELF,nodeOffset)=reinterpret_cast<uintptr_t>(new Node); } catch(...) {}
@@ -1563,7 +1570,27 @@ SurfacePtr renderDocument(const Document &d,int w,int h,t_CKINT bg) {
 bool validPage(const PageStyle &p) {
     return validCanvas(p.width,p.height,p.backgroundColor)&&p.width>p.marginLeft+p.marginRight&&p.height>p.marginTop+p.marginBottom;
 }
-struct PageEntry { int kind=0; size_t index=0; int page=0; };
+struct PageEntry { int kind=0; size_t index=0; int page=0; int y=0,offset=0,height=0; };
+// Measure boundaries between shaped lines in the original full-width layout.
+// Integer cuts never slice through the logical extents of adjacent lines.
+bool paragraphCuts(cairo_t *cr,const Paragraph &p,int width,int height,std::vector<int> &cuts) {
+    auto layout=makeLayout(cr,p,width);
+    if(!layout) return false;
+    double top=p.layout.marginTop+p.box.paddingTop+p.box.borderWidth;
+    std::unique_ptr<PangoLayoutIter,decltype(&pango_layout_iter_free)> it(pango_layout_get_iter(layout.get()),pango_layout_iter_free);
+    if(!it) return false;
+    cuts.push_back(0);
+    do {
+        int y0=0,y1=0;
+        pango_layout_iter_get_line_yrange(it.get(),&y0,&y1);
+        int cut=static_cast<int>(std::ceil(top+static_cast<double>(y1)/PANGO_SCALE));
+        if(cut>cuts.back()&&cut<height) cuts.push_back(cut);
+    } while(pango_layout_iter_next_line(it.get()));
+    // Final line and trailing decoration are indivisible.
+    if(cuts.size()>1) cuts.pop_back();
+    cuts.push_back(height);
+    return true;
+}
 bool planPages(const Document &d,const PageStyle &p,std::vector<PageEntry> &entries,int &count) {
     if(!validPage(p)) return false;
     SurfacePtr surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1),cairo_surface_destroy);
@@ -1575,13 +1602,34 @@ bool planPages(const Document &d,const PageStyle &p,std::vector<PageEntry> &entr
 
     const size_t blocks=d.paragraphs.size()+d.tables.size()+d.nodes.size();
     if(!p.breaks.empty()&&static_cast<size_t>(p.breaks.back())>=blocks) return false;
-    count=1; int used=0; size_t nextBreak=0;
+    count=1; int used=0; size_t nextBreak=0,ordinal=0;
+    auto advance=[&]() { if(count>=4096) return false; ++count; used=0; return true; };
+    auto boundary=[&]() {
+        bool force=nextBreak<p.breaks.size()&&static_cast<size_t>(p.breaks[nextBreak])==ordinal;
+        ++ordinal;
+        if(force) { ++nextBreak; return advance(); }
+        return true;
+    };
     auto place=[&](int kind,size_t index,int h) {
-        if(h<0||h>height) return false;
-        bool force=nextBreak<p.breaks.size()&&static_cast<size_t>(p.breaks[nextBreak])==entries.size();
-        if(force) ++nextBreak;
-        if(force||h>height-used) { if(count>=4096) return false; ++count; used=0; }
-        entries.push_back({kind,index,count-1}); used+=h; return true;
+        if(h<0||h>height||!boundary()) return false;
+        if(h>height-used&&!advance()) return false;
+        entries.push_back({kind,index,count-1,used,0,h}); used+=h; return true;
+    };
+    auto split=[&](size_t index,int h) {
+        if(!boundary()) return false;
+        std::vector<int> cuts;
+        if(!paragraphCuts(cr.get(),d.paragraphs[index],width,h,cuts)) return false;
+        size_t from=0;
+        while(from+1<cuts.size()) {
+            size_t to=from;
+            while(to+1<cuts.size()&&cuts[to+1]-cuts[from]<=height-used) ++to;
+            if(to==from) { if(!used||!advance()) return false; continue; }
+            int n=cuts[to]-cuts[from];
+            entries.push_back({0,index,count-1,used,cuts[from],n});
+            used+=n; from=to;
+            if(from+1<cuts.size()&&!advance()) return false;
+        }
+        return true;
     };
     size_t block=0,node=0;
     for(size_t pi=0;pi<=d.paragraphs.size();++pi) {
@@ -1600,7 +1648,9 @@ bool planPages(const Document &d,const PageStyle &p,std::vector<PageEntry> &entr
         }
         if(pi==d.paragraphs.size()) break;
         int w=0,h=0;
-        if(!paragraphDimensions(cr.get(),d.paragraphs[pi],width,w,h)||!place(0,pi,h)) return false;
+        if(!paragraphDimensions(cr.get(),d.paragraphs[pi],width,w,h)) return false;
+        if(p.splitParagraphs&&h>height-used&&h>0) { if(!split(pi,h)) return false; }
+        else if(!place(0,pi,h)) return false;
     }
     // Validate actual expanded strings only after the final page count is known.
     auto fits=[&](const Paragraph &source,int bandHeight,int index) {
@@ -1614,7 +1664,7 @@ bool planPages(const Document &d,const PageStyle &p,std::vector<PageEntry> &entr
     return true;
 }
 
-bool drawPageContent(cairo_t *cr,const Document &selected,const PageStyle &p,int index,int count) {
+bool drawPageContent(cairo_t *cr,const Document &source,const std::vector<PageEntry> &entries,const PageStyle &p,int index,int count) {
     int w=p.width-p.marginLeft-p.marginRight;
     int h=p.height-p.marginTop-p.marginBottom-p.headerHeight-p.footerHeight;
     auto band=[&](const Paragraph &paragraph,int y,int height) {
@@ -1631,19 +1681,25 @@ bool drawPageContent(cairo_t *cr,const Document &selected,const PageStyle &p,int
     if(!band(p.footer,p.height-p.marginBottom-p.footerHeight,p.footerHeight)) return false;
     cairo_save(cr); cairo_translate(cr,p.marginLeft,p.marginTop+p.headerHeight);
     cairo_rectangle(cr,0,0,w,h); cairo_clip(cr);
-    bool ok=drawDocument(cr,selected,w,h);
+    bool ok=true;
+    for(const auto &e:entries) if(e.page==index) {
+        Document selected;
+        if(e.kind==1) selected.tables.push_back({0,source.tables[e.index].table,0});
+        else if(e.kind==2) selected.nodes.push_back({0,source.nodes[e.index].node,0});
+        else selected.paragraphs.push_back(source.paragraphs[e.index]);
+        cairo_save(cr);
+        cairo_rectangle(cr,0,e.y,w,e.height); cairo_clip(cr);
+        cairo_translate(cr,0,e.y-e.offset);
+        ok=drawDocument(cr,selected,w,h+e.offset);
+        cairo_restore(cr);
+        if(!ok) break;
+    }
     cairo_restore(cr); return ok;
 }
 
 SurfacePtr renderPage(const Document &d,const PageStyle &p,t_CKINT page) {
     std::vector<PageEntry> entries; int count=0;
     if(!planPages(d,p,entries,count)||page<0||page>=count) return SurfacePtr(nullptr,cairo_surface_destroy);
-    Document selected;
-    for(const auto &e:entries) if(e.page==page) {
-        if(e.kind==1) selected.tables.push_back({selected.paragraphs.size(),d.tables[e.index].table,selected.nextOrder++});
-        else if(e.kind==2) selected.nodes.push_back({selected.paragraphs.size(),d.nodes[e.index].node,selected.nextOrder++});
-        else selected.paragraphs.push_back(d.paragraphs[e.index]);
-    }
     SurfacePtr surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,p.width,p.height),cairo_surface_destroy);
     if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
     std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
@@ -1652,7 +1708,7 @@ SurfacePtr renderPage(const Document &d,const PageStyle &p,t_CKINT page) {
     if(p.backgroundColor<0) cairo_set_source_rgba(cr.get(),0,0,0,0);
     else cairo_set_source_rgb(cr.get(),((p.backgroundColor>>16)&255)/255.0,((p.backgroundColor>>8)&255)/255.0,(p.backgroundColor&255)/255.0);
     cairo_paint(cr.get()); cairo_set_operator(cr.get(),CAIRO_OPERATOR_OVER);
-    if(!drawPageContent(cr.get(),selected,p,static_cast<int>(page),count)) return SurfacePtr(nullptr,cairo_surface_destroy);
+    if(!drawPageContent(cr.get(),d,entries,p,static_cast<int>(page),count)) return SurfacePtr(nullptr,cairo_surface_destroy);
     cairo_surface_flush(surface.get());
     if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
     return surface;
@@ -1754,24 +1810,15 @@ CK_DLL_MFUN(text_doc_save_pdf) {
                 {
                     std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
                     ok=cairo_status(cr.get())==CAIRO_STATUS_SUCCESS;
-                    size_t cursor=0;
                     for(int page=0;ok&&page<count;++page) {
-                        Document selected;
-                        while(cursor<entries.size()&&entries[cursor].page==page) {
-                            const auto &e=entries[cursor++];
-                            if(e.kind==1) selected.tables.push_back({selected.paragraphs.size(),d->tables[e.index].table,selected.nextOrder++});
-                            else if(e.kind==2) selected.nodes.push_back({selected.paragraphs.size(),d->nodes[e.index].node,selected.nextOrder++});
-                            else selected.paragraphs.push_back(d->paragraphs[e.index]);
-                        }
                         cairo_save(cr.get());
                         cairo_scale(cr.get(),scale,scale);
                         if(p->backgroundColor>=0) { nodeColor(cr.get(),p->backgroundColor); cairo_paint(cr.get()); }
-                        ok=drawPageContent(cr.get(),selected,*p,page,count);
+                        ok=drawPageContent(cr.get(),*d,entries,*p,page,count);
                         cairo_restore(cr.get());
                         if(ok) cairo_show_page(cr.get());
                         ok=ok&&cairo_status(cr.get())==CAIRO_STATUS_SUCCESS;
                     }
-                    ok=ok&&cursor==entries.size();
                 }
                 cairo_surface_finish(surface.get());
                 ok=ok&&cairo_surface_status(surface.get())==CAIRO_STATUS_SUCCESS;
@@ -2410,6 +2457,9 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_mfun(QUERY,text_page_clear_footer,"void","clearFooter");
     QUERY->add_mfun(QUERY,text_page_footer_height,"int","footerHeight");
+    QUERY->add_mfun(QUERY,text_page_split_paragraphs_get,"int","splitParagraphs");
+    QUERY->add_mfun(QUERY,text_page_split_paragraphs_set,"int","splitParagraphs");
+    QUERY->add_arg(QUERY,"int","value");
     QUERY->add_mfun(QUERY,text_page_numbering_get,"int","numbering");
     QUERY->add_mfun(QUERY,text_page_numbering_set,"int","numbering");
     QUERY->add_arg(QUERY,"int","value");
