@@ -4,6 +4,7 @@
     "transport-video-frame",
     "transport-video-stream",
     "transport-video-buffer",
-    "transport-audio-video"
+    "transport-audio-video",
+    "transport-av-consolidation"
   ]
 }
