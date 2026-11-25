@@ -3671,3 +3671,58 @@ check(clip.next()==1);
 check(clip.exportPixels(pixels));
 check(pixels[18]==255 && pixels[32]==255);
 """,20,p)
+
+    run("model", """
+Model3D model;
+int pixels[256];
+check(!model.renderOrthographic(0,8,8,2.0,0xffffff,0x123456,pixels));
+check(model.load("triangle.obj"));
+check(model.renderOrthographic(0,8,8,2.0,0xffffff,0x123456,pixels));
+check(pixels[0]==18 && pixels[1]==52 && pixels[2]==86 && pixels[3]==255);
+check(pixels[27]==255 && pixels[24]==255);
+check(pixels[59]==255);
+int transparent[256];
+check(model.renderOrthographic(0,8,8,2.0,0xffffff,transparent));
+check(transparent[3]==0 && transparent[27]==255);
+check(!model.renderOrthographic(-1,8,8,2.0,0xffffff,0,pixels));
+check(!model.renderOrthographic(0,0,8,2.0,0xffffff,0,pixels));
+check(!model.renderOrthographic(0,8,2049,2.0,0xffffff,0,pixels));
+check(!model.renderOrthographic(0,8,8,0.0,0xffffff,0,pixels));
+check(!model.renderOrthographic(0,8,8,2.0,-1,0,pixels));
+check(!model.renderOrthographic(0,8,8,2.0,0xffffff,-1,pixels));
+check(!model.renderOrthographic(0,8,8,2.0,0xffffff,0x1000000,pixels));
+check(!model.renderOrthographic(0,4,4,2.0,0xffffff,0,pixels));
+check(pixels[0]==18 && pixels[24]==255);
+10.0=>model.x;
+check(model.renderOrthographic(0,8,8,2.0,0xffffff,0x123456,pixels));
+check(pixels[24]==18 && pixels[25]==52 && pixels[26]==86 && pixels[27]==255);
+check(model.x()==10.0);
+model.reset();
+check(model.renderOrthographic(0,8,8,2.0,0xffffff,0,pixels));
+check(pixels[24]==255 && pixels[0]==0 && pixels[3]==255);
+check(model.vertexAt(0,1,0)==1.0);
+""",23,p)
+
+    run("video", """
+@import "ModelIO";
+Model3D model;
+VideoWriter writer;
+VideoClip clip;
+check(model.createMesh([0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0],[0,1,2]));
+check(writer.open("model-animation.mkv",16,16,2));
+int pixels[1024];
+check(model.renderOrthographic(0,16,16,2.0,0xffffff,0x123456,pixels));
+check(writer.appendFrame(pixels));
+10.0=>model.x;
+check(model.renderOrthographic(0,16,16,2.0,0xffffff,0x123456,pixels));
+check(writer.appendFrame(pixels));
+check(writer.frames()==2);
+check(writer.finish());
+check(clip.load("model-animation.mkv"));
+check(clip.exportPixels(pixels));
+check(pixels[0]==18 && pixels[1]==52 && pixels[2]==86);
+check(pixels[(7*16+8)*4]==255);
+check(clip.next()==1);
+check(clip.exportPixels(pixels));
+check(pixels[(7*16+8)*4]==18 && pixels[(7*16+8)*4+3]==255);
+""",15,p)

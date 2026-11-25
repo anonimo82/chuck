@@ -1701,17 +1701,19 @@ CK_DLL_MFUN(model3d_create_heightmap) {
         RETURN->v_int=1;
     } catch(...) {}
 }
-CK_DLL_MFUN(model3d_render_orthographic) {
+namespace {
+void renderOrthographicFrame(Chuck_Object *SELF, CK_DL_API API, void *ARGS, Chuck_DL_Return *RETURN, bool opaque) {
     RETURN->v_int=0;
     try {
         auto *p=modelState(SELF,API);
         auto index=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
         double span=GET_NEXT_FLOAT(ARGS);
         auto rgb=GET_NEXT_INT(ARGS);
+        auto background=opaque?GET_NEXT_INT(ARGS):0;
         auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
         auto *m=meshAt(p,index);
         if(!m||!a||w<1||h<1||w>2048||h>2048||w*h>4194304||
-           !std::isfinite(span)||span<0.0001||span>1e9||rgb<0||rgb>0xffffff||
+           !std::isfinite(span)||span<0.0001||span>1e9||rgb<0||rgb>0xffffff||background<0||background>0xffffff||
            m->mNumVertices>1000000||m->mNumFaces>1000000||
            API->object->array_int_size(a)!=w*h*4) return;
         aiMatrix4x4 t,rx,ry,rz,s;
@@ -1737,6 +1739,10 @@ CK_DLL_MFUN(model3d_render_orthographic) {
         };
         std::vector<double> depth(w*h,-std::numeric_limits<double>::infinity());
         std::vector<unsigned char> pixels(w*h*4,0);
+        if(opaque) for(size_t i=0;i<pixels.size();i+=4) {
+            for(int c=0;c<3;++c) pixels[i+c]=(background>>(16-8*c))&255;
+            pixels[i+3]=255;
+        }
         uint64_t work=0;
         for(unsigned f=0;f<m->mNumFaces;++f) {
             const auto &face=m->mFaces[f];
@@ -1779,6 +1785,13 @@ CK_DLL_MFUN(model3d_render_orthographic) {
         for(size_t i=0;i<pixels.size();++i) API->object->array_int_set_idx(a,i,pixels[i]);
         RETURN->v_int=1;
     } catch(...) {}
+}
+}
+CK_DLL_MFUN(model3d_render_orthographic) {
+    renderOrthographicFrame(SELF,API,ARGS,RETURN,false);
+}
+CK_DLL_MFUN(model3d_render_orthographic_opaque) {
+    renderOrthographicFrame(SELF,API,ARGS,RETURN,true);
 }
 CK_DLL_MFUN(model3d_project_triangles) {
     RETURN->v_int=0;
@@ -1981,6 +1994,14 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_arg(QUERY,"float","verticalSpan");
     QUERY->add_arg(QUERY,"int","rgb");
     QUERY->add_arg(QUERY,"float[]","triangles");
+    QUERY->add_mfun(QUERY,model3d_render_orthographic_opaque,"int","renderOrthographic");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"float","verticalSpan");
+    QUERY->add_arg(QUERY,"int","rgb");
+    QUERY->add_arg(QUERY,"int","backgroundRGB");
+    QUERY->add_arg(QUERY,"int[]","pixels");
     QUERY->add_mfun(QUERY,model3d_render_orthographic,"int","renderOrthographic");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"int","width");
