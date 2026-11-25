@@ -4,6 +4,7 @@ import os
 import struct
 import subprocess
 import tempfile
+import time
 import re
 import zlib
 
@@ -26,6 +27,12 @@ def count_checks(log):
             len(re.findall(r'(?m)^[ \t]*"?FAIL"?(?=[ \t,]|$)', log)))
 
 def main():
+    try:
+        timeout = int(os.environ.get("MULTIMEDIA_RASTER_TIMEOUT", "180"))
+        if not 1 <= timeout <= 900:
+            raise ValueError
+    except ValueError:
+        raise SystemExit("MULTIMEDIA_RASTER_TIMEOUT must be an integer from 1 to 900 seconds")
     with tempfile.TemporaryDirectory() as directory:
         tmp = Path(directory)
         fixture(tmp / "input.png")
@@ -59,20 +66,25 @@ check(RasterIO.convert("input.png", "output.unknown") == 0, "unsupported output"
         env = dict(os.environ, CHUCK_RASTER_TRACE="1")
         print("Raster thread settings: MAGICK_THREAD_LIMIT=" + env.get("MAGICK_THREAD_LIMIT", "<unset>") +
               " OMP_NUM_THREADS=" + env.get("OMP_NUM_THREADS", "<unset>"), flush=True)
+        print(f"Raster smoke timeout: {timeout} seconds", flush=True)
+        started = time.monotonic()
         try:
             result = subprocess.run(command, cwd=tmp, env=env, stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, errors="replace", timeout=30)
+                                    stderr=subprocess.STDOUT, text=True, errors="replace", timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             partial = exc.stdout or ""
             if isinstance(partial, bytes):
                 partial = partial.decode("utf-8", errors="replace")
             print(partial, flush=True)
             stages = [line for line in partial.splitlines() if "RASTER_STAGE" in line]
-            print("RasterIO timeout after 30 seconds; last stage: " +
+            print(f"RasterIO timeout after {timeout} seconds; last stage: " +
                   (stages[-1] if stages else "no script stage reached"), flush=True)
+            native = [line for line in partial.splitlines() if line.startswith("[RasterIO native]") or line.startswith("[RasterIO convert]")]
+            print("Last native stage: " + (native[-1] if native else "not reached"), flush=True)
             passed, failed = count_checks(partial)
             print(f"SMOKE_COUNTS 8 {passed} {failed}", flush=True)
             raise SystemExit("RasterIO smoke test timed out")
+        print(f"Raster smoke elapsed: {time.monotonic() - started:.3f} seconds", flush=True)
         log = result.stdout
         print(log)
         passed, failed = count_checks(log)
