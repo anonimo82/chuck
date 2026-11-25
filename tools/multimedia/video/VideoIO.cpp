@@ -3463,6 +3463,31 @@ CK_DLL_MFUN(video_clip_export_quantized) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(video_clip_heightmap) {
+    RETURN->v_int=0;
+    try {
+        auto *p=clipState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->reader||!a||w<2||h<2||w>512||h>512||
+           API->object->array_float_size(a)!=w*h) return;
+        Frame image;
+        if(!image.p) return;
+        image.p->width=w; image.p->height=h; image.p->format=AV_PIX_FMT_BGR0;
+        if(av_frame_get_buffer(image.p,32)<0||!p->reader->render(image.p)) return;
+        for(int y=0;y<h;++y) {
+            auto *row=image.p->data[0]+size_t(y)*image.p->linesize[0];
+            for(int x=0;x<w;++x) {
+                double c[3];
+                for(int k=0;k<3;++k)
+                    c[k]=std::lround(std::clamp(row[x*4+2-k]*p->controls[k]+255*p->controls[3],0.0,255.0));
+                double v=std::clamp((0.2126*c[0]+0.7152*c[1]+0.0722*c[2])/255.0,0.0,1.0);
+                API->object->array_float_set_idx(a,size_t(y)*w+x,v);
+            }
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -3709,6 +3734,10 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"float","luminanceGate");
     QUERY->add_mfun(QUERY,video_clip_export_pixels,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,video_clip_heightmap,"int","exportHeightmap");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"float[]","heights");
     QUERY->add_mfun(QUERY,video_clip_export_quantized,"int","exportQuantized");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
