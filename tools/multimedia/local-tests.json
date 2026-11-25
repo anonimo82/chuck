@@ -1,10 +1,4 @@
 {
   "version": 1,
-  "groups": [
-    "transport-framing",
-    "transport-loopback",
-    "transport-session",
-    "transport-endpoints",
-    "transport-consolidation"
-  ]
+  "groups": []
 }
