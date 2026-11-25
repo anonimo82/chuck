@@ -1,6 +1,7 @@
 {
   "version": 1,
   "groups": [
-    "transport-video-high-resolution"
+    "transport-video-high-resolution",
+    "transport-video-intraframe"
   ]
 }
