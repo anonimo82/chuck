@@ -5764,8 +5764,75 @@ check(doc.exportPage(page,0,pixels));
         assert not (p / "bad-bands.pdf").exists()
 
 
+
+def text_page_numbers():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextDocument doc;
+TextPage page;
+TextPage reference;
+TextStyle style;
+check(page.width(240)==240);
+check(page.height(120)==120);
+check(reference.width(240)==240);
+check(reference.height(120)==120);
+check(page.numbering()==0 && page.firstNumber()==1);
+check(page.numbering(2)==-1);
+check(page.firstNumber(0)==-1);
+check(page.firstNumber(1000000)==-1);
+check(page.setFooter("Page {page} / {pages}",style,30));
+check(reference.setFooter("Page {page} / {pages}",style,30));
+check(doc.addParagraph("Same body",style));
+check(doc.addParagraph("Same body",style));
+check(page.addBreak(1));
+check(reference.addBreak(1));
+check(doc.pageCount(page)==2);
+int a[240*120*4];
+int b[240*120*4];
+check(doc.exportPage(page,0,a));
+check(doc.exportPage(reference,0,b));
+0=>int difference;
+for(0=>int i;i<a.size();i++) if(a[i]!=b[i]) difference++;
+check(difference==0);
+check(page.numbering(1)==1);
+check(page.firstNumber(7)==7);
+check(doc.pageCount(page)==2);
+check(reference.setFooter("Page 7 / 2",style,30));
+check(doc.exportPage(page,0,a));
+check(doc.exportPage(reference,0,b));
+0=>difference;
+for(0=>int i;i<a.size();i++) if(a[i]!=b[i]) difference++;
+check(difference==0);
+check(reference.setFooter("Page 8 / 2",style,30));
+check(doc.exportPage(page,1,a));
+check(doc.exportPage(reference,1,b));
+0=>difference;
+for(0=>int i;i<a.size();i++) if(a[i]!=b[i]) difference++;
+check(difference==0);
+check(doc.savePDF("numbered.pdf",page));
+check(doc.savePagePNG("numbered.png",page,1));
+check(page.setFooter("{{page}} {unknown} }} {page}",style,30));
+check(reference.setFooter("{page} {unknown} } 7",style,30));
+check(doc.exportPage(page,0,a));
+check(doc.exportPage(reference,0,b));
+0=>difference;
+for(0=>int i;i<a.size();i++) if(a[i]!=b[i]) difference++;
+check(difference==0);
+check(page.setHeader("{pages}",style,1));
+check(doc.pageCount(page)==-1);
+check(!doc.savePDF("invalid-numbered.pdf",page));
+page.clearHeader();
+check(page.numbering(0)==0);
+check(doc.pageCount(page)==2);
+""",41,p)
+        assert (p / "numbered.pdf").read_bytes().startswith(b"%PDF-")
+        assert (p / "numbered.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert not (p / "invalid-numbered.pdf").exists()
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
