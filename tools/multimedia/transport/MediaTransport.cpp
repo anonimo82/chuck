@@ -2,6 +2,7 @@
 #include "MediaPCMBuffer.h"
 #include "MediaAudioMidi.h"
 #include "MediaGraphics.h"
+#include "MediaVideoFrame.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -754,6 +755,53 @@ CK_DLL_SFUN(gr_inspect) {
         RETURN->v_int=kind;
     } catch(...) {}
 }
+CK_DLL_SFUN(vf_size) {
+    auto width=GET_NEXT_INT(ARGS),height=GET_NEXT_INT(ARGS);
+    RETURN->v_int=mediawire::videoFramePacketSize(width,height);
+}
+CK_DLL_SFUN(vf_encode) {
+    RETURN->v_int=0;
+    try {
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS);
+        auto width=GET_NEXT_INT(ARGS),height=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto n=mediawire::videoFramePacketSize(width,height);
+        if(!n||stream<1||static_cast<uint64_t>(stream)>=0xffffffffu||seq<0||
+           static_cast<uint64_t>(seq)>0xffffffffu||ts<0||!exact(dst,API,n)||
+           !exact(src,API,n-mediawire::headerSize-mediawire::videoFrameHeader)) return;
+        mediawire::Bytes rgba,wire;
+        if(!read(src,API,mediawire::maxPayload,rgba)) return;
+        if(mediawire::encodeVideoFrame({6,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},
+           {static_cast<uint32_t>(width),static_cast<uint32_t>(height)},rgba,wire)) {
+            write(dst,API,wire); RETURN->v_int=1;
+        }
+    } catch(...) {}
+}
+CK_DLL_SFUN(vf_inspect) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire,rgba; mediawire::Header h; mediawire::VideoFrameInfo info;
+        if(!exact(dst,API,5)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeVideoFrame(wire,h,info,rgba)) return;
+        const uint64_t fields[]={h.stream,h.sequence,h.timestamp,info.width,info.height};
+        for(size_t i=0;i<5;++i) API->object->array_int_set_idx(dst,i,fields[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_SFUN(vf_decode) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire,rgba; mediawire::Header h; mediawire::VideoFrameInfo info;
+        if(!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeVideoFrame(wire,h,info,rgba)||!exact(dst,API,rgba.size())) return;
+        write(dst,API,rgba); RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -1106,6 +1154,25 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"float[]","xyz");
     QUERY->add_arg(QUERY,"int[]","indices");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaVideoFrame","Object");
+    QUERY->add_sfun(QUERY,vf_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_sfun(QUERY,vf_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,vf_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,vf_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"MediaGraphics","Object");
     QUERY->add_sfun(QUERY,gr_inspect,"int","inspect");
