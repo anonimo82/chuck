@@ -1,4 +1,4 @@
-param([string]$MsysRoot = "C:\msys64", [string]$ChuckExe = "", [string]$CMakeExe = "", [ValidateSet("Full","Incremental","Failed")][string]$Mode = "Full", [string]$Since = "", [ValidateSet("raster","audio","legacy","text-core","text-recent")][string[]]$Group = @())
+param([string]$MsysRoot = "C:\msys64", [string]$ChuckExe = "", [string]$CMakeExe = "", [ValidateSet("Full","Local","Incremental","Failed")][string]$Mode = "Full", [string]$Since = "", [ValidateSet("raster","audio","legacy","text-core","text-recent")][string[]]$Group = @())
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $build = Join-Path $root "build/multimedia-windows"
@@ -108,5 +108,6 @@ try {
     if ($Since) { $smokeArgs += @("--since",$Since) }
     foreach ($g in $Group) { $smokeArgs += @("--group",$g) }
     Run-Native "$bin/python.exe" $smokeArgs
-    Write-Host "All multimedia smoke tests passed."
+    if ($Mode -in @("Local","Incremental")) { Write-Host "Local smoke validation finished; see summary for PASS or SKIP." }
+    else { Write-Host "All multimedia smoke tests passed." }
 } finally { Stop-Transcript }
