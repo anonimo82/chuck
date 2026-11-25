@@ -50,7 +50,7 @@ inline bool decodeModel(const Bytes &wire,Header &h,std::vector<double> &xyz,std
     h=candidate;xyz.swap(coords);indices.swap(tris);return true;
 }
 
-// CKMA v1: XYZ and triangle indices followed by optional per-vertex arrays.
+// CKMA v1: contiguous XYZ block, optional attribute blocks, then triangle indices.
 // Mask bits: normals(3), UV(2), RGBA(4), tangents(3), bitangents(3).
 constexpr size_t meshAttributeHeader=20;
 inline size_t meshAttributeStride(uint64_t mask){
