@@ -3112,3 +3112,34 @@ check(model.vertexAt(0,1,2)==4.0);
 check(model.createHeightmap(3,2,[0.0,0.0,0.0,0.0,0.0,0.0],1.0,0.0));
 check(model.meshVertices(0)==6 && model.faces(0)==4);
 """,22,p)
+
+    run("model", """
+Model3D model;
+int pixels[64];
+check(!model.renderOrthographic(0,4,4,2.0,0xffffff,pixels));
+check(model.createMesh([-1.0,-1.0,0.0,1.0,-1.0,0.0,1.0,1.0,0.0,-1.0,1.0,0.0],[0,1,2,0,2,3]));
+check(model.renderOrthographic(0,4,4,2.0,0xff8040,pixels));
+check(pixels[0]==255 && pixels[1]==128 && pixels[2]==64 && pixels[3]==255);
+check(pixels[60]==255 && pixels[63]==255);
+check(!model.renderOrthographic(-1,4,4,2.0,0xffffff,pixels));
+check(!model.renderOrthographic(0,0,4,2.0,0xffffff,pixels));
+check(!model.renderOrthographic(0,4,4,0.0,0xffffff,pixels));
+check(!model.renderOrthographic(0,4,4,2.0,-1,pixels));
+check(!model.renderOrthographic(0,2,2,2.0,0xffffff,pixels));
+check(pixels[0]==255 && pixels[1]==128);
+check(model.renderOrthographic(0,4,4,4.0,0xffffff,pixels));
+check(pixels[3]==0 && pixels[23]==255 && pixels[63]==0);
+4.0=>model.x;
+check(model.renderOrthographic(0,4,4,2.0,0xffffff,pixels));
+check(pixels[3]==0 && pixels[23]==0 && pixels[63]==0);
+model.reset();
+check(model.createMesh([-1.0,-1.0,1.0,1.0,-1.0,1.0,1.0,1.0,1.0,-1.0,1.0,1.0,-1.0,-1.0,0.0,1.0,-1.0,0.0,1.0,1.0,0.0,-1.0,1.0,0.0],[0,1,2,0,2,3,4,6,5,4,7,6]));
+check(model.renderOrthographic(0,4,4,2.0,0xffffff,pixels));
+check(pixels[20]==255 && pixels[23]==255);
+check(model.createMesh([-1.0,-1.0,0.0,1.0,-1.0,0.0,1.0,1.0,0.0,-1.0,1.0,0.0],[0,2,1,0,3,2]));
+check(model.renderOrthographic(0,4,4,2.0,0xffffff,pixels));
+check(pixels[20]==64 && pixels[23]==255);
+check(model.load("triangle.obj"));
+check(model.renderOrthographic(0,4,4,2.0,0xffffff,pixels));
+check(pixels[23]==0 && pixels[27]==255);
+""",25,p)
