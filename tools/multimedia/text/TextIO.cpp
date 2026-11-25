@@ -112,8 +112,12 @@ struct PageStyle {
     int headerHeight=0,footerHeight=0;
     t_CKINT numbering=0,firstNumber=1,splitParagraphs=0,splitTables=0;
 };
+struct FrameStyle { t_CKINT x=0,y=0,width=320,height=240,page=0; Container box; };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; std::vector<NodeBlock> nodes; size_t nextOrder=0; };
-t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0;
+t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0,frameOffset=0;
+FrameStyle *frameState(Chuck_Object *self,CK_DL_API API) {
+    return self?reinterpret_cast<FrameStyle *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,frameOffset))):nullptr;
+}
 Node *nodeState(Chuck_Object *self,CK_DL_API API) {
     return self?reinterpret_cast<Node *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,nodeOffset))):nullptr;
 }
@@ -765,6 +769,51 @@ CK_DLL_MFUN(text_doc_set_grid) {
 CK_DLL_MFUN(text_doc_remove_grid) {
     auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); RETURN->v_int=removeBlock(d,i,true);
 }
+
+CK_DLL_CTOR(text_frame_ctor) {
+    OBJ_MEMBER_UINT(SELF,frameOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,frameOffset)=reinterpret_cast<uintptr_t>(new FrameStyle); } catch(...) {}
+}
+CK_DLL_DTOR(text_frame_dtor) { delete frameState(SELF,API); OBJ_MEMBER_UINT(SELF,frameOffset)=0; }
+#define FRAME_PROPERTY(NAME,MINIMUM,MAXIMUM) \
+CK_DLL_MFUN(text_frame_##NAME##_get) { auto *p=frameState(SELF,API); RETURN->v_int=p?p->NAME:-1; } \
+CK_DLL_MFUN(text_frame_##NAME##_set) { auto *p=frameState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1; if(p&&v>=MINIMUM&&v<=MAXIMUM) RETURN->v_int=p->NAME=v; }
+FRAME_PROPERTY(x,0,4095)
+FRAME_PROPERTY(y,0,4095)
+FRAME_PROPERTY(width,1,4096)
+FRAME_PROPERTY(height,1,4096)
+FRAME_PROPERTY(page,0,4095)
+#undef FRAME_PROPERTY
+CK_DLL_MFUN(text_frame_geometry) {
+    auto *p=frameState(SELF,API); auto x=GET_NEXT_INT(ARGS),y=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+    RETURN->v_int=0;
+    if(!p||x<0||x>4095||y<0||y>4095||w<1||w>4096||h<1||h>4096) return;
+    p->x=x; p->y=y; p->width=w; p->height=h; RETURN->v_int=1;
+}
+CK_DLL_MFUN(text_frame_set_container) {
+    auto *p=frameState(SELF,API); auto *box=containerState(GET_NEXT_OBJECT(ARGS),API);
+    RETURN->v_int=0; if(p&&box) { p->box=*box; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_frame_get_container) {
+    auto *p=frameState(SELF,API); auto *box=containerState(GET_NEXT_OBJECT(ARGS),API);
+    RETURN->v_int=0; if(p&&box) { *box=p->box; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_frame_content_size) {
+    auto *p=frameState(SELF,API);
+    auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+    RETURN->v_int=0;
+    if(!p||!a||API->object->array_int_size(a)!=2) return;
+    double w=p->width-p->box.paddingLeft-p->box.paddingRight-2*p->box.borderWidth;
+    double h=p->height-p->box.paddingTop-p->box.paddingBottom-2*p->box.borderWidth;
+    if(w<1||h<1) return;
+    API->object->array_int_set_idx(a,0,static_cast<t_CKINT>(std::floor(w)));
+    API->object->array_int_set_idx(a,1,static_cast<t_CKINT>(std::floor(h)));
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(text_frame_reset) {
+    auto *p=frameState(SELF,API); if(p) *p=FrameStyle{};
+}
+
 CK_DLL_CTOR(text_page_ctor) {
     OBJ_MEMBER_UINT(SELF,pageOffset)=0;
     try { OBJ_MEMBER_UINT(SELF,pageOffset)=reinterpret_cast<uintptr_t>(new PageStyle); } catch(...) {}
@@ -2469,6 +2518,38 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_grid_rowGap_get,"int","rowGap");
     QUERY->add_mfun(QUERY,text_grid_rowGap_set,"int","rowGap");
     QUERY->add_arg(QUERY,"int","value");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"TextFrame","Object");
+    frameOffset=QUERY->add_mvar(QUERY,"int","@textFrameNative",FALSE);
+    if(frameOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,text_frame_ctor); QUERY->add_dtor(QUERY,text_frame_dtor);
+    QUERY->add_mfun(QUERY,text_frame_x_get,"int","x");
+    QUERY->add_mfun(QUERY,text_frame_x_set,"int","x");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_frame_y_get,"int","y");
+    QUERY->add_mfun(QUERY,text_frame_y_set,"int","y");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_frame_width_get,"int","width");
+    QUERY->add_mfun(QUERY,text_frame_width_set,"int","width");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_frame_height_get,"int","height");
+    QUERY->add_mfun(QUERY,text_frame_height_set,"int","height");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_frame_page_get,"int","page");
+    QUERY->add_mfun(QUERY,text_frame_page_set,"int","page");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_frame_geometry,"int","setGeometry");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_mfun(QUERY,text_frame_set_container,"int","setContainer");
+    QUERY->add_arg(QUERY,"TextContainer","container");
+    QUERY->add_mfun(QUERY,text_frame_get_container,"int","getContainer");
+    QUERY->add_arg(QUERY,"TextContainer","destination");
+    QUERY->add_mfun(QUERY,text_frame_content_size,"int","contentSize");
+    QUERY->add_arg(QUERY,"int[]","dimensions");
+    QUERY->add_mfun(QUERY,text_frame_reset,"void","reset");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextPage","Object");
     pageOffset=QUERY->add_mvar(QUERY,"int","@textPageNative",FALSE);
