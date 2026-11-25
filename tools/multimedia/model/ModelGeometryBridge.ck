@@ -30,8 +30,7 @@ public class ModelGeometryBridge {
         float tex[nv*2];
         if(!model.exportTriangles(index, ids)) return 0;
         if(nb > 0) {
-            if(!model.exportPosedVertices(index, xyz) ||
-               !model.exportPosedNormals(index, nrm)) return 0;
+            if(!model.exportPosedGeometry(index, xyz, nrm)) return 0;
         } else {
             if(!model.exportVertices(index, xyz) ||
                !model.exportNormals(index, nrm)) return 0;
@@ -61,8 +60,7 @@ public class ModelGeometryBridge {
            source.faces(meshIndex) != triangleCount ||
            (source.bones(meshIndex) > 0) != skinned) return 0;
         if(skinned) {
-            if(!source.exportPosedVertices(meshIndex, positions) ||
-               !source.exportPosedNormals(meshIndex, normals)) return 0;
+            if(!source.exportPosedGeometry(meshIndex, positions, normals)) return 0;
         } else {
             if(!source.exportVertices(meshIndex, positions) ||
                !source.exportNormals(meshIndex, normals)) return 0;

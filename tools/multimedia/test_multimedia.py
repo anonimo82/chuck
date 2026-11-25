@@ -2571,3 +2571,40 @@ check(Math.fabs(out[1]+1.0)<0.00001 && Math.fabs(out[5]-0.70710678)<0.00001);
 check(imported.resetAnimation());
 check(imported.exportPosedNormals(0,out) && Math.fabs(out[2]-1.0)<0.00001);
 """,28,p)
+
+
+    run("model", """
+Model3D model;
+float xyz[9];
+float nrm[9];
+float separateXYZ[9];
+float separateNrm[9];
+float small[3];
+check(!model.exportPosedGeometry(0,xyz,nrm));
+check(model.createMesh([0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0],[0,1,2]));
+check(model.setSkin(0,2,[1.0,0.0,0.5,0.5,0.0,1.0]));
+check(!model.exportPosedGeometry(0,xyz,nrm));
+check(model.computeNormals(0));
+check(model.setBonePose(0,0,2.0,0.0,0.0,90.0,0.0,0.0));
+check(model.exportPosedGeometry(0,xyz,nrm));
+check(model.exportPosedVertices(0,separateXYZ));
+check(model.exportPosedNormals(0,separateNrm));
+1 => int equal;
+for(0 => int i; i < 9; i++) {
+    if(Math.fabs(xyz[i]-separateXYZ[i])>0.00001 ||
+       Math.fabs(nrm[i]-separateNrm[i])>0.00001) 0 => equal;
+}
+check(equal);
+check(!model.exportPosedGeometry(0,xyz,xyz));
+check(!model.exportPosedGeometry(0,xyz,small));
+check(!model.exportPosedGeometry(0,small,nrm));
+check(Math.fabs(xyz[0]-2.0)<0.00001 && Math.fabs(nrm[1]+1.0)<0.00001);
+check(model.resetPose(0));
+check(model.exportPosedGeometry(0,xyz,nrm));
+check(Math.fabs(xyz[0])<0.00001 && Math.fabs(nrm[2]-1.0)<0.00001);
+Model3D imported;
+check(imported.load("posednormals/model.gltf"));
+check(imported.sampleAnimation(0,2.0,0));
+check(imported.exportPosedGeometry(0,xyz,nrm));
+check(Math.fabs(xyz[0]-3.0)<0.00001 && Math.fabs(nrm[1]+1.0)<0.00001);
+""",21,p)

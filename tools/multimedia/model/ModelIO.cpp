@@ -850,114 +850,117 @@ CK_DLL_MFUN(model3d_reset_pose) {
     for(unsigned b=0;b<m->mNumBones;++b) skinNode(p,mesh,b)->mTransformation=aiMatrix4x4();
     RETURN->v_int=1;
 }
+namespace {
+// One traversal of the skin weights and joint transforms, for either or both
+// output streams. All validation precedes writes into ChucK arrays.
+struct SkinSum { double x=0,y=0,z=0; };
+bool deformSkin(ModelState *p,t_CKINT mesh,
+                Chuck_DL_Api::ArrayFloat positions,Chuck_DL_Api::ArrayFloat normals,
+                CK_DL_API API) {
+    auto *m=meshAt(p,mesh);
+    if(!m||!m->HasBones()||(!positions&&!normals)||
+       (positions&&normals&&positions==normals)||
+       (positions&&API->object->array_float_size(positions)!=static_cast<int64_t>(m->mNumVertices)*3)||
+       (normals&&(!m->HasNormals()||API->object->array_float_size(normals)!=static_cast<int64_t>(m->mNumVertices)*3))) return false;
+    aiMatrix4x4 inverseMesh;
+    if(!p->generated) {
+        if(!importedWorld(p,uniqueMeshNode(p->scene->mRootNode,static_cast<unsigned>(mesh)),inverseMesh)) return false;
+        auto det=inverseMesh.Determinant();
+        if(!std::isfinite(det)||det==0) return false;
+        inverseMesh.Inverse();
+        if(!finiteMatrix(inverseMesh)) return false;
+    }
+    // Allocate only the requested sums; joint transforms and weights are shared.
+    std::vector<SkinSum> xyz(positions?m->mNumVertices:0),nrm(normals?m->mNumVertices:0);
+    std::vector<double> weights(m->mNumVertices,0);
+    auto accumulate=[](SkinSum &sum,const aiVector3D &v,double w) {
+        sum.x+=double(v.x)*w; sum.y+=double(v.y)*w; sum.z+=double(v.z)*w;
+    };
+    for(unsigned b=0;b<m->mNumBones;++b) {
+        aiMatrix4x4 world;
+        if(p->generated) {
+            if(!skinWorld(p,skinNode(p,mesh,b),world)) return false;
+        } else {
+            if(!importedWorld(p,uniqueNode(p->scene->mRootNode,m->mBones[b]->mName),world)) return false;
+            world=inverseMesh*world;
+        }
+        world=world*m->mBones[b]->mOffsetMatrix;
+        if(!finiteMatrix(world)) return false;
+        aiMatrix3x3 normalMatrix;
+        if(normals) {
+            normalMatrix=aiMatrix3x3(world);
+            auto det=normalMatrix.Determinant();
+            if(!std::isfinite(det)||det==0) return false;
+            normalMatrix.Inverse().Transpose();
+        }
+        for(unsigned j=0;j<m->mBones[b]->mNumWeights;++j) {
+            auto weight=m->mBones[b]->mWeights[j];
+            auto i=weight.mVertexId;
+            double w=weight.mWeight;
+            if(i>=m->mNumVertices||!unit(w)) return false;
+            if(positions) accumulate(xyz[i],world*m->mVertices[i],w);
+            if(normals) accumulate(nrm[i],normalMatrix*m->mNormals[i],w);
+            weights[i]+=w;
+        }
+    }
+    for(unsigned i=0;i<m->mNumVertices;++i) {
+        double w=weights[i];
+        if(w==0&&!p->generated) {
+            if(positions) { auto v=m->mVertices[i]; xyz[i]={v.x,v.y,v.z}; }
+            if(normals) { auto v=m->mNormals[i]; nrm[i]={v.x,v.y,v.z}; }
+            w=1;
+        }
+        if(w<=0) return false;
+        if(positions) {
+            auto &q=xyz[i]; q.x/=w; q.y/=w; q.z/=w;
+            if(!coordinate(q.x)||!coordinate(q.y)||!coordinate(q.z)) return false;
+        }
+        if(normals) {
+            auto &q=nrm[i]; double len=std::hypot(q.x,q.y,q.z);
+            if(!std::isfinite(len)||len<=1e-12) return false;
+            q.x/=len; q.y/=len; q.z/=len;
+        }
+    }
+    for(unsigned i=0;i<m->mNumVertices;++i) {
+        if(positions) {
+            const auto &q=xyz[i];
+            API->object->array_float_set_idx(positions,3*i,q.x);
+            API->object->array_float_set_idx(positions,3*i+1,q.y);
+            API->object->array_float_set_idx(positions,3*i+2,q.z);
+        }
+        if(normals) {
+            const auto &q=nrm[i];
+            API->object->array_float_set_idx(normals,3*i,q.x);
+            API->object->array_float_set_idx(normals,3*i+1,q.y);
+            API->object->array_float_set_idx(normals,3*i+2,q.z);
+        }
+    }
+    return true;
+}
+}
 CK_DLL_MFUN(model3d_export_posed) {
     RETURN->v_int=0;
     try {
         auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS);
         auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
-        auto *m=meshAt(p,mesh);
-        if(!m||!m->HasBones()||!a||API->object->array_float_size(a)!=static_cast<int64_t>(m->mNumVertices)*3) return;
-        aiMatrix4x4 inverseMesh;
-        if(!p->generated) {
-            if(!importedWorld(p,uniqueMeshNode(p->scene->mRootNode,static_cast<unsigned>(mesh)),inverseMesh)) return;
-            auto det=inverseMesh.Determinant();
-            if(!std::isfinite(det)||det==0) return;
-            inverseMesh.Inverse();
-            if(!finiteMatrix(inverseMesh)) return;
-        }
-        struct Sum { double x=0,y=0,z=0,w=0; };
-        std::vector<Sum> next(m->mNumVertices);
-        for(unsigned b=0;b<m->mNumBones;++b) {
-            aiMatrix4x4 world;
-            if(p->generated) {
-                if(!skinWorld(p,skinNode(p,mesh,b),world)) return;
-            } else {
-                if(!importedWorld(p,uniqueNode(p->scene->mRootNode,m->mBones[b]->mName),world)) return;
-                world=inverseMesh*world;
-            }
-            world=world*m->mBones[b]->mOffsetMatrix;
-            if(!finiteMatrix(world)) return;
-            for(unsigned j=0;j<m->mBones[b]->mNumWeights;++j) {
-                auto weight=m->mBones[b]->mWeights[j];
-                if(weight.mVertexId>=m->mNumVertices||!unit(weight.mWeight)) return;
-                auto v=world*m->mVertices[weight.mVertexId];
-                auto &q=next[weight.mVertexId];
-                q.x+=double(v.x)*weight.mWeight; q.y+=double(v.y)*weight.mWeight;
-                q.z+=double(v.z)*weight.mWeight; q.w+=weight.mWeight;
-            }
-        }
-        for(unsigned i=0;i<next.size();++i) {
-            auto &q=next[i];
-            if(q.w==0&&!p->generated) { auto v=m->mVertices[i]; q={v.x,v.y,v.z,1}; }
-            if(q.w<=0||!coordinate(q.x/q.w)||!coordinate(q.y/q.w)||!coordinate(q.z/q.w)) return;
-        }
-        for(unsigned i=0;i<m->mNumVertices;++i) {
-            auto q=next[i];
-            API->object->array_float_set_idx(a,3*i,q.x/q.w);
-            API->object->array_float_set_idx(a,3*i+1,q.y/q.w);
-            API->object->array_float_set_idx(a,3*i+2,q.z/q.w);
-        }
-        RETURN->v_int=1;
+        if(a) RETURN->v_int=deformSkin(p,mesh,a,nullptr,API);
     } catch(...) {}
 }
-
 CK_DLL_MFUN(model3d_export_posed_normals) {
     RETURN->v_int=0;
     try {
         auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS);
         auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
-        auto *m=meshAt(p,mesh);
-        if(!m||!m->HasBones()||!m->HasNormals()||!a||API->object->array_float_size(a)!=static_cast<int64_t>(m->mNumVertices)*3) return;
-        aiMatrix4x4 inverseMesh;
-        if(!p->generated) {
-            if(!importedWorld(p,uniqueMeshNode(p->scene->mRootNode,static_cast<unsigned>(mesh)),inverseMesh)) return;
-            auto det=inverseMesh.Determinant();
-            if(!std::isfinite(det)||det==0) return;
-            inverseMesh.Inverse();
-            if(!finiteMatrix(inverseMesh)) return;
-        }
-        struct Sum { double x=0,y=0,z=0,w=0; };
-        std::vector<Sum> next(m->mNumVertices);
-        for(unsigned b=0;b<m->mNumBones;++b) {
-            aiMatrix4x4 world;
-            if(p->generated) {
-                if(!skinWorld(p,skinNode(p,mesh,b),world)) return;
-            } else {
-                if(!importedWorld(p,uniqueNode(p->scene->mRootNode,m->mBones[b]->mName),world)) return;
-                world=inverseMesh*world;
-            }
-            world=world*m->mBones[b]->mOffsetMatrix;
-            if(!finiteMatrix(world)) return;
-            // A normal is a covector: translation is irrelevant and nonuniform
-            // scaling requires the inverse transpose of the linear transform.
-            aiMatrix3x3 normalMatrix(world);
-            auto det=normalMatrix.Determinant();
-            if(!std::isfinite(det)||det==0) return;
-            normalMatrix.Inverse().Transpose();
-            for(unsigned j=0;j<m->mBones[b]->mNumWeights;++j) {
-                auto weight=m->mBones[b]->mWeights[j];
-                if(weight.mVertexId>=m->mNumVertices||!unit(weight.mWeight)) return;
-                auto v=normalMatrix*m->mNormals[weight.mVertexId];
-                auto &q=next[weight.mVertexId];
-                q.x+=double(v.x)*weight.mWeight; q.y+=double(v.y)*weight.mWeight;
-                q.z+=double(v.z)*weight.mWeight; q.w+=weight.mWeight;
-            }
-        }
-        for(unsigned i=0;i<next.size();++i) {
-            auto &q=next[i];
-            if(q.w==0&&!p->generated) { auto v=m->mNormals[i]; q={v.x,v.y,v.z,1}; }
-            if(q.w<=0) return;
-            double len=std::hypot(q.x,q.y,q.z);
-            if(!std::isfinite(len)||len<=1e-12) return;
-            q.x/=len; q.y/=len; q.z/=len; q.w=1;
-        }
-        for(unsigned i=0;i<m->mNumVertices;++i) {
-            auto q=next[i];
-            API->object->array_float_set_idx(a,3*i,q.x/q.w);
-            API->object->array_float_set_idx(a,3*i+1,q.y/q.w);
-            API->object->array_float_set_idx(a,3*i+2,q.z/q.w);
-        }
-        RETURN->v_int=1;
+        if(a) RETURN->v_int=deformSkin(p,mesh,nullptr,a,API);
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_export_posed_geometry) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto b=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(a&&b) RETURN->v_int=deformSkin(p,mesh,a,b,API);
     } catch(...) {}
 }
 
@@ -1333,6 +1336,10 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_export_posed_normals,"int","exportPosedNormals");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"float[]","xyz");
+    QUERY->add_mfun(QUERY,model3d_export_posed_geometry,"int","exportPosedGeometry");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"float[]","xyz");
+    QUERY->add_arg(QUERY,"float[]","normals");
     QUERY->add_mfun(QUERY,model3d_add_animation,"int","addAnimation");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"string","name");
