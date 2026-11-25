@@ -1,6 +1,7 @@
 {
   "version": 1,
   "groups": [
-    "vector-shape-edit"
+    "vector-shape-edit",
+    "vector-shape-transform"
   ]
 }
