@@ -1,5 +1,6 @@
 #include "MediaSession.h"
 #include "MediaPCMBuffer.h"
+#include "MediaMIDI.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -397,6 +398,81 @@ CK_DLL_MFUN(pb_underruns) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->unde
 CK_DLL_MFUN(pb_overruns) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->overruns():0; }
 CK_DLL_MFUN(pb_error) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->error():0; }
 CK_DLL_MFUN(pb_channels) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->channels():0; }
+CK_DLL_SFUN(mi_size) { RETURN->v_int=mediawire::headerSize+mediawire::midiPayloadSize; }
+CK_DLL_SFUN(mi_encode) {
+    RETURN->v_int=0;
+    try {
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS);
+        auto status=GET_NEXT_INT(ARGS),d1=GET_NEXT_INT(ARGS),d2=GET_NEXT_INT(ARGS);
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(stream<1||static_cast<uint64_t>(stream)>=0xffffffffu||seq<0||
+           static_cast<uint64_t>(seq)>0xffffffffu||ts<0||!exact(dst,API,40)) return;
+        mediawire::Bytes wire;
+        if(mediawire::encodeMidi({5,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},status,d1,d2,wire)) {
+            write(dst,API,wire); RETURN->v_int=1;
+        }
+    } catch(...) {}
+}
+namespace {
+void writeMidi(Arr a,CK_DL_API API,const mediawire::Header &h,const mediawire::Bytes &msg) {
+    const uint64_t fields[]={h.stream,h.sequence,h.timestamp,msg[0],msg[1],msg[2]};
+    for(size_t i=0;i<6;++i) API->object->array_int_set_idx(a,i,fields[i]);
+}
+t_CKUINT midiStreamOffset=0;
+mediawire::MidiStream *midiStream(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<mediawire::MidiStream*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,midiStreamOffset)));
+}
+}
+CK_DLL_SFUN(mi_decode) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire,msg; mediawire::Header h;
+        if(!exact(dst,API,6)||!read(src,API,40,wire)||!mediawire::decodeMidi(wire,h,msg)) return;
+        writeMidi(dst,API,h,msg); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_CTOR(ms_ctor) {
+    OBJ_MEMBER_UINT(SELF,midiStreamOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,midiStreamOffset)=reinterpret_cast<uintptr_t>(new mediawire::MidiStream); } catch(...) {}
+}
+CK_DLL_DTOR(ms_dtor) { delete midiStream(SELF,API); OBJ_MEMBER_UINT(SELF,midiStreamOffset)=0; }
+CK_DLL_MFUN(ms_configure) {
+    auto *p=midiStream(SELF,API);
+    auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),origin=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p&&p->configure(stream,seq,origin);
+}
+CK_DLL_MFUN(ms_clear) { if(auto *p=midiStream(SELF,API)) p->clear(); }
+CK_DLL_MFUN(ms_encode) {
+    RETURN->v_int=0;
+    auto *p=midiStream(SELF,API); if(!p) return;
+    try {
+        auto ts=GET_NEXT_INT(ARGS),status=GET_NEXT_INT(ARGS),d1=GET_NEXT_INT(ARGS),d2=GET_NEXT_INT(ARGS);
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(!p->configured()) { p->reject(1); return; }
+        if(!exact(dst,API,40)) { p->reject(2); return; }
+        mediawire::Bytes wire;
+        if(p->encodeEvent(ts,status,d1,d2,wire)) { write(dst,API,wire); RETURN->v_int=1; }
+    } catch(...) { p->reject(2); }
+}
+CK_DLL_MFUN(ms_decode) {
+    RETURN->v_int=0;
+    auto *p=midiStream(SELF,API); if(!p) return;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(!p->configured()) { p->reject(1); return; }
+        mediawire::Bytes wire,msg; mediawire::Header h;
+        if(!exact(dst,API,6)||!read(src,API,40,wire)) { p->reject(2); return; }
+        if(p->decodeEvent(wire,h,msg)) { writeMidi(dst,API,h,msg); RETURN->v_int=1; }
+    } catch(...) { p->reject(2); }
+}
+CK_DLL_MFUN(ms_configured) { auto *p=midiStream(SELF,API); RETURN->v_int=p?p->configured():0; }
+CK_DLL_MFUN(ms_nextSequence) { auto *p=midiStream(SELF,API); RETURN->v_int=p?p->nextSequence():0; }
+CK_DLL_MFUN(ms_lastTimestamp) { auto *p=midiStream(SELF,API); RETURN->v_int=p?p->lastTimestamp():0; }
+CK_DLL_MFUN(ms_events) { auto *p=midiStream(SELF,API); RETURN->v_int=p?p->events():0; }
+CK_DLL_MFUN(ms_error) { auto *p=midiStream(SELF,API); RETURN->v_int=p?p->error():0; }
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -582,5 +658,44 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_mfun(QUERY,pb_overruns,"int","overruns");
     QUERY->add_mfun(QUERY,pb_error,"int","error");
     QUERY->add_mfun(QUERY,pb_channels,"int","channels");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaMIDI","Object");
+    QUERY->add_sfun(QUERY,mi_size,"int","packetSize");
+    QUERY->add_sfun(QUERY,mi_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","status");
+    QUERY->add_arg(QUERY,"int","data1");
+    QUERY->add_arg(QUERY,"int","data2");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,mi_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","event");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaMIDIStream","Object");
+    midiStreamOffset=QUERY->add_mvar(QUERY,"int","@midiStreamNative",FALSE);
+    if(midiStreamOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,ms_ctor);
+    QUERY->add_dtor(QUERY,ms_dtor);
+    QUERY->add_mfun(QUERY,ms_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","firstSequence");
+    QUERY->add_arg(QUERY,"int","originUs");
+    QUERY->add_mfun(QUERY,ms_clear,"void","clear");
+    QUERY->add_mfun(QUERY,ms_encode,"int","encodeEvent");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","status");
+    QUERY->add_arg(QUERY,"int","data1");
+    QUERY->add_arg(QUERY,"int","data2");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,ms_decode,"int","decodeEvent");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","event");
+    QUERY->add_mfun(QUERY,ms_configured,"int","configured");
+    QUERY->add_mfun(QUERY,ms_nextSequence,"int","nextSequence");
+    QUERY->add_mfun(QUERY,ms_lastTimestamp,"int","lastTimestamp");
+    QUERY->add_mfun(QUERY,ms_events,"int","events");
+    QUERY->add_mfun(QUERY,ms_error,"int","error");
     return QUERY->end_class(QUERY);
 }

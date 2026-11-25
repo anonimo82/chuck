@@ -9592,8 +9592,121 @@ client.close();
 """,92,p)
 
 
+def transport_midi():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("transport", """
+int packet[40];
+int event[6];
+check(MediaMIDI.packetSize()==40);
+for(0=>int i;i<7;i++) {
+    128+i*16+15=>int status;
+    0=>int d2;
+    if(i!=4 && i!=5) 127=>d2;
+    check(MediaMIDI.encode(7,i,100+i,status,60,d2,packet));
+    check(MediaMIDI.decode(packet,event));
+    check(event[0]==7 && event[1]==i && event[2]==100+i);
+    check(event[3]==status && event[4]==60 && event[5]==d2);
+}
+check(packet[5]==5 && packet[32]==67 && packet[33]==75 && packet[34]==77 && packet[35]==73);
+check(packet[36]==1 && packet[37]==239);
+check(!MediaMIDI.encode(0,0,0,144,60,100,packet));
+check(!MediaMIDI.encode(-1,0,0,144,60,100,packet));
+check(!MediaMIDI.encode(7,-1,0,144,60,100,packet));
+check(!MediaMIDI.encode(7,0,-1,144,60,100,packet));
+check(!MediaMIDI.encode(7,0,0,127,60,100,packet));
+check(!MediaMIDI.encode(7,0,0,240,60,100,packet));
+check(!MediaMIDI.encode(7,0,0,144,-1,100,packet));
+check(!MediaMIDI.encode(7,0,0,144,128,100,packet));
+check(!MediaMIDI.encode(7,0,0,144,60,128,packet));
+check(!MediaMIDI.encode(7,0,0,192,60,1,packet));
+check(!MediaMIDI.encode(7,0,0,208,60,1,packet));
+check(!MediaMIDI.encode(7,0,0,144,60,100,[0]));
+check(!MediaMIDI.decode(packet,[0]));
+check(MediaMIDI.decode(packet,event));
+check(event[1]==6 && event[3]==239);
+packet[39]=>int saved;
+0=>packet[39];
+check(!MediaMIDI.decode(packet,event));
+check(event[3]==239 && event[5]==127);
+saved=>packet[39];
+int raw[8];
+int meta[4];
+int bad[40];
+check(MediaTransport.decode(packet,meta,raw));
+check(MediaTransport.encode(4,7,0,0,raw,bad));
+check(!MediaMIDI.decode(bad,event));
+2=>raw[4];
+check(MediaTransport.encode(5,7,0,0,raw,bad));
+check(!MediaMIDI.decode(bad,event));
+1=>raw[4];
+240=>raw[5];
+check(MediaTransport.encode(5,7,0,0,raw,bad));
+check(!MediaMIDI.decode(bad,event));
+MediaMIDIStream tx;
+MediaMIDIStream rx;
+check(!tx.configured());
+check(!tx.encodeEvent(100,144,60,100,packet));
+check(tx.error()==1);
+check(!tx.configure(0,0,100));
+check(!tx.configure(7,-1,100));
+check(!tx.configure(7,0,-1));
+check(tx.configure(7,9,100));
+check(rx.configure(7,9,100));
+check(tx.nextSequence()==9 && tx.lastTimestamp()==100);
+check(!tx.encodeEvent(99,144,60,100,packet));
+check(tx.error()==4 && tx.events()==0);
+check(tx.encodeEvent(100,144,60,100,packet));
+check(tx.nextSequence()==10 && tx.events()==1);
+int second[40];
+check(tx.encodeEvent(100,128,60,0,second));
+check(!rx.decodeEvent(second,event));
+check(rx.error()==3 && rx.events()==0);
+check(rx.decodeEvent(packet,event));
+check(event[1]==9 && event[3]==144);
+check(!rx.decodeEvent(packet,event));
+check(rx.error()==3 && rx.events()==1);
+check(MediaMIDI.encode(7,10,99,128,60,0,bad));
+check(!rx.decodeEvent(bad,event));
+check(rx.error()==4 && rx.nextSequence()==10);
+check(rx.decodeEvent(second,event));
+check(rx.events()==2 && rx.lastTimestamp()==100);
+check(rx.nextSequence()==11 && rx.error()==0);
+rx.clear();
+check(!rx.configured() && rx.events()==0);
+MediaSession server;
+MediaSession client;
+check(server.configure(24,64));
+check(client.configure(24,64));
+check(server.listen(0));
+check(client.connect(server.port()));
+0=>int accepted;
+for(0=>int i;i<100000 && !accepted;i++) server.accept()=>accepted;
+check(accepted==1);
+for(0=>int i;i<100000 && (!server.connected()||!client.connected());i++) {
+    server.poll(); client.poll();
+}
+check(server.connected() && client.connected());
+check(client.sendPacket(packet));
+int audio[52];
+check(MediaPCM.encode(8,0,100,48000,1,[0.0,1.0],audio));
+check(server.sendPacket(audio));
+for(0=>int i;i<100000 && (!server.packetSize()||!client.packetSize());i++) {
+    server.poll(); client.poll();
+}
+check(server.receivePacket(bad));
+check(MediaMIDI.decode(bad,event));
+check(event[3]==144 && event[2]==100);
+check(client.receivePacket(audio));
+float samples[2];
+check(MediaPCM.decode(audio,samples));
+check(samples[0]==0.0 && samples[1]==1.0);
+server.close(); client.close();
+""",97,p)
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing, "transport-loopback": transport_loopback, "transport-session": transport_session, "transport-endpoints": transport_endpoints, "transport-consolidation": transport_consolidation, "transport-pcm": transport_pcm, "transport-pcm-stream": transport_pcm_stream, "transport-pcm-buffer": transport_pcm_buffer}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing, "transport-loopback": transport_loopback, "transport-session": transport_session, "transport-endpoints": transport_endpoints, "transport-consolidation": transport_consolidation, "transport-pcm": transport_pcm, "transport-pcm-stream": transport_pcm_stream, "transport-pcm-buffer": transport_pcm_buffer, "transport-midi": transport_midi}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
