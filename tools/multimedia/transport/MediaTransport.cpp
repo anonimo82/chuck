@@ -1,5 +1,5 @@
 #include "MediaSession.h"
-#include "MediaPCMStream.h"
+#include "MediaPCMBuffer.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -335,6 +335,68 @@ CK_DLL_MFUN(ps_nextTimestamp) { auto *p=pcmStream(SELF,API); RETURN->v_int=p?p->
 CK_DLL_MFUN(ps_error) { auto *p=pcmStream(SELF,API); RETURN->v_int=p?p->error():0; }
 CK_DLL_MFUN(ps_rate) { auto *p=pcmStream(SELF,API); RETURN->v_int=p?p->rate():0; }
 CK_DLL_MFUN(ps_channels) { auto *p=pcmStream(SELF,API); RETURN->v_int=p?p->channels():0; }
+namespace {
+t_CKUINT pcmBufferOffset=0;
+mediawire::PcmBuffer *pcmBuffer(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<mediawire::PcmBuffer*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,pcmBufferOffset)));
+}
+}
+CK_DLL_CTOR(pb_ctor) {
+    OBJ_MEMBER_UINT(SELF,pcmBufferOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,pcmBufferOffset)=reinterpret_cast<uintptr_t>(new mediawire::PcmBuffer); } catch(...) {}
+}
+CK_DLL_DTOR(pb_dtor) { delete pcmBuffer(SELF,API); OBJ_MEMBER_UINT(SELF,pcmBufferOffset)=0; }
+CK_DLL_MFUN(pb_configure) {
+    RETURN->v_int=0;
+    try {
+        auto *p=pcmBuffer(SELF,API);
+        auto stream=GET_NEXT_INT(ARGS),rate=GET_NEXT_INT(ARGS),channels=GET_NEXT_INT(ARGS),origin=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),capacity=GET_NEXT_INT(ARGS),threshold=GET_NEXT_INT(ARGS);
+        if(p) RETURN->v_int=p->configure(stream,rate,channels,origin,seq,capacity,threshold);
+    } catch(...) {}
+}
+CK_DLL_MFUN(pb_clear) { if(auto *p=pcmBuffer(SELF,API)) p->clear(); }
+CK_DLL_MFUN(pb_push) {
+    RETURN->v_int=0;
+    auto *p=pcmBuffer(SELF,API); if(!p) return;
+    try {
+        auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(!p->configured()) { p->reject(1); return; }
+        mediawire::Bytes wire;
+        if(!read(a,API,mediawire::headerSize+mediawire::maxPayload,wire)) { p->reject(2); return; }
+        RETURN->v_int=p->push(wire);
+    } catch(...) { p->reject(2); }
+}
+CK_DLL_MFUN(pb_pull) {
+    RETURN->v_int=0;
+    auto *p=pcmBuffer(SELF,API); if(!p) return;
+    try {
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p->configured()) { p->reject(1); return; }
+        if(!a) { p->reject(2); return; }
+        auto n=API->object->array_float_size(a);
+        if(n<=0||n%p->channels()) { p->reject(2); return; }
+        std::vector<double> data;
+        if(!p->pull(n/p->channels(),data)) return;
+        for(size_t i=0;i<data.size();++i) API->object->array_float_set_idx(a,i,data[i]);
+        RETURN->v_int=1;
+    } catch(...) { p->reject(2); }
+}
+CK_DLL_MFUN(pb_configured) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->configured():0; }
+CK_DLL_MFUN(pb_capacity) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->capacity():0; }
+CK_DLL_MFUN(pb_threshold) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->threshold():0; }
+CK_DLL_MFUN(pb_available) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->available():0; }
+CK_DLL_MFUN(pb_freeFrames) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->freeFrames():0; }
+CK_DLL_MFUN(pb_ready) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->ready():0; }
+CK_DLL_MFUN(pb_receivedFrames) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->receivedFrames():0; }
+CK_DLL_MFUN(pb_consumedFrames) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->consumedFrames():0; }
+CK_DLL_MFUN(pb_nextSequence) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->nextSequence():0; }
+CK_DLL_MFUN(pb_nextTimestamp) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->nextTimestamp():0; }
+CK_DLL_MFUN(pb_playTimestamp) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->playTimestamp():0; }
+CK_DLL_MFUN(pb_bufferedUs) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->bufferedUs():0; }
+CK_DLL_MFUN(pb_underruns) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->underruns():0; }
+CK_DLL_MFUN(pb_overruns) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->overruns():0; }
+CK_DLL_MFUN(pb_error) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->error():0; }
+CK_DLL_MFUN(pb_channels) { auto *p=pcmBuffer(SELF,API); RETURN->v_int=p?p->channels():0; }
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -485,5 +547,40 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_mfun(QUERY,ps_error,"int","error");
     QUERY->add_mfun(QUERY,ps_rate,"int","rate");
     QUERY->add_mfun(QUERY,ps_channels,"int","channels");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaPCMBuffer","Object");
+    pcmBufferOffset=QUERY->add_mvar(QUERY,"int","@pcmBufferNative",FALSE);
+    if(pcmBufferOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,pb_ctor);
+    QUERY->add_dtor(QUERY,pb_dtor);
+    QUERY->add_mfun(QUERY,pb_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_arg(QUERY,"int","originUs");
+    QUERY->add_arg(QUERY,"int","firstSequence");
+    QUERY->add_arg(QUERY,"int","capacityFrames");
+    QUERY->add_arg(QUERY,"int","prebufferFrames");
+    QUERY->add_mfun(QUERY,pb_clear,"void","clear");
+    QUERY->add_mfun(QUERY,pb_push,"int","push");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,pb_pull,"int","pull");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,pb_configured,"int","configured");
+    QUERY->add_mfun(QUERY,pb_capacity,"int","capacity");
+    QUERY->add_mfun(QUERY,pb_threshold,"int","threshold");
+    QUERY->add_mfun(QUERY,pb_available,"int","available");
+    QUERY->add_mfun(QUERY,pb_freeFrames,"int","freeFrames");
+    QUERY->add_mfun(QUERY,pb_ready,"int","ready");
+    QUERY->add_mfun(QUERY,pb_receivedFrames,"int","receivedFrames");
+    QUERY->add_mfun(QUERY,pb_consumedFrames,"int","consumedFrames");
+    QUERY->add_mfun(QUERY,pb_nextSequence,"int","nextSequence");
+    QUERY->add_mfun(QUERY,pb_nextTimestamp,"int","nextTimestamp");
+    QUERY->add_mfun(QUERY,pb_playTimestamp,"int","playTimestamp");
+    QUERY->add_mfun(QUERY,pb_bufferedUs,"int","bufferedUs");
+    QUERY->add_mfun(QUERY,pb_underruns,"int","underruns");
+    QUERY->add_mfun(QUERY,pb_overruns,"int","overruns");
+    QUERY->add_mfun(QUERY,pb_error,"int","error");
+    QUERY->add_mfun(QUERY,pb_channels,"int","channels");
     return QUERY->end_class(QUERY);
 }
