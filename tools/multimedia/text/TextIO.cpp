@@ -888,6 +888,26 @@ CK_DLL_MFUN(text_flow_frame_text) {
     auto *p=flowState(SELF,API); auto i=GET_NEXT_INT(ARGS);
     RETURN->v_string=API->object->create_string(VM,p&&p->planned&&i>=0&&static_cast<uint64_t>(i)<p->fragments.size()?p->fragments[i].c_str():"",FALSE);
 }
+CK_DLL_MFUN(text_flow_source_text) {
+    auto *p=flowState(SELF,API);
+    RETURN->v_string=API->object->create_string(VM,p?p->source.text.c_str():"",FALSE);
+}
+CK_DLL_MFUN(text_flow_frame_start) {
+    auto *p=flowState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    RETURN->v_int=-1;
+    if(!p||!p->planned||i<0||static_cast<uint64_t>(i)>=p->fragments.size()) return;
+    size_t offset=0;
+    for(size_t j=0;j<static_cast<size_t>(i);++j) offset+=p->fragments[j].size();
+    RETURN->v_int=static_cast<t_CKINT>(offset);
+}
+CK_DLL_MFUN(text_flow_frame_end) {
+    auto *p=flowState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    RETURN->v_int=-1;
+    if(!p||!p->planned||i<0||static_cast<uint64_t>(i)>=p->fragments.size()) return;
+    size_t offset=0;
+    for(size_t j=0;j<=static_cast<size_t>(i);++j) offset+=p->fragments[j].size();
+    RETURN->v_int=static_cast<t_CKINT>(offset);
+}
 CK_DLL_MFUN(text_flow_ready) {
     auto *p=flowState(SELF,API); RETURN->v_int=p&&p->planned;
 }
@@ -2540,6 +2560,14 @@ bool plainDocument(const Document &d,std::string &out) {
     return k==entries.size();
 }
 }
+CK_DLL_MFUN(text_doc_plain_text) {
+    std::string out;
+    try {
+        auto *d=docState(SELF,API);
+        if(!d||!plainDocument(*d,out)) out.clear();
+    } catch(...) { out.clear(); }
+    RETURN->v_string=API->object->create_string(VM,out.c_str(),FALSE);
+}
 CK_DLL_MFUN(text_doc_save_txt) {
     RETURN->v_int=0;
     try {
@@ -2879,6 +2907,11 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_flow_clear_frames,"void","clearFrames");
     QUERY->add_mfun(QUERY,text_flow_frame_text,"string","frameText");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_flow_source_text,"string","sourceText");
+    QUERY->add_mfun(QUERY,text_flow_frame_start,"int","frameStartByte");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_flow_frame_end,"int","frameEndByte");
+    QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_flow_ready,"int","ready");
     QUERY->add_mfun(QUERY,text_flow_layout,"int","layout");
     QUERY->add_mfun(QUERY,text_flow_save_native,"int","saveNative");
@@ -3142,6 +3175,7 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_doc_load_txt,"int","loadTXT");
     QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,text_doc_plain_text,"string","plainText");
     QUERY->add_mfun(QUERY,text_doc_save_txt,"int","saveTXT");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,text_doc_load_native,"int","loadNative");

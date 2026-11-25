@@ -6269,8 +6269,82 @@ check(flow.frameCount()==1);
 check(flow.frameText(0)=="preserve");
 """,11,p)
 
+
+def text_accessibility():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextDocument doc;
+TextStyle style;
+TextRun mixed;
+TextTable table;
+TextGrid grid;
+TextNode root;
+TextNode leaf;
+TextList marker;
+check(doc.plainText()=="");
+check(doc.addParagraph("first",style));
+check(mixed.set(" café",style));
+check(doc.appendRun(0,mixed));
+check(table.create(1,2));
+check(table.setCell(0,0,"left",style));
+check(table.setCell(0,1,"right",style));
+check(doc.appendTable(table));
+check(grid.create(1,2));
+check(grid.setPanel(0,0,"A",style));
+check(grid.setPanel(0,1,"B",style));
+check(doc.appendGrid(grid));
+check(marker.mode(2)==2);
+check(root.createList(marker));
+check(leaf.setParagraph("nested",style));
+check(root.appendChild(leaf));
+check(doc.appendNode(root));
+check(doc.addParagraph("last",style));
+check(doc.plainText()=="first café\\nleft\\tright\\nA\\tB\\n1. nested\\nlast");
+check(doc.saveTXT("reading.txt"));
+check(doc.removeNode(0));
+check(doc.plainText()=="first café\\nleft\\tright\\nA\\tB\\nlast");
+doc.clear();
+check(doc.plainText()=="");
+TextFlow flow;
+TextFrame frame;
+check(flow.sourceText()=="");
+check(flow.frameStartByte(0)==-1);
+check(flow.frameEndByte(0)==-1);
+check(style.fontSize(16)==16);
+check(flow.setText("café\\nsecond",style));
+check(flow.sourceText()=="café\\nsecond");
+check(frame.setGeometry(0,0,200,25));
+check(flow.appendFrame(frame));
+check(frame.height(1)==1);
+check(flow.appendFrame(frame));
+check(frame.height(100)==100);
+check(flow.appendFrame(frame));
+check(flow.layout());
+check(flow.frameText(0)=="café\\n");
+check(flow.frameStartByte(0)==0 && flow.frameEndByte(0)==6);
+check(flow.frameText(1)=="");
+check(flow.frameStartByte(1)==6 && flow.frameEndByte(1)==6);
+check(flow.frameText(2)=="second");
+check(flow.frameStartByte(2)==6 && flow.frameEndByte(2)==12);
+check(flow.frameStartByte(-1)==-1 && flow.frameEndByte(3)==-1);
+check(flow.overflowBytes()==0);
+check(mixed.set("!",style));
+check(flow.appendRun(mixed));
+check(flow.sourceText()=="café\\nsecond!");
+check(flow.frameStartByte(0)==-1 && flow.frameEndByte(0)==-1);
+check(flow.layout());
+check(flow.frameEndByte(2)==13);
+flow.clearFrames();
+check(flow.sourceText()=="café\\nsecond!");
+check(flow.frameEndByte(0)==-1);
+check(flow.layout());
+check(flow.overflowBytes()==13);
+""",54,p)
+        assert (p / "reading.txt").read_bytes() == "first café\nleft\tright\nA\tB\n1. nested\nlast".encode("utf-8")
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")

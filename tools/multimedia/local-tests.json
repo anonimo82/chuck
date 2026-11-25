@@ -1,10 +1,6 @@
 {
   "version": 1,
   "groups": [
-    "text-frame-foundation",
-    "text-frame-flow",
-    "text-frame-mixed",
-    "text-frame-render",
-    "text-frame-native"
+    "text-accessibility"
   ]
 }
