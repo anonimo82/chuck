@@ -3610,3 +3610,64 @@ check(clip.next()==1);
 check(clip.exportPixels(pixels));
 check(pixels[0]==0 && pixels[2]==255);
 """,20,p)
+
+    run("vector", """
+VectorImage image;
+int pixels[64];
+check(!image.exportFrame(4,4,0,pixels));
+check(image.create(4,4));
+check(image.addRect(0.0,0.0,2.0,2.0,0xff0000,1.0));
+check(image.exportFrame(4,4,0x0000ff,pixels));
+check(pixels[0]==255 && pixels[2]==0 && pixels[3]==255);
+check(pixels[60]==0 && pixels[62]==255 && pixels[63]==255);
+0.5=>image.opacity;
+check(image.exportFrame(4,4,0x0000ff,pixels));
+check(pixels[0]>=127 && pixels[0]<=128 && pixels[2]>=127 && pixels[2]<=128 && pixels[3]==255);
+0.0=>image.opacity;
+check(image.exportFrame(4,4,0x123456,pixels));
+check(pixels[0]==18 && pixels[1]==52 && pixels[2]==86 && pixels[3]==255);
+image.reset();
+2.0=>image.x;
+check(image.exportFrame(4,4,0,pixels));
+check(pixels[0]==0 && pixels[8]==255);
+check(image.x()==2.0 && image.shapes()==1);
+check(!image.exportFrame(0,4,0,pixels));
+check(!image.exportFrame(4,4097,0,pixels));
+check(!image.exportFrame(4096,4096,0,pixels));
+check(!image.exportFrame(4,4,-1,pixels));
+check(!image.exportFrame(4,4,0x1000000,pixels));
+check(!image.exportFrame(2,2,0,pixels));
+check(pixels[8]==255 && pixels[3]==255);
+image.reset();
+check(image.exportPixels(4,4,pixels));
+check(pixels[63]==0);
+check(image.exportFrame(4,4,0,pixels));
+check(pixels[63]==255);
+""",24,p)
+
+    run("video", """
+@import "VectorIO";
+VectorImage image;
+VideoWriter writer;
+VideoClip clip;
+check(image.create(16,16));
+check(image.addRect(0.0,0.0,4.0,4.0,0xff0000,1.0));
+check(writer.open("svg-animation.mkv",16,16,3));
+int pixels[1024];
+for(0=>int i;i<3;i++) {
+    i*4.0=>image.x;
+    check(image.exportFrame(16,16,0x0000ff,pixels));
+    check(writer.appendFrame(pixels));
+}
+check(writer.frames()==3);
+check(writer.finish());
+check(clip.load("svg-animation.mkv"));
+check(clip.exportPixels(pixels));
+check(pixels[0]==255 && pixels[18]==255);
+check(clip.next()==1);
+check(clip.exportPixels(pixels));
+check(pixels[2]==255 && pixels[16]==255);
+check(clip.next()==1);
+check(clip.exportPixels(pixels));
+check(pixels[18]==255 && pixels[32]==255);
+""",20,p)
