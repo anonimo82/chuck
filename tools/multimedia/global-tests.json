@@ -56,6 +56,7 @@
     "transport-session",
     "transport-endpoints",
     "transport-consolidation",
-    "transport-pcm"
+    "transport-pcm",
+    "transport-pcm-stream"
   ]
 }
