@@ -487,6 +487,105 @@ CK_DLL_MFUN(vector_image_set_geometry) {
         if(updateGeometry(next[i],values)) RETURN->v_int=p->replaceShapes(p->canvasW,p->canvasH,std::move(next));
     } catch(...) {}
 }
+namespace {
+using ShapeMatrix=std::array<double,6>;
+bool readTransform(const std::string &s,ShapeMatrix &m) {
+    m={{1,0,0,1,0,0}};
+    std::string value;
+    if(!shapeAttribute(s,"transform",value)) return true;
+    if(value.size()<8||value.substr(0,7)!="matrix("||value.back()!=')') return false;
+    std::istringstream in(value.substr(7,value.size()-8));
+    in.imbue(std::locale::classic());
+    for(auto &v:m) if(!(in>>v)||!std::isfinite(v)) return false;
+    in>>std::ws;
+    return in.eof();
+}
+bool validTransform(const ShapeMatrix &m) {
+    for(double v:m) if(!coord(v)) return false;
+    double det=m[0]*m[3]-m[1]*m[2];
+    return std::isfinite(det)&&std::abs(det)>=1e-12;
+}
+bool writeTransform(std::string &s,const ShapeMatrix &m) {
+    if(!validTransform(m)) return false;
+    auto o=svgStream(); o<<"matrix(";
+    for(size_t k=0;k<m.size();++k) { if(k) o<<' '; o<<m[k]; }
+    o<<')';
+    std::string previous;
+    if(shapeAttribute(s,"transform",previous)) return replaceAttribute(s,"transform",o.str());
+    if(s.size()<2||s.substr(s.size()-2)!="/>") return false;
+    s.insert(s.size()-2," transform=\""+o.str()+"\"");
+    return true;
+}
+bool setTransform(VectorImageState *p,t_CKINT index,const ShapeMatrix &m) {
+    if(!shapeAt(p,index)||!validTransform(m)) return false;
+    auto next=p->shapes;
+    return writeTransform(next[index],m)&&p->replaceShapes(p->canvasW,p->canvasH,std::move(next));
+}
+// Compose in SVG canvas coordinates: new operation times the existing matrix.
+bool composeTransform(VectorImageState *p,t_CKINT index,const ShapeMatrix &op) {
+    auto *s=shapeAt(p,index);
+    ShapeMatrix m;
+    if(!s||!validTransform(op)||!readTransform(*s,m)) return false;
+    ShapeMatrix next{{op[0]*m[0]+op[2]*m[1],op[1]*m[0]+op[3]*m[1],
+        op[0]*m[2]+op[2]*m[3],op[1]*m[2]+op[3]*m[3],
+        op[0]*m[4]+op[2]*m[5]+op[4],op[1]*m[4]+op[3]*m[5]+op[5]}};
+    return setTransform(p,index,next);
+}
+}
+CK_DLL_MFUN(vector_image_get_transform) {
+    RETURN->v_int=0;
+    try {
+        auto *s=shapeAt(vectorState(SELF,API),GET_NEXT_INT(ARGS));
+        auto out=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        ShapeMatrix m;
+        if(!s||!out||API->object->array_float_size(out)!=6||!readTransform(*s,m)) return;
+        for(size_t k=0;k<6;++k) API->object->array_float_set_idx(out,k,m[k]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_set_transform) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+        auto in=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!in||API->object->array_float_size(in)!=6) return;
+        ShapeMatrix m;
+        for(size_t k=0;k<6;++k) m[k]=API->object->array_float_get_idx(in,k);
+        RETURN->v_int=setTransform(p,i,m);
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_reset_transform) {
+    RETURN->v_int=0;
+    try { auto *p=vectorState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+        RETURN->v_int=setTransform(p,i,{{1,0,0,1,0,0}});
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_translate_shape) {
+    RETURN->v_int=0;
+    try { auto *p=vectorState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+        double x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS);
+        RETURN->v_int=composeTransform(p,i,{{1,0,0,1,x,y}});
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_rotate_shape) {
+    RETURN->v_int=0;
+    try { auto *p=vectorState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+        double angle=GET_NEXT_FLOAT(ARGS),x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS);
+        if(!std::isfinite(angle)||std::abs(angle)>1e9||!coord(x)||!coord(y)) return;
+        double rad=std::remainder(angle,360.0)*3.14159265358979323846/180.0;
+        double c=std::cos(rad),s=std::sin(rad);
+        RETURN->v_int=composeTransform(p,i,{{c,s,-s,c,x-c*x+s*y,y-s*x-c*y}});
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_scale_shape) {
+    RETURN->v_int=0;
+    try { auto *p=vectorState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+        double sx=GET_NEXT_FLOAT(ARGS),sy=GET_NEXT_FLOAT(ARGS),x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS);
+        if(!std::isfinite(sx)||!std::isfinite(sy)||std::abs(sx)<0.001||std::abs(sy)<0.001||
+            std::abs(sx)>64||std::abs(sy)>64||!coord(x)||!coord(y)) return;
+        RETURN->v_int=composeTransform(p,i,{{sx,0,0,sy,x-sx*x,y-sy*y}});
+    } catch(...) {}
+}
 CK_DLL_MFUN(vector_image_save) {
     RETURN->v_int=0;
     try {
@@ -843,6 +942,29 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_mfun(QUERY,vector_image_set_geometry,"int","setShapeGeometry");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"float[]","values");
+    QUERY->add_mfun(QUERY,vector_image_get_transform,"int","getShapeTransform");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"float[]","matrix");
+    QUERY->add_mfun(QUERY,vector_image_set_transform,"int","setShapeTransform");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"float[]","matrix");
+    QUERY->add_mfun(QUERY,vector_image_reset_transform,"int","resetShapeTransform");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,vector_image_translate_shape,"int","translateShape");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"float","x");
+    QUERY->add_arg(QUERY,"float","y");
+    QUERY->add_mfun(QUERY,vector_image_rotate_shape,"int","rotateShape");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"float","degrees");
+    QUERY->add_arg(QUERY,"float","pivotX");
+    QUERY->add_arg(QUERY,"float","pivotY");
+    QUERY->add_mfun(QUERY,vector_image_scale_shape,"int","scaleShape");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"float","scaleX");
+    QUERY->add_arg(QUERY,"float","scaleY");
+    QUERY->add_arg(QUERY,"float","pivotX");
+    QUERY->add_arg(QUERY,"float","pivotY");
     QUERY->add_mfun(QUERY,vector_image_save,"int","save");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,vector_image_export_pitches,"int","exportPitches");
