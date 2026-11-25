@@ -199,3 +199,5 @@ Working estimate accepted by user: 25 functional PRs in five cycles, subject to 
 #197: symmetric CKHS v1 session handshake, common media mask and payload limit, explicit state/errors, cooperative monotonic timeout, reserved control stream and session policy enforcement. 66 new checks, global 5854, local 224, cadence 8/20. Native validation pending. No remote endpoints, authentication, encryption or hard-realtime guarantees. No workflow changes.
 
 #198: explicit numeric IPv4 endpoints, opt-in remote access, exact source IPv4 filter, bounded connect timeout and peer inspection for raw and negotiated sessions. 58 new checks, global 5912, local 282, cadence 9/20. Native and cross-host validation pending; no authentication, encryption or hard-realtime guarantee. No workflow changes.
+
+#199: transport counters and error diagnostics, seven-type bidirectional integration and reconnect checks, avoidance of redundant queued frame validation. 125 new checks, global 6037, local 407, cadence 10/20. Local validation required before starting audio/MIDI transmission. Cross-host tests and authentication/encryption remain outside this checkpoint. No workflow changes.
