@@ -5337,3 +5337,59 @@ doc.clear();
 check(doc.nodeCount()==0 && doc.tableCount()==0);
 """,74,p)
     assert (p / "recursive-page.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+    run("text", """
+TextDocument doc;
+TextStyle style;
+TextRun runItem;
+TextParagraphStyle flow;
+TextContainer box;
+TextList numbering;
+TextNode root;
+TextNode leaf;
+TextTable tbl;
+TextGrid panels;
+check(doc.saveNative("native-empty.cktxt"));
+check(!doc.saveNative("native-empty.cktxt"));
+check(!doc.saveNative("native-wrong.txt"));
+check(!doc.saveNative(""));
+check(doc.addParagraph("Native café",style));
+check(runItem.set(" mixed",style));
+check(doc.appendRun(0,runItem));
+2=>flow.alignment;
+check(doc.setParagraphLayout(0,flow));
+0xff0000=>box.backgroundColor;
+check(doc.setParagraphContainer(0,box));
+2=>numbering.mode;
+check(doc.setParagraphList(0,numbering));
+check(root.createList(numbering));
+check(leaf.setParagraph("Nested UTF8",style));
+check(root.appendChild(leaf));
+check(doc.appendNode(root));
+check(tbl.create(1,1));
+check(tbl.setCell(0,0,"Table cell",style));
+check(doc.appendTable(tbl));
+check(panels.create(1,1));
+check(panels.setPanel(0,0,"Grid cell",style));
+check(doc.appendGrid(panels));
+check(doc.saveNative("native-full.cktxt"));
+check(doc.saveNative("native-copy.cktxt"));
+check(!doc.saveNative("native-full.cktxt"));
+check(doc.paragraphCount()==1 && doc.nodeCount()==1 && doc.tableCount()==1 && doc.gridCount()==1);
+check(doc.paragraphText(0)=="Native café mixed");
+check(doc.removeNode(0));
+check(doc.saveNative("native-changed.cktxt"));
+doc.clear();
+check(doc.saveNative("native-cleared.cktxt"));
+""",28,p)
+    import struct
+    native_empty = (p / "native-empty.cktxt").read_bytes()
+    native_full = (p / "native-full.cktxt").read_bytes()
+    assert native_empty == b"CKTXTDOC" + struct.pack("<IIII", 1, 0, 0, 0)
+    assert native_full[:24] == b"CKTXTDOC" + struct.pack("<IIII", 1, 1, 2, 1)
+    assert native_full == (p / "native-copy.cktxt").read_bytes()
+    assert native_empty == (p / "native-cleared.cktxt").read_bytes()
+    assert native_full != (p / "native-changed.cktxt").read_bytes()
+    assert "Native café mixed".encode("utf-8") in native_full
+    assert b"Nested UTF8" in native_full and b"Table cell" in native_full and b"Grid cell" in native_full
+    assert not (p / "native-wrong.txt").exists()
