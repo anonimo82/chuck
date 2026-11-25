@@ -2302,3 +2302,63 @@ check(imported.addMesh(xyz,tris)==-1);
     assert any(row and row[0]=="vn" for row in rows)
     assert any(row and row[0]=="vt" for row in rows)
     assert any(row and row[0]=="v" and tuple(map(float,row[1:4]))==(2.0,4.0,5.0) for row in rows)
+
+    run("model", """
+Model3D model;
+[0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0] @=> float xyz[];
+[0,1,2] @=> int tris[];
+[1.0,0.0,0.0,1.0,0.0,1.0,0.0,1.0,0.0,0.0,1.0,0.5] @=> float rgba[];
+[1.0,0.0,0.5,0.5,0.25,0.75] @=> float weights[];
+float colorsOut[12];
+float weightsOut[6];
+float small[2];
+check(model.materials()==-1);
+check(model.addMaterial("red",1.0,0.0,0.0,1.0)==-1);
+check(model.createMesh(xyz,tris));
+check(model.materials()==1);
+check(model.addMaterial("red",1.0,0.0,0.0,1.0)==1);
+check(model.materials()==2);
+check(model.addMaterial("bad",2.0,0.0,0.0,1.0)==-1);
+check(model.assignMaterial(0,1));
+check(model.materialAt(0)==1);
+check(!model.assignMaterial(0,2));
+check(model.materialAt(0)==1);
+check(!model.exportColors(0,colorsOut));
+check(model.setColors(0,rgba));
+check(model.exportColors(0,colorsOut));
+check(colorsOut[0]==1.0 && colorsOut[5]==1.0 && colorsOut[10]==1.0 && colorsOut[11]==0.5);
+check(!model.setColors(0,small));
+2.0 => rgba[0];
+check(!model.setColors(0,rgba));
+check(model.exportColors(0,colorsOut) && colorsOut[0]==1.0);
+check(model.bones(0)==0);
+check(!model.setSkin(0,2,small));
+0.0 => weights[0];
+check(!model.setSkin(0,2,weights));
+check(model.bones(0)==0);
+0.5 => weights[0];
+check(model.setSkin(0,2,weights));
+check(model.bones(0)==2);
+check(model.exportWeights(0,weightsOut));
+check(weightsOut[0]==1.0 && weightsOut[1]==0.0);
+check(weightsOut[2]==0.5 && weightsOut[3]==0.5);
+check(weightsOut[4]==0.25 && weightsOut[5]==0.75);
+check(!model.setSkin(0,2,weights));
+check(!model.exportWeights(0,small));
+check(model.computeNormals(0));
+check(model.save("weighted/model.gltf"));
+check(!model.save("weighted/model.gltf"));
+Model3D imported;
+check(imported.load("weighted/model.gltf"));
+check(imported.bones(0)==2);
+check(imported.exportWeights(0,weightsOut));
+check(Math.fabs(weightsOut[2]+weightsOut[3]-1.0)<0.00001);
+check(imported.exportColors(0,colorsOut));
+check(Math.fabs(colorsOut[11]-0.5)<0.00001);
+""",39,p)
+    import json
+    skin_doc=json.loads((p/"weighted/model.gltf").read_text(encoding="utf-8"))
+    assert len(skin_doc["skins"])==1
+    assert len(skin_doc["skins"][0]["joints"])==2
+    attrs=skin_doc["meshes"][0]["primitives"][0]["attributes"]
+    assert all(k in attrs for k in ("POSITION","NORMAL","COLOR_0","JOINTS_0","WEIGHTS_0"))
