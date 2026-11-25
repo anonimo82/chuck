@@ -6119,8 +6119,69 @@ check(flow.frameText(0)=="");
 check(flow.overflowText()=="reset");
 """,48,p)
 
+
+def text_frame_render():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextFlow flow;
+TextFrame frame;
+TextContainer box;
+TextStyle style;
+TextStyle accent;
+TextRun run;
+int pixels[160*100*4];
+int wrong[1];
+check(flow.pageCount()==-1);
+check(!flow.exportPage(0,160,100,-1,pixels));
+check(flow.setText("A\\n",style));
+check(accent.fontSize(20)==20);
+check(run.set("B",accent));
+check(flow.appendRun(run));
+check(frame.setGeometry(10,10,60,25));
+0xff0000=>box.backgroundColor;
+check(frame.setContainer(box));
+check(flow.appendFrame(frame));
+check(frame.setGeometry(80,20,60,60));
+check(frame.page(2)==2);
+0x0000ff=>box.backgroundColor;
+check(frame.setContainer(box));
+check(flow.appendFrame(frame));
+check(flow.layout());
+check(flow.pageCount()==3);
+check(flow.frameText(0)=="A\\n");
+check(flow.frameText(1)=="B");
+check(flow.exportPage(0,160,100,-1,pixels));
+check(pixels[3]==0);
+check(pixels[(11*160+11)*4]==255);
+check(pixels[(11*160+11)*4+3]==255);
+check(pixels[(21*160+81)*4+3]==0);
+check(flow.exportPage(1,160,100,0xffffff,pixels));
+check(pixels[0]==255 && pixels[1]==255 && pixels[2]==255 && pixels[3]==255);
+check(flow.exportPage(2,160,100,-1,pixels));
+check(pixels[(21*160+81)*4+2]==255);
+check(pixels[(11*160+11)*4+3]==0);
+check(!flow.exportPage(3,160,100,-1,pixels));
+check(!flow.exportPage(-1,160,100,-1,pixels));
+check(!flow.exportPage(0,160,100,-2,pixels));
+check(!flow.exportPage(0,160,100,-1,wrong));
+check(!flow.savePagePNG("bad.png",0,100,100,-1));
+check(flow.savePagePNG("flow.png",2,160,100,-1));
+check(!flow.savePagePNG("flow.png",2,160,100,-1));
+check(!flow.savePagePNG("flow.jpg",2,160,100,-1));
+check(flow.setText("reset",style));
+check(flow.pageCount()==-1);
+check(!flow.exportPage(0,160,100,-1,pixels));
+flow.clearFrames();
+check(flow.layout());
+check(flow.pageCount()==0);
+check(!flow.exportPage(0,160,100,-1,pixels));
+""",41,p)
+        assert (p / "flow.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert not (p / "bad.png").exists()
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
