@@ -6343,8 +6343,79 @@ check(flow.overflowBytes()==13);
 """,54,p)
         assert (p / "reading.txt").read_bytes() == "first café\nleft\tright\nA\tB\n1. nested\nlast".encode("utf-8")
 
+
+def text_flow_txt():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        (p / "input.txt").write_bytes(b"\xef\xbb\xbf" + "café\r\n\rsecond\n".encode("utf-8"))
+        (p / "invalid.txt").write_bytes(b"\xff")
+        (p / "nul.txt").write_bytes(b"a\x00b")
+        (p / "long.txt").write_bytes(b"a" * 65537)
+        (p / "oversize.txt").write_bytes(b"a" * 131076)
+        (p / "empty.txt").write_bytes(b"")
+        (p / "boundary.txt").write_bytes(b"a" * 65536)
+        (p / "crlf-boundary.txt").write_bytes(b"\xef\xbb\xbf" + b"\r\n" * 65536)
+        run("text", """
+TextFlow flow;
+TextStyle style;
+TextRun run;
+TextFrame frame;
+TextFrame copy;
+check(style.fontSize(16)==16);
+check(flow.setText("original",style));
+check(run.set(" mixed",style));
+check(flow.appendRun(run));
+check(frame.setGeometry(10,20,200,25));
+check(flow.appendFrame(frame));
+check(flow.layout());
+check(!flow.loadTXT("missing.txt",style));
+check(!flow.loadTXT("invalid.txt",style));
+check(!flow.loadTXT("nul.txt",style));
+check(!flow.loadTXT("long.txt",style));
+check(!flow.loadTXT("oversize.txt",style));
+check(!flow.loadTXT("wrong.ckflow",style));
+check(flow.ready()==1);
+check(flow.sourceText()=="original mixed");
+check(flow.loadTXT("input.txt",style));
+check(flow.sourceText()=="café\\n\\nsecond\\n");
+check(flow.ready()==0);
+check(flow.frameCount()==1);
+check(flow.getFrame(0,copy));
+check(copy.x()==10 && copy.y()==20 && copy.width()==200 && copy.height()==25);
+check(flow.layout());
+check(flow.frameText(0)=="café\\n");
+check(flow.overflowText()=="\\nsecond\\n");
+check(flow.saveTXT("output.txt"));
+check(!flow.saveTXT("output.txt"));
+check(!flow.saveTXT("wrong.ckflow"));
+check(flow.loadTXT("empty.txt",style));
+check(flow.sourceText()=="");
+check(flow.frameCount()==1);
+check(flow.saveTXT("empty-out.txt"));
+check(flow.layout());
+check(flow.overflowBytes()==0);
+check(flow.setText("A\\r",style));
+check(run.set("\\nB\\rC",style));
+check(flow.appendRun(run));
+check(flow.saveTXT("mixed-out.txt"));
+check(flow.sourceText()=="A\\r\\nB\\rC");
+check(flow.loadTXT("boundary.txt",style));
+check(flow.sourceText().length()==65536);
+check(flow.saveTXT("boundary-out.txt"));
+check(flow.loadTXT("crlf-boundary.txt",style));
+check(flow.sourceText().length()==65536);
+check(flow.saveTXT("crlf-out.txt"));
+check(flow.frameCount()==1);
+""",45,p)
+        assert (p / "output.txt").read_bytes() == "café\n\nsecond\n".encode("utf-8")
+        assert (p / "empty-out.txt").read_bytes() == b""
+        assert (p / "mixed-out.txt").read_bytes() == b"A\nB\nC"
+        assert (p / "boundary-out.txt").read_bytes() == b"a" * 65536
+        assert (p / "crlf-out.txt").read_bytes() == b"\n" * 65536
+        assert not (p / "wrong.ckflow").exists()
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
