@@ -163,3 +163,29 @@ After layout(), hitTest() supplies source byte offsets for setSelection(). Use r
 ## Unicode text capture
 
 TextCapture is a bounded UTF-8 input buffer (1 MiB). insert(string) inserts validated UTF-8 at the cursor; insertCodepoint(int) inserts a Unicode scalar other than NUL; newline() inserts LF. backspace() and deleteForward() remove one codepoint, not a grapheme cluster. seek(byteOffset) accepts only UTF-8 boundaries; cursor() and bytes() report byte offsets/length, characters() counts codepoints, lines() counts LF-delimited lines including an empty final line. text() returns a snapshot; clear() resets the buffer. Invalid insertions and seeks preserve state. The buffer accepts caller-provided text, not global keyboard hooks; interactive adapters and TextDocument/TextFlow integration follow. Native validation pending.
+
+## Interactive capture integration
+
+TextCapture.inputKey(key) accepts native KBHit terminal ASCII printable keys, tab, CR/LF (each inserts LF), backspace (8 or 127); unsupported keys return 0. This is not a raw UTF-8 byte decoder or global keyboard hook. Unicode committed strings can be passed through insert(), and Unicode scalars through insertCodepoint(). TextFlow.importCapture(capture,style) replaces inline content with a snapshot (up to 65536 bytes), preserves frame geometry, sets a collapsed selection at the capture cursor, and invalidates layout. TextDocument.appendCapture(capture,style) appends paragraphs split on LF, CR or CRLF, including empty lines, under existing paragraph and byte limits. Both operations leave the capture unchanged. Example for a terminal (ASCII input):
+
+```chuck
+@import "TextIO";
+KBHit keyboard;
+TextCapture capture;
+TextStyle style;
+TextDocument document;
+while(true) {
+    keyboard => now;
+    while(keyboard.more()) {
+        keyboard.getchar() => int key;
+        if(key == 27) {
+            document.appendCapture(capture,style);
+            document.saveTXT("captured.txt");
+            me.exit();
+        }
+        capture.inputKey(key);
+    }
+}
+```
+
+Native validation pending; automated tests exercise the adapter without a physical keyboard.
