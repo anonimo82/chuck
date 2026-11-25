@@ -8,13 +8,15 @@
 #include <cstdint>
 #include <new>
 #include <utility>
+#include <limits>
 
 namespace {
 struct Style {
     std::string font="Sans";
     double size=16;
-    int bold=0,italic=0,underline=0;
-    t_CKINT rgb=0;
+    int weight=400,italic=0,underline=0,strikethrough=0,script=0;
+    t_CKINT rgb=0,background=-1;
+    double spacing=0,rise=0,opacity=1;
 };
 struct Paragraph { std::string text; Style style; };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0; };
@@ -66,10 +68,56 @@ CK_DLL_MFUN(text_style_size_set) {
 #define TEXT_INT_PROPERTY(NAME,MEMBER,MAXIMUM) \
 CK_DLL_MFUN(text_style_##NAME##_get) { auto *p=styleState(SELF,API); RETURN->v_int=p?p->MEMBER:-1; } \
 CK_DLL_MFUN(text_style_##NAME##_set) { auto *p=styleState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1; if(p&&v>=0&&v<=MAXIMUM) RETURN->v_int=p->MEMBER=v; }
-TEXT_INT_PROPERTY(bold,bold,1)
 TEXT_INT_PROPERTY(italic,italic,1)
 TEXT_INT_PROPERTY(underline,underline,1)
 TEXT_INT_PROPERTY(color,rgb,0xffffff)
+CK_DLL_MFUN(text_style_bold_get) {
+    auto *p=styleState(SELF,API); RETURN->v_int=p?(p->weight>=700):-1;
+}
+CK_DLL_MFUN(text_style_bold_set) {
+    auto *p=styleState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&(v==0||v==1)) { p->weight=v?700:400; RETURN->v_int=v; }
+}
+CK_DLL_MFUN(text_style_weight_get) {
+    auto *p=styleState(SELF,API); RETURN->v_int=p?p->weight:-1;
+}
+CK_DLL_MFUN(text_style_weight_set) {
+    auto *p=styleState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=100&&v<=1000) RETURN->v_int=p->weight=v;
+}
+TEXT_INT_PROPERTY(strikethrough,strikethrough,1)
+TEXT_INT_PROPERTY(script,script,2)
+CK_DLL_MFUN(text_style_backgroundColor_get) {
+    auto *p=styleState(SELF,API); RETURN->v_int=p?p->background:-1;
+}
+CK_DLL_MFUN(text_style_backgroundColor_set) {
+    auto *p=styleState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-2;
+    if(p&&v>=-1&&v<=0xffffff) RETURN->v_int=p->background=v;
+}
+CK_DLL_MFUN(text_style_letterSpacing_get) {
+    auto *p=styleState(SELF,API); RETURN->v_float=p?p->spacing:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_style_letterSpacing_set) {
+    auto *p=styleState(SELF,API); double v=GET_NEXT_FLOAT(ARGS);
+    RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=-32&&v<=128) RETURN->v_float=p->spacing=v;
+}
+CK_DLL_MFUN(text_style_baselineShift_get) {
+    auto *p=styleState(SELF,API); RETURN->v_float=p?p->rise:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_style_baselineShift_set) {
+    auto *p=styleState(SELF,API); double v=GET_NEXT_FLOAT(ARGS);
+    RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=-512&&v<=512) RETURN->v_float=p->rise=v;
+}
+CK_DLL_MFUN(text_style_opacity_get) {
+    auto *p=styleState(SELF,API); RETURN->v_float=p?p->opacity:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_style_opacity_set) {
+    auto *p=styleState(SELF,API); double v=GET_NEXT_FLOAT(ARGS);
+    RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=1) RETURN->v_float=p->opacity=v;
+}
 CK_DLL_MFUN(text_style_inherit) {
     RETURN->v_int=0;
     try {
@@ -133,17 +181,32 @@ CK_DLL_MFUN(text_doc_measure) {
         if(!font) return;
         pango_font_description_set_family(font.get(),p.style.font.c_str());
         pango_font_description_set_absolute_size(font.get(),p.style.size*PANGO_SCALE);
-        pango_font_description_set_weight(font.get(),p.style.bold?PANGO_WEIGHT_BOLD:PANGO_WEIGHT_NORMAL);
+        pango_font_description_set_weight(font.get(),static_cast<PangoWeight>(p.style.weight));
         pango_font_description_set_style(font.get(),p.style.italic?PANGO_STYLE_ITALIC:PANGO_STYLE_NORMAL);
         pango_layout_set_font_description(layout.get(),font.get());
         pango_layout_set_text(layout.get(),p.text.data(),static_cast<int>(p.text.size()));
         pango_layout_set_width(layout.get(),width*PANGO_SCALE);
         pango_layout_set_wrap(layout.get(),PANGO_WRAP_WORD_CHAR);
-        if(p.style.underline) {
-            auto *attrs=pango_attr_list_new();
-            pango_attr_list_insert(attrs,pango_attr_underline_new(PANGO_UNDERLINE_SINGLE));
-            pango_layout_set_attributes(layout.get(),attrs); pango_attr_list_unref(attrs);
+        std::unique_ptr<PangoAttrList,decltype(&pango_attr_list_unref)> attrs(pango_attr_list_new(),pango_attr_list_unref);
+        if(!attrs) return;
+        auto add=[&](PangoAttribute *attr) { pango_attr_list_insert(attrs.get(),attr); };
+        auto rgb16=[](t_CKINT rgb,int shift) { return static_cast<guint16>(((rgb>>shift)&255)*257); };
+        add(pango_attr_foreground_new(rgb16(p.style.rgb,16),rgb16(p.style.rgb,8),rgb16(p.style.rgb,0)));
+        add(pango_attr_foreground_alpha_new(static_cast<guint16>(std::lround(p.style.opacity*65535))));
+        if(p.style.background>=0) {
+            add(pango_attr_background_new(rgb16(p.style.background,16),rgb16(p.style.background,8),rgb16(p.style.background,0)));
+            add(pango_attr_background_alpha_new(static_cast<guint16>(std::lround(p.style.opacity*65535))));
         }
+        if(p.style.underline) add(pango_attr_underline_new(PANGO_UNDERLINE_SINGLE));
+        if(p.style.strikethrough) add(pango_attr_strikethrough_new(TRUE));
+        if(p.style.spacing!=0) add(pango_attr_letter_spacing_new(static_cast<int>(std::lround(p.style.spacing*PANGO_SCALE))));
+        double rise=p.style.rise;
+        if(p.style.script!=0) {
+            add(pango_attr_scale_new(0.7));
+            rise+=(p.style.script==1?0.35:-0.2)*p.style.size;
+        }
+        if(rise!=0) add(pango_attr_rise_new(static_cast<int>(std::lround(rise*PANGO_SCALE))));
+        pango_layout_set_attributes(layout.get(),attrs.get());
         int w=0,h=0; pango_layout_get_pixel_size(layout.get(),&w,&h);
         API->object->array_int_set_idx(a,0,w); API->object->array_int_set_idx(a,1,h);
         RETURN->v_int=1;
@@ -175,6 +238,27 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_style_color_get,"int","color");
     QUERY->add_mfun(QUERY,text_style_color_set,"int","color");
     QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_style_weight_get,"int","weight");
+    QUERY->add_mfun(QUERY,text_style_weight_set,"int","weight");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_style_strikethrough_get,"int","strikethrough");
+    QUERY->add_mfun(QUERY,text_style_strikethrough_set,"int","strikethrough");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_style_backgroundColor_get,"int","backgroundColor");
+    QUERY->add_mfun(QUERY,text_style_backgroundColor_set,"int","backgroundColor");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_style_letterSpacing_get,"float","letterSpacing");
+    QUERY->add_mfun(QUERY,text_style_letterSpacing_set,"float","letterSpacing");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_style_baselineShift_get,"float","baselineShift");
+    QUERY->add_mfun(QUERY,text_style_baselineShift_set,"float","baselineShift");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_style_script_get,"int","script");
+    QUERY->add_mfun(QUERY,text_style_script_set,"int","script");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_style_opacity_get,"float","opacity");
+    QUERY->add_mfun(QUERY,text_style_opacity_set,"float","opacity");
+    QUERY->add_arg(QUERY,"float","value");
     QUERY->add_mfun(QUERY,text_style_inherit,"int","inherit");
     QUERY->add_arg(QUERY,"TextStyle","source");
     if(!QUERY->end_class(QUERY)) return FALSE;
