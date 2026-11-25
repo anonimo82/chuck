@@ -1,10 +1,4 @@
 {
   "version": 1,
-  "groups": [
-    "midi-capture-events",
-    "midi-capture-save",
-    "midi-capture-session",
-    "text-capture-unicode",
-    "text-capture-integration"
-  ]
+  "groups": []
 }
