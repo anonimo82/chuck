@@ -2122,3 +2122,68 @@ check(audio.reverse());
 check(audio.peak()==0.0);
 """,41,p)
     check_buffer("audio-edited.wav",[0,0,16384,-16384,4096,-4096])
+
+    run("audio", """
+AudioBuffer audio;
+float stereo[8];
+float mono[4];
+check(!audio.resample(16000));
+check(!audio.changeSpeed(2.0));
+check(!audio.convertChannels(1));
+check(!audio.lowPass(1000.0));
+0.5 => stereo[0]; 0.0 => stereo[1];
+0.25 => stereo[2]; 0.75 => stereo[3];
+-0.5 => stereo[4]; 0.5 => stereo[5];
+-0.25 => stereo[6]; -0.75 => stereo[7];
+check(audio.importSamples(8000,2,stereo));
+0.5 => audio.gain;
+check(audio.convertChannels(1));
+check(audio.channels()==1 && audio.frames()==4 && audio.gain()==0.5);
+check(audio.sampleAt(0,0)==0.25 && audio.sampleAt(1,0)==0.5);
+check(audio.sampleAt(2,0)==0.0 && audio.sampleAt(3,0)==-0.5);
+check(!audio.convertChannels(3));
+check(audio.convertChannels(2));
+check(audio.sampleAt(1,0)==0.5 && audio.sampleAt(1,1)==0.5);
+check(audio.resample(8000));
+check(audio.frames()==4 && audio.sampleAt(1,0)==0.5);
+check(!audio.resample(0));
+check(!audio.changeSpeed(0.0));
+for(0 => int i; i<4; i++) 0.25 => mono[i];
+check(audio.importSamples(8000,1,mono));
+check(audio.resample(16000));
+check(audio.frames()==8 && audio.sampleRate()==16000);
+check(Math.fabs(audio.sampleAt(3,0)-0.25)<0.000001);
+check(audio.changeSpeed(2.0));
+check(audio.frames()==4 && audio.sampleRate()==16000);
+check(Math.fabs(audio.sampleAt(3,0)-0.25)<0.000001);
+check(audio.save("dsp-constant.wav"));
+check(audio.resample(8000));
+check(audio.frames()==2 && audio.sampleRate()==8000);
+check(audio.changeSpeed(0.5));
+check(audio.frames()==4 && audio.sampleRate()==8000);
+check(!audio.lowPass(4000.0));
+check(!audio.highPass(0.0));
+check(audio.importSamples(8000,1,mono));
+check(audio.lowPass(1000.0));
+1.0-Math.exp(-2.0*pi*1000.0/8000.0) => float coeff;
+check(Math.fabs(audio.sampleAt(0,0)-0.25*coeff)<0.000001);
+check(Math.fabs(audio.sampleAt(1,0)-0.25*(1.0-Math.pow(1.0-coeff,2.0)))<0.000001);
+check(audio.importSamples(8000,1,mono));
+check(audio.highPass(1000.0));
+check(Math.fabs(audio.sampleAt(0,0)-0.25*(1.0-coeff))<0.000001);
+check(Math.fabs(audio.sampleAt(3,0)-0.25*Math.pow(1.0-coeff,4.0))<0.000001);
+check(audio.create(8,8000,2));
+check(audio.setSample(0,0,1.0));
+check(audio.lowPass(1000.0));
+check(audio.sampleAt(0,1)==0.0 && audio.sampleAt(7,1)==0.0);
+check(audio.create(1024,16000,1));
+for(0 => int i; i<1024; i++) audio.setSample(i,0,0.8*Math.sin(2.0*pi*6000.0*i/16000.0));
+check(audio.resample(8000));
+check(audio.frames()==512);
+check(audio.crop(64,384));
+check(audio.peak()<0.01);
+check(audio.create(4,8000,3));
+check(!audio.convertChannels(2));
+check(audio.channels()==3);
+""",50,p)
+    check_buffer("dsp-constant.wav",[8192]*4)
