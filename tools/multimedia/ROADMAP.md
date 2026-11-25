@@ -225,3 +225,5 @@ User-reported Windows Local: expected=466, PASS=466, FAIL=0, missing=0, unreport
 ## Transmission cycle 3 — Raster, vector and 3D models
 
 #208: CKRA v1 lossless RGBA8 raster packet codec, bounded dimensions, metadata validation, RasterImage array interoperability and bidirectional negotiated session tests. 93 new checks, global 6596, local 93, cadence 16/20. Native validation pending. Larger images require fragmentation/compression; sequential images and display scheduling remain pending. No workflow changes.
+
+#209: CKRF v1 contiguous raster fragments, bounded 16 MiB image reassembly, strict sequence/image/offset validation, complete-image backpressure and session integration. 71 new checks, global 6667, local 164, cadence 17/20. Native validation pending; caller slices fragments, no compression or automatic display scheduling. No workflow changes.
