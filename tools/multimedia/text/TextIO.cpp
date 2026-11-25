@@ -113,7 +113,7 @@ struct PageStyle {
     t_CKINT numbering=0,firstNumber=1,splitParagraphs=0,splitTables=0;
 };
 struct FrameStyle { t_CKINT x=0,y=0,width=320,height=240,page=0; Container box; };
-struct FrameFlow { std::vector<FrameStyle> frames; Paragraph source; std::vector<std::string> fragments; size_t consumed=0; bool planned=false; };
+struct FrameFlow { std::vector<FrameStyle> frames; Paragraph source; std::vector<std::string> fragments; std::vector<int> lineBottoms; size_t consumed=0; bool planned=false; };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; std::vector<NodeBlock> nodes; size_t nextOrder=0; };
 t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0,frameOffset=0,flowOffset=0;
 FrameFlow *flowState(Chuck_Object *self,CK_DL_API API) {
@@ -1397,8 +1397,26 @@ bool paragraphDimensions(cairo_t *cr,const Paragraph &p,int width,int &w,int &h)
     w=static_cast<int>(std::ceil(totalW)); h=static_cast<int>(std::ceil(totalH)); return true;
 }
 
+Paragraph flowRemainder(const Paragraph &source,size_t consumed) {
+    Paragraph rest=source;
+    rest.text=source.text.substr(consumed);
+    rest.baseBytes=consumed<source.baseBytes?source.baseBytes-consumed:0;
+    rest.runs.clear();
+    size_t offset=source.baseBytes;
+    for(const auto &run:source.runs) {
+        size_t next=offset+run.text.size();
+        if(next>consumed) {
+            size_t skip=consumed>offset?consumed-offset:0;
+            rest.runs.push_back(Run{run.text.substr(skip),run.style});
+        }
+        offset=next;
+    }
+    if(!rest.baseBytes&&!rest.runs.empty()) rest.style=rest.runs.front().style;
+    return rest;
+}
 bool planFrameFlow(FrameFlow &flow) {
     std::vector<std::string> fragments;
+    std::vector<int> bottoms;
     size_t consumed=0;
     std::unique_ptr<cairo_surface_t,decltype(&cairo_surface_destroy)> surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1),cairo_surface_destroy);
     if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return false;
@@ -1409,37 +1427,25 @@ bool planFrameFlow(FrameFlow &flow) {
         double dh=f.height-f.box.paddingTop-f.box.paddingBottom-2*f.box.borderWidth;
         if(dw<1||dh<1) return false;
         int w=static_cast<int>(std::floor(dw)),h=static_cast<int>(std::floor(dh));
-        if(consumed==flow.source.text.size()) { fragments.emplace_back(); continue; }
-        Paragraph rest=flow.source;
-        rest.text=flow.source.text.substr(consumed);
-        rest.baseBytes=consumed<flow.source.baseBytes?flow.source.baseBytes-consumed:0;
-        rest.runs.clear();
-        size_t offset=flow.source.baseBytes;
-        for(const auto &run:flow.source.runs) {
-            size_t next=offset+run.text.size();
-            if(next>consumed) {
-                size_t skip=consumed>offset?consumed-offset:0;
-                rest.runs.push_back(Run{run.text.substr(skip),run.style});
-            }
-            offset=next;
-        }
-        if(!rest.baseBytes&&!rest.runs.empty()) rest.style=rest.runs.front().style;
+        if(consumed==flow.source.text.size()) { fragments.emplace_back(); bottoms.push_back(0); continue; }
+        Paragraph rest=flowRemainder(flow.source,consumed);
         auto layout=makeLayout(cr.get(),rest,w);
         if(!layout) return false;
         std::unique_ptr<PangoLayoutIter,decltype(&pango_layout_iter_free)> it(pango_layout_get_iter(layout.get()),pango_layout_iter_free);
         if(!it) return false;
-        size_t end=0;
+        size_t end=0; int bottom=0;
         for(;;) {
             int y0=0,y1=0; pango_layout_iter_get_line_yrange(it.get(),&y0,&y1);
             if(y1>h*PANGO_SCALE) break;
+            bottom=y1;
             if(!pango_layout_iter_next_line(it.get())) { end=rest.text.size(); break; }
             auto *line=pango_layout_iter_get_line_readonly(it.get());
             if(!line||line->start_index<0||static_cast<size_t>(line->start_index)>rest.text.size()) return false;
             end=static_cast<size_t>(line->start_index);
         }
-        fragments.push_back(rest.text.substr(0,end)); consumed+=end;
+        fragments.push_back(rest.text.substr(0,end)); bottoms.push_back(end?bottom:0); consumed+=end;
     }
-    flow.fragments.swap(fragments); flow.consumed=consumed; flow.planned=true; return true;
+    flow.fragments.swap(fragments); flow.lineBottoms.swap(bottoms); flow.consumed=consumed; flow.planned=true; return true;
 }
 
 bool tableGeometry(cairo_t *cr,const Table &t,int width,std::vector<int> &xs,std::vector<int> &heights,int &height) {
@@ -1933,9 +1939,95 @@ SurfacePtr renderPage(const Document &d,const PageStyle &p,t_CKINT page) {
     if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
     return surface;
 }
+int flowPageCount(const FrameFlow &flow) {
+    int count=0;
+    for(const auto &f:flow.frames) count=std::max(count,static_cast<int>(f.page)+1);
+    return count;
+}
+SurfacePtr renderFlowPage(const FrameFlow &flow,int w,int h,t_CKINT bg,t_CKINT page) {
+    auto fail=[](){ return SurfacePtr(nullptr,cairo_surface_destroy); };
+    if(!flow.planned||!validCanvas(w,h,bg)||page<0||page>=flowPageCount(flow)) return fail();
+    for(const auto &f:flow.frames) if(f.x+f.width>w||f.y+f.height>h) return fail();
+    SurfacePtr surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,w,h),cairo_surface_destroy);
+    if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return fail();
+    std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
+    if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return fail();
+    auto *ctx=cr.get();
+    cairo_set_operator(ctx,CAIRO_OPERATOR_SOURCE);
+    if(bg<0) cairo_set_source_rgba(ctx,0,0,0,0); else nodeColor(ctx,bg);
+    cairo_paint(ctx); cairo_set_operator(ctx,CAIRO_OPERATOR_OVER);
+    size_t consumed=0;
+    for(size_t i=0;i<flow.frames.size();++i) {
+        const auto &f=flow.frames[i]; const auto &b=f.box;
+        size_t offset=consumed; consumed+=flow.fragments[i].size();
+        if(f.page!=page||b.opacity==0) continue;
+        cairo_save(ctx); cairo_rectangle(ctx,f.x,f.y,f.width,f.height); cairo_clip(ctx);
+        if(b.opacity<1) cairo_push_group(ctx);
+        if(b.backgroundColor>=0) { nodeColor(ctx,b.backgroundColor); cairo_paint(ctx); }
+        if(b.borderWidth>0) {
+            nodeColor(ctx,b.borderColor); cairo_set_line_width(ctx,b.borderWidth);
+            double half=b.borderWidth/2;
+            cairo_rectangle(ctx,f.x+half,f.y+half,f.width-b.borderWidth,f.height-b.borderWidth); cairo_stroke(ctx);
+        }
+        if(!flow.fragments[i].empty()) {
+            double tx=f.x+b.paddingLeft+b.borderWidth,ty=f.y+b.paddingTop+b.borderWidth;
+            int iw=static_cast<int>(std::floor(f.width-b.paddingLeft-b.paddingRight-2*b.borderWidth));
+            auto rest=flowRemainder(flow.source,offset);
+            auto layout=makeLayout(ctx,rest,iw);
+            if(!layout) return fail();
+            cairo_save(ctx);
+            cairo_rectangle(ctx,tx,ty,iw,flow.lineBottoms[i]/static_cast<double>(PANGO_SCALE)); cairo_clip(ctx);
+            cairo_set_source_rgb(ctx,0,0,0); cairo_move_to(ctx,tx,ty);
+            pango_cairo_show_layout(ctx,layout.get()); cairo_restore(ctx);
+        }
+        if(b.opacity<1) { cairo_pop_group_to_source(ctx); cairo_paint_with_alpha(ctx,b.opacity); }
+        cairo_restore(ctx);
+    }
+    cairo_surface_flush(surface.get());
+    if(cairo_status(ctx)!=CAIRO_STATUS_SUCCESS||cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return fail();
+    return surface;
+}
 cairo_status_t textWritePng(void *closure,const unsigned char *data,unsigned int size) {
     return std::fwrite(data,1,size,static_cast<FILE *>(closure))==size?CAIRO_STATUS_SUCCESS:CAIRO_STATUS_WRITE_ERROR;
 }
+}
+CK_DLL_MFUN(text_flow_page_count) {
+    auto *p=flowState(SELF,API); RETURN->v_int=p&&p->planned?flowPageCount(*p):-1;
+}
+CK_DLL_MFUN(text_flow_export_page) {
+    RETURN->v_int=0;
+    try {
+        auto *p=flowState(SELF,API); auto page=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),bg=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!validCanvas(w,h,bg)||!a||API->object->array_int_size(a)!=w*h*4) return;
+        auto surface=renderFlowPage(*p,w,h,bg,page); if(!surface) return;
+        auto *data=cairo_image_surface_get_data(surface.get()); int stride=cairo_image_surface_get_stride(surface.get());
+        if(!data) return;
+        for(int y=0;y<h;++y) for(int x=0;x<w;++x) {
+            uint32_t v; std::memcpy(&v,data+static_cast<size_t>(y)*stride+x*4,4);
+            unsigned alpha=v>>24; size_t i=(static_cast<size_t>(y)*w+x)*4;
+            for(int c=0;c<3;++c) {
+                unsigned q=(v>>(16-8*c))&255;
+                API->object->array_int_set_idx(a,i+c,alpha?std::min(255u,(q*255+alpha/2)/alpha):0);
+            }
+            API->object->array_int_set_idx(a,i+3,alpha);
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_flow_save_page) {
+    RETURN->v_int=0;
+    try {
+        auto *p=flowState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        auto page=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),bg=GET_NEXT_INT(ARGS);
+        if(!p||!validCanvas(w,h,bg)||path.size()<4||path.substr(path.size()-4)!=".png"||path.find('\0')!=std::string::npos) return;
+        auto surface=renderFlowPage(*p,w,h,bg,page); if(!surface) return;
+        FILE *f=mediaio::openNew(path.c_str()); if(!f) return;
+        bool ok=cairo_surface_write_to_png_stream(surface.get(),textWritePng,f)==CAIRO_STATUS_SUCCESS;
+        if(std::fclose(f)!=0) ok=false;
+        if(!ok) { std::remove(path.c_str()); return; }
+        RETURN->v_int=1;
+    } catch(...) {}
 }
 CK_DLL_MFUN(text_doc_export_pixels) {
     RETURN->v_int=0;
@@ -2708,6 +2800,19 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_flow_ready,"int","ready");
     QUERY->add_mfun(QUERY,text_flow_layout,"int","layout");
+    QUERY->add_mfun(QUERY,text_flow_page_count,"int","pageCount");
+    QUERY->add_mfun(QUERY,text_flow_export_page,"int","exportPage");
+    QUERY->add_arg(QUERY,"int","page");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","backgroundRGB");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,text_flow_save_page,"int","savePagePNG");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_arg(QUERY,"int","page");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","backgroundRGB");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextPage","Object");
     pageOffset=QUERY->add_mvar(QUERY,"int","@textPageNative",FALSE);
