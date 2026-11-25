@@ -56,8 +56,11 @@ check(RasterIO.convert("input.png", "output.unknown") == 0, "unsupported output"
         print("SMOKE_EXPECTED 8", flush=True)
         command = [os.environ.get("CHUCK_EXE", str(ROOT / "src/chuck")), "--silent",
                    "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE)), script.name]
+        env = dict(os.environ, CHUCK_RASTER_TRACE="1")
+        print("Raster thread settings: MAGICK_THREAD_LIMIT=" + env.get("MAGICK_THREAD_LIMIT", "<unset>") +
+              " OMP_NUM_THREADS=" + env.get("OMP_NUM_THREADS", "<unset>"), flush=True)
         try:
-            result = subprocess.run(command, cwd=tmp, stdout=subprocess.PIPE,
+            result = subprocess.run(command, cwd=tmp, env=env, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True, errors="replace", timeout=30)
         except subprocess.TimeoutExpired as exc:
             partial = exc.stdout or ""
