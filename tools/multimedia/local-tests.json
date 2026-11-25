@@ -2,6 +2,7 @@
   "version": 1,
   "groups": [
     "raster-capture-foundation",
-    "raster-camera-capture"
+    "raster-camera-capture",
+    "raster-screen-capture"
   ]
 }
