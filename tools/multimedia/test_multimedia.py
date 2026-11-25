@@ -5393,3 +5393,59 @@ check(doc.saveNative("native-cleared.cktxt"));
     assert "Native café mixed".encode("utf-8") in native_full
     assert b"Nested UTF8" in native_full and b"Table cell" in native_full and b"Grid cell" in native_full
     assert not (p / "native-wrong.txt").exists()
+
+    # Invalid native fixtures use the writer's previous test output.
+    native_good = (p / "native-full.cktxt").read_bytes()
+    (p / "native-bad-magic.cktxt").write_bytes(b"BADMAGIC" + native_good[8:])
+    (p / "native-bad-version.cktxt").write_bytes(native_good[:8] + struct.pack("<I", 2) + native_good[12:])
+    (p / "native-truncated.cktxt").write_bytes(native_good[:-1])
+    (p / "native-trailing.cktxt").write_bytes(native_good + b"x")
+    (p / "native-bad-count.cktxt").write_bytes(native_good[:12] + struct.pack("<I", 0xffffffff) + native_good[16:])
+    (p / "native-bad-string.cktxt").write_bytes(native_good[:24] + struct.pack("<I", 0xffffffff) + native_good[28:])
+    run("text", """
+TextDocument doc;
+TextStyle style;
+TextNode root;
+TextContainer box;
+TextParagraphStyle flow;
+TextList numbering;
+check(doc.addParagraph("Original",style));
+check(!doc.loadNative("native-missing.cktxt"));
+check(!doc.loadNative("native-wrong.txt"));
+check(!doc.loadNative("native-bad-magic.cktxt"));
+check(!doc.loadNative("native-bad-version.cktxt"));
+check(!doc.loadNative("native-truncated.cktxt"));
+check(!doc.loadNative("native-trailing.cktxt"));
+check(!doc.loadNative("native-bad-count.cktxt"));
+check(!doc.loadNative("native-bad-string.cktxt"));
+check(doc.paragraphCount()==1 && doc.paragraphText(0)=="Original");
+check(doc.loadNative("native-full.cktxt"));
+check(doc.paragraphCount()==1 && doc.tableCount()==1 && doc.gridCount()==1 && doc.nodeCount()==1);
+check(doc.paragraphText(0)=="Native café mixed");
+check(doc.runCount(0)==1 && doc.runText(0,0)==" mixed");
+check(doc.getParagraphLayout(0,flow));
+check(flow.alignment()==2);
+check(doc.getParagraphContainer(0,box));
+check(box.backgroundColor()==0xff0000);
+check(doc.getParagraphList(0,numbering));
+check(numbering.mode()==2);
+check(doc.getNode(0,root));
+check(root.kind()==5 && root.childCount()==1);
+check(root.itemLabel(0)=="1.");
+check(doc.saveNative("native-roundtrip.cktxt"));
+int dims[2];
+check(doc.measureDocument(320,dims));
+check(dims[0]==320 && dims[1]>0);
+int pixels[320*240*4];
+check(doc.exportPixels(320,240,-1,pixels));
+check(doc.savePNG("native-restored.png",320,240,-1));
+check(!doc.loadNative("native-truncated.cktxt"));
+check(doc.nodeCount()==1 && doc.runCount(0)==1);
+check(doc.saveNative("native-after-error.cktxt"));
+check(doc.loadNative("native-empty.cktxt"));
+check(doc.paragraphCount()==0 && doc.nodeCount()==0 && doc.tableCount()==0 && doc.gridCount()==0);
+check(doc.saveNative("native-empty-roundtrip.cktxt"));
+""",34,p)
+    assert (p / "native-roundtrip.cktxt").read_bytes() == native_good
+    assert (p / "native-after-error.cktxt").read_bytes() == native_good
+    assert (p / "native-empty-roundtrip.cktxt").read_bytes() == (p / "native-empty.cktxt").read_bytes()
