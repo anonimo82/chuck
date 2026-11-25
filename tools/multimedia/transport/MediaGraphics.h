@@ -1,6 +1,7 @@
 #pragma once
 #include "MediaRasterStream.h"
 #include "MediaRasterCompressed.h"
+#include "MediaRasterPng.h"
 #include "MediaVector.h"
 #include "MediaModel.h"
 
@@ -18,6 +19,8 @@ inline int graphicsKind(const Bytes &wire,Header &h,uint64_t &a,uint64_t &b) {
             kind=2;x=fragment.width;y=fragment.height;
         } else if(decodeRasterCompressed(wire,candidate,info,pixels)) {
             kind=5;x=info.width;y=info.height;
+        } else if(decodeRasterPng(wire,candidate,info,pixels)) {
+            kind=6;x=info.width;y=info.height;
         }
     } else if(candidate.type==2) {
         Bytes svg;
