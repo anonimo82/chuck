@@ -159,6 +159,60 @@ CK_DLL_MFUN(session_state) { auto *p=session(SELF,API); RETURN->v_int=p?p->state
 CK_DLL_MFUN(session_error) { auto *p=session(SELF,API); RETURN->v_int=p?p->error():0; }
 CK_DLL_MFUN(session_mask) { auto *p=session(SELF,API); RETURN->v_int=p?p->mask():0; }
 CK_DLL_MFUN(session_limit) { auto *p=session(SELF,API); RETURN->v_int=p?p->limit():0; }
+CK_DLL_MFUN(loop_allow_remote) {
+    auto *p=loop(SELF,API); auto value=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p&&(value==0||value==1)&&p->allowRemote(value==1);
+}
+CK_DLL_MFUN(loop_remote_enabled) { auto *p=loop(SELF,API); RETURN->v_int=p&&p->remoteEnabled(); }
+CK_DLL_MFUN(loop_listen_at) {
+    RETURN->v_int=0;
+    try {
+        auto *p=loop(SELF,API);
+        auto ip=GET_NEXT_STRING_SAFE(ARGS); auto port=GET_NEXT_INT(ARGS);
+        auto peer=GET_NEXT_STRING_SAFE(ARGS);
+        if(p&&port>=0&&port<=65535) RETURN->v_int=p->listenAt(ip,static_cast<unsigned>(port),peer);
+    } catch(...) {}
+}
+CK_DLL_MFUN(loop_connect_at) {
+    RETURN->v_int=0;
+    try {
+        auto *p=loop(SELF,API);
+        auto ip=GET_NEXT_STRING_SAFE(ARGS); auto port=GET_NEXT_INT(ARGS),timeout=GET_NEXT_INT(ARGS);
+        if(p&&port>0&&port<=65535&&timeout>0&&timeout<=5000)
+            RETURN->v_int=p->connectAt(ip,static_cast<unsigned>(port),static_cast<unsigned>(timeout));
+    } catch(...) {}
+}
+CK_DLL_MFUN(loop_peer_address) {
+    auto *p=loop(SELF,API);
+    RETURN->v_string=API->object->create_string(VM,p?p->peerAddress().c_str():"",FALSE);
+}
+CK_DLL_MFUN(session_allow_remote) {
+    auto *p=session(SELF,API); auto value=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p&&(value==0||value==1)&&p->allowRemote(value==1);
+}
+CK_DLL_MFUN(session_remote_enabled) { auto *p=session(SELF,API); RETURN->v_int=p&&p->remoteEnabled(); }
+CK_DLL_MFUN(session_listen_at) {
+    RETURN->v_int=0;
+    try {
+        auto *p=session(SELF,API);
+        auto ip=GET_NEXT_STRING_SAFE(ARGS); auto port=GET_NEXT_INT(ARGS);
+        auto peer=GET_NEXT_STRING_SAFE(ARGS);
+        if(p&&port>=0&&port<=65535) RETURN->v_int=p->listenAt(ip,static_cast<unsigned>(port),peer);
+    } catch(...) {}
+}
+CK_DLL_MFUN(session_connect_at) {
+    RETURN->v_int=0;
+    try {
+        auto *p=session(SELF,API);
+        auto ip=GET_NEXT_STRING_SAFE(ARGS); auto port=GET_NEXT_INT(ARGS),timeout=GET_NEXT_INT(ARGS);
+        if(p&&port>0&&port<=65535&&timeout>0&&timeout<=5000)
+            RETURN->v_int=p->connectAt(ip,static_cast<unsigned>(port),static_cast<unsigned>(timeout));
+    } catch(...) {}
+}
+CK_DLL_MFUN(session_peer_address) {
+    auto *p=session(SELF,API);
+    RETURN->v_string=API->object->create_string(VM,p?p->peerAddress().c_str():"",FALSE);
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -197,6 +251,18 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_mfun(QUERY,loop_receive,"int","receivePacket");
     QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,loop_allow_remote,"int","allowRemote");
+    QUERY->add_arg(QUERY,"int","enabled");
+    QUERY->add_mfun(QUERY,loop_remote_enabled,"int","remoteEnabled");
+    QUERY->add_mfun(QUERY,loop_listen_at,"int","listenAt");
+    QUERY->add_arg(QUERY,"string","address");
+    QUERY->add_arg(QUERY,"int","port");
+    QUERY->add_arg(QUERY,"string","allowedPeer");
+    QUERY->add_mfun(QUERY,loop_connect_at,"int","connectAt");
+    QUERY->add_arg(QUERY,"string","address");
+    QUERY->add_arg(QUERY,"int","port");
+    QUERY->add_arg(QUERY,"int","timeoutMs");
+    QUERY->add_mfun(QUERY,loop_peer_address,"string","peerAddress");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"MediaSession","Object");
     sessionOffset=QUERY->add_mvar(QUERY,"int","@sessionNative",FALSE);
@@ -219,6 +285,18 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_mfun(QUERY,session_receive,"int","receivePacket");
     QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,session_allow_remote,"int","allowRemote");
+    QUERY->add_arg(QUERY,"int","enabled");
+    QUERY->add_mfun(QUERY,session_remote_enabled,"int","remoteEnabled");
+    QUERY->add_mfun(QUERY,session_listen_at,"int","listenAt");
+    QUERY->add_arg(QUERY,"string","address");
+    QUERY->add_arg(QUERY,"int","port");
+    QUERY->add_arg(QUERY,"string","allowedPeer");
+    QUERY->add_mfun(QUERY,session_connect_at,"int","connectAt");
+    QUERY->add_arg(QUERY,"string","address");
+    QUERY->add_arg(QUERY,"int","port");
+    QUERY->add_arg(QUERY,"int","timeoutMs");
+    QUERY->add_mfun(QUERY,session_peer_address,"string","peerAddress");
     QUERY->add_mfun(QUERY,session_configure,"int","configure");
     QUERY->add_arg(QUERY,"int","mediaMask");
     QUERY->add_arg(QUERY,"int","maxPayload");

@@ -16,6 +16,8 @@
 #endif
 #include "MediaFrame.h"
 #include <algorithm>
+#include <string>
+#include <chrono>
 
 namespace mediawire {
 #ifdef _WIN32
@@ -37,6 +39,38 @@ inline sockaddr_in loopback(unsigned port) {
     sockaddr_in a{}; a.sin_family=AF_INET; a.sin_port=htons(static_cast<uint16_t>(port));
     a.sin_addr.s_addr=htonl(INADDR_LOOPBACK); return a;
 }
+inline bool parseEndpoint(const std::string &ip,unsigned port,sockaddr_in &a) {
+    if(ip.empty()||ip.size()>15||port>65535||ip.find('\0')!=std::string::npos) return false;
+    a={}; a.sin_family=AF_INET; a.sin_port=htons(static_cast<uint16_t>(port));
+    if(inet_pton(AF_INET,ip.c_str(),&a.sin_addr)!=1) return false;
+    uint32_t host=ntohl(a.sin_addr.s_addr);
+    return (host>>24)!=0 && (host>>24)<224 && (host&0xffu)!=255;
+}
+inline bool isLocal(const sockaddr_in &a) { return (ntohl(a.sin_addr.s_addr)>>24)==127; }
+inline bool connectPending() {
+#ifdef _WIN32
+    int e=WSAGetLastError(); return e==WSAEWOULDBLOCK||e==WSAEINPROGRESS;
+#else
+    return errno==EINPROGRESS||errno==EINTR;
+#endif
+}
+inline bool timedConnect(Socket s,const sockaddr_in &a,unsigned timeoutMs) {
+    if(!nonblocking(s)) return false;
+#ifndef _WIN32
+    if(s>=FD_SETSIZE) return false;
+#endif
+    if(connect(s,reinterpret_cast<const sockaddr*>(&a),sizeof(a))==0) return true;
+    if(!connectPending()) return false;
+    fd_set wr,err; FD_ZERO(&wr); FD_ZERO(&err); FD_SET(s,&wr); FD_SET(s,&err);
+    timeval tv{}; tv.tv_sec=timeoutMs/1000; tv.tv_usec=(timeoutMs%1000)*1000;
+#ifdef _WIN32
+    int n=select(0,nullptr,&wr,&err,&tv);
+#else
+    int n=select(s+1,nullptr,&wr,&err,&tv);
+#endif
+    int e=0; AddrLen len=sizeof(e);
+    return n>0&&getsockopt(s,SOL_SOCKET,SO_ERROR,reinterpret_cast<char*>(&e),&len)==0&&e==0;
+}
 inline bool preparePeer(Socket s) {
 #ifdef SO_NOSIGPIPE
     int yes=1;
@@ -48,12 +82,15 @@ class Loopback {
     Socket listener_=invalidSocket, peer_=invalidSocket;
     bool available_=true, ready_=false;
     unsigned port_=0;
+    bool remote_=false;
+    sockaddr_in allowed_{};
+    std::string peerIp_;
     Bytes tx_,rx_;
     size_t sent_=0, target_=headerSize;
     void resetPeer() {
         if(peer_!=invalidSocket) closeSocket(peer_);
         peer_=invalidSocket; tx_.clear(); rx_.clear();
-        sent_=0; target_=headerSize; ready_=false;
+        sent_=0; target_=headerSize; ready_=false; peerIp_.clear();
     }
     int fail() { resetPeer(); return -1; }
 public:
@@ -70,6 +107,12 @@ public:
         if(available_) WSACleanup();
 #endif
     }
+    bool allowRemote(bool enabled) {
+        if(listener_!=invalidSocket||connected()) return false;
+        remote_=enabled; return true;
+    }
+    bool remoteEnabled() const { return remote_; }
+    const std::string &peerAddress() const { return peerIp_; }
     bool connected() const { return peer_!=invalidSocket; }
     unsigned port() const { return port_; }
     bool busy() const { return !tx_.empty(); }
@@ -80,34 +123,42 @@ public:
         if(listener_!=invalidSocket) closeSocket(listener_);
         listener_=invalidSocket; port_=0;
     }
-    bool listenOn(unsigned port) {
-        if(!available_||listener_!=invalidSocket||connected()||port>65535) return false;
+    bool listenOn(unsigned port) { return listenAt("127.0.0.1",port,"127.0.0.1"); }
+    bool listenAt(const std::string &ip,unsigned port,const std::string &peer) {
+        sockaddr_in a{}, allow{};
+        if(!available_||listener_!=invalidSocket||connected()||
+           !parseEndpoint(ip,port,a)||!parseEndpoint(peer,0,allow)||
+           (!remote_&&(!isLocal(a)||!isLocal(allow)))) return false;
         Socket s=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
         if(s==invalidSocket) return false;
-        auto a=loopback(port); AddrLen n=sizeof(a);
+        AddrLen n=sizeof(a);
         if(bind(s,reinterpret_cast<sockaddr*>(&a),sizeof(a))!=0||
            listen(s,1)!=0||!nonblocking(s)||
            getsockname(s,reinterpret_cast<sockaddr*>(&a),&n)!=0) {
             closeSocket(s); return false;
         }
-        listener_=s; port_=ntohs(a.sin_port); return true;
+        listener_=s; allowed_=allow; port_=ntohs(a.sin_port); return true;
     }
     int acceptOne() {
         if(listener_==invalidSocket||connected()) return -1;
-        Socket s=accept(listener_,nullptr,nullptr);
+        sockaddr_in peer{}; AddrLen len=sizeof(peer);
+        Socket s=accept(listener_,reinterpret_cast<sockaddr*>(&peer),&len);
         if(s==invalidSocket) return retryable()?0:-1;
-        if(!preparePeer(s)) { closeSocket(s); return -1; }
+        if(peer.sin_addr.s_addr!=allowed_.sin_addr.s_addr) { closeSocket(s); return 0; }
+        char ip[INET_ADDRSTRLEN]{};
+        if(!preparePeer(s)||!inet_ntop(AF_INET,&peer.sin_addr,ip,sizeof(ip))) { closeSocket(s); return -1; }
+        try { peerIp_=ip; } catch(...) { closeSocket(s); return -1; }
         peer_=s; return 1;
     }
-    bool connectTo(unsigned port) {
-        if(!available_||listener_!=invalidSocket||connected()||port==0||port>65535) return false;
+    bool connectTo(unsigned port) { return connectAt("127.0.0.1",port,1000); }
+    bool connectAt(const std::string &ip,unsigned port,unsigned timeoutMs) {
+        sockaddr_in a{};
+        if(!available_||listener_!=invalidSocket||connected()||!port||
+           !timeoutMs||timeoutMs>5000||!parseEndpoint(ip,port,a)||(!remote_&&!isLocal(a))) return false;
         Socket s=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
         if(s==invalidSocket) return false;
-        auto a=loopback(port);
-        // Local TCP handshake only. This call may block in the OS.
-        if(connect(s,reinterpret_cast<sockaddr*>(&a),sizeof(a))!=0||!preparePeer(s)) {
-            closeSocket(s); return false;
-        }
+        if(!timedConnect(s,a,timeoutMs)||!preparePeer(s)) { closeSocket(s); return false; }
+        try { peerIp_=ip; } catch(...) { closeSocket(s); return false; }
         peer_=s; return true;
     }
     bool enqueue(Bytes packet) {
