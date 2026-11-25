@@ -34,6 +34,7 @@
     "midi-capture-events",
     "midi-capture-save",
     "midi-capture-session",
-    "text-capture-unicode"
+    "text-capture-unicode",
+    "text-capture-integration"
   ]
 }
