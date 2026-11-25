@@ -5,7 +5,7 @@
 namespace mediawire {
 // CKVS v1: contiguous pixel fragments of sequential RGBA8 video frames.
 constexpr size_t videoFragmentHeader=32;
-constexpr uint64_t maxVideoPixels=4194304; // 16 MiB RGBA
+constexpr uint64_t maxVideoPixels=16777216; // 64 MiB RGBA; includes UHD and DCI 4K
 inline uint64_t videoPixels(uint64_t w,uint64_t h) {
     return w&&h&&w<=maxVideoPixels&&h<=maxVideoPixels/w?w*h:0;
 }
