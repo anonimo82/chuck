@@ -7734,8 +7734,66 @@ check(capture.text()=="o ");
 """,56,p)
         assert (p / "capture.txt").read_text(encoding="utf-8") == "prefix\nA\nΩ😀\n\tB"
 
+
+def raster_capture_foundation():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("raster", """
+RasterCapture cap;
+check(cap.platform()>=0 && cap.platform()<=3);
+check(!cap.supported(1));
+check(!cap.supported(2));
+check(!cap.supported(-1));
+check(cap.deviceCount(1)==0);
+check(cap.deviceCount(2)==0);
+check(cap.deviceCount(0)==-1);
+check(!cap.ready());
+check(cap.width()==-1);
+check(cap.height()==-1);
+check(cap.timestamp()==-1);
+[255,0,0,255,0,128,255,64] @=> int data[];
+int out[8];
+int wrong[7];
+check(!cap.exportPixels(out));
+check(!cap.ingestFrame(0,1,0,data));
+check(!cap.ingestFrame(8192,8192,0,data));
+check(!cap.ingestFrame(2,1,-1,data));
+check(!cap.ingestFrame(2,1,0,wrong));
+check(cap.ingestFrame(2,1,0.25,data));
+check(cap.ready());
+check(cap.width()==2);
+check(cap.height()==1);
+check(cap.timestamp()==0.25);
+check(cap.exportPixels(out));
+check(out[0]==255 && out[1]==0 && out[2]==0 && out[3]==255);
+check(out[4]==0 && out[5]==128 && out[6]==255 && out[7]==64);
+check(!cap.exportPixels(wrong));
+256=>data[0];
+check(!cap.ingestFrame(2,1,1,data));
+check(cap.timestamp()==0.25);
+check(cap.exportPixels(out));
+check(out[0]==255);
+0=>data[0];
+check(cap.exportPixels(out));
+check(out[0]==255);
+check(cap.ingestFrame(1,2,1,data));
+check(cap.width()==1 && cap.height()==2);
+check(cap.timestamp()==1);
+check(cap.exportPixels(out));
+check(out[0]==0);
+RasterCapture other;
+check(!other.ready());
+cap.clear();
+check(!cap.ready());
+check(cap.width()==-1);
+check(cap.timestamp()==-1);
+check(!cap.exportPixels(out));
+check(cap.ingestFrame(2,1,0,data));
+check(cap.ready());
+""",43,p)
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")

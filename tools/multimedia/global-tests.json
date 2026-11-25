@@ -35,6 +35,7 @@
     "midi-capture-save",
     "midi-capture-session",
     "text-capture-unicode",
-    "text-capture-integration"
+    "text-capture-integration",
+    "raster-capture-foundation"
   ]
 }

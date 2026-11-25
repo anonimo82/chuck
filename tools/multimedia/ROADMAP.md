@@ -137,3 +137,7 @@ User selected all capture before transmission. Proposed three five-functional-PR
 ## Validation checkpoint after #175
 
 User-reported Windows Local: expected=277, PASS=277, FAIL=0, missing=0, unreported=0, extra=0, suites=1/1, status=PASS. Five capture groups validated. Cumulative validated checks 4859; last Full baseline remains 4282 after #161; functional cadence 10/20, local cycle resets to 0/5. Clear validated local groups; retain global manifest unchanged. Promote MIDI and text capture to O under foundational rubric; physical hardware and full Unicode terminal/IME behavior are not certified. Coverage 85.19% (45 O, 2 P, 7 M, 2 N/A). Next functional cycle: raster capture, with device backend feasibility to be assessed before implementation. No workflow changes.
+
+## Capture cycle 2 — Raster
+
+#177: shared bounded RGBA8 frame representation and RasterCapture API foundation; platform detection and capability queries explicitly report no installed capture backends. 43 new checks, global 4902, local 43; cadence 11/20. Native validation pending. Candidate backends for subsequent investigation: Windows Media Foundation and GDI desktop capture, Linux V4L2 and X11/desktop portal, macOS AVFoundation and ScreenCaptureKit. These are candidates, not implemented or verified. Existing FFmpeg build links codecs/format but not libavdevice; do not assume device support. Raster capture remains missing until actual acquisition. No dependency or workflow changes.
