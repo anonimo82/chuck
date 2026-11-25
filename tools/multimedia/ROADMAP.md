@@ -113,3 +113,5 @@ User prioritized vector manipulation before transmission and capture. #165: gene
 #166: individual affine transforms, pivoted rotation/scaling and matrix access; 58 new checks, global 4397, local 115; functional cadence 2/20. Native validation pending.
 
 #167: individual fill, stroke, stroke width and opacity; 57 new checks, global 4454, local 172; functional cadence 3/20. Native validation pending.
+
+#168: nested structural groups, duplication and z-order; 65 new checks, global 4519, local 237; functional cadence 4/20. Native validation pending.
