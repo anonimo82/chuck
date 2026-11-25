@@ -5,6 +5,7 @@
     "text-recent",
     "text-page-furniture",
     "text-page-numbers",
-    "text-split-paragraphs"
+    "text-split-paragraphs",
+    "text-split-tables"
   ]
 }
