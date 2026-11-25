@@ -510,6 +510,41 @@ CK_DLL_MFUN(vector_image_import_triangles) {
         if(p->replaceShapes(w,h,std::move(shapes))) { p->reset(); RETURN->v_int=1; }
     } catch(...) {}
 }
+CK_DLL_MFUN(vector_image_export_pitches) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto low=GET_NEXT_INT(ARGS),high=GET_NEXT_INT(ARGS),threshold=GET_NEXT_INT(ARGS),scan=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!a||w<1||h<1||w>4096||h>4096||w*h>100000||
+           low<0||high>127||low>high||threshold<1||threshold>255||scan<0||scan>2||
+           API->object->array_int_size(a)!=w*h) return;
+        auto surface=p->rasterize(w,h);
+        if(!surface) return;
+        auto *data=cairo_image_surface_get_data(surface.get());
+        int stride=cairo_image_surface_get_stride(surface.get());
+        if(!data) return;
+        for(t_CKINT i=0;i<w*h;++i) {
+            auto x=scan==1?i/h:i%w,y=scan==1?i%h:i/w;
+            if(scan==2&&y%2) x=w-1-x;
+            uint32_t v;
+            std::memcpy(&v,data+static_cast<size_t>(y)*stride+x*4,4);
+            unsigned alpha=v>>24;
+            t_CKINT pitch=-1;
+            if(alpha>=static_cast<unsigned>(threshold)) {
+                auto component=[&](int c) {
+                    unsigned q=(v>>(16-8*c))&255;
+                    return std::min(255u,(q*255+alpha/2)/alpha);
+                };
+                double lum=(0.2126*component(0)+0.7152*component(1)+0.0722*component(2))/255.0;
+                pitch=low+std::lround(std::clamp(lum,0.0,1.0)*(high-low));
+            }
+            API->object->array_int_set_idx(a,i,pitch);
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VectorIO) {
     QUERY->setname(QUERY, "VectorIO");
     QUERY->begin_class(QUERY, "VectorIO", "Object");
@@ -597,6 +632,14 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,vector_image_save,"int","save");
     QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,vector_image_export_pitches,"int","exportPitches");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","lowPitch");
+    QUERY->add_arg(QUERY,"int","highPitch");
+    QUERY->add_arg(QUERY,"int","alphaThreshold");
+    QUERY->add_arg(QUERY,"int","scan");
+    QUERY->add_arg(QUERY,"int[]","pitches");
     QUERY->add_mfun(QUERY,vector_image_import_triangles,"int","importTriangles");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
