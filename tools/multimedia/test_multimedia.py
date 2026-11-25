@@ -7522,8 +7522,75 @@ check(seq.events(0)>=1);
         assert not (p / "unconfigured.mid").exists()
         assert (p / "captured.mid").read_bytes().startswith(b"MThd")
 
+
+def midi_capture_session():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("midi", """
+MidiCapture recorder;
+check(!recorder.start(0));
+check(recorder.create(480,120));
+check(recorder.sessionState()==0);
+check(recorder.durationAt(0)==-1);
+check(!recorder.pause(0));
+check(recorder.start(10));
+check(recorder.sessionState()==1);
+check(!recorder.start(10));
+check(!recorder.append(0,144,60,90));
+check(!recorder.appendMessage(0,144,60,90));
+check(recorder.recordMessage(10,144,60,90));
+check(recorder.recordMessage(10.25,176,64,127));
+check(recorder.tickAt(1)==240);
+check(recorder.durationAt(10.5)==0.5);
+check(!recorder.pause(10.125));
+check(recorder.pause(10.5));
+check(recorder.sessionState()==2);
+check(!recorder.recordMessage(11,128,60,0));
+check(recorder.durationAt(12)==0.5);
+check(!recorder.resume(10.25));
+check(recorder.resume(15));
+check(recorder.sessionState()==1);
+check(recorder.recordMessage(15.25,128,60,0));
+check(recorder.secondsAt(2)==0.75);
+check(recorder.tickAt(2)==720);
+check(!recorder.recordMessage(15.5,248,0,0));
+check(recorder.recordMessage(15.375,192,7,99));
+check(recorder.sizeAt(3)==2);
+check(recorder.secondsAt(3)==0.875);
+check(recorder.stop(15.5));
+check(recorder.sessionState()==3);
+check(recorder.durationAt(20)==1);
+check(!recorder.recordMessage(20,144,60,90));
+check(!recorder.resume(20));
+check(!recorder.stop(20));
+check(recorder.count()==4);
+check(recorder.save("session.mid"));
+MidiSequence seq;
+check(seq.load("session.mid"));
+check(seq.tickAt(0,3)==720);
+check(seq.tickAt(0,4)==840);
+check(recorder.start(30));
+check(recorder.count()==0);
+check(recorder.pause(31));
+check(recorder.stop(40));
+check(recorder.durationAt(40)==1);
+check(recorder.sessionState()==3);
+recorder.clear();
+check(recorder.sessionState()==0);
+check(recorder.count()==0);
+check(recorder.append(0,144,64,100));
+check(recorder.create(960,60));
+check(recorder.count()==0);
+check(recorder.sessionState()==0);
+check(recorder.start(0));
+check(!recorder.stop(1000000000.0));
+check(recorder.sessionState()==1);
+check(recorder.stop(1));
+check(recorder.durationAt(1)==1);
+""",57,p)
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")

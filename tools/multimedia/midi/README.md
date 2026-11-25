@@ -80,3 +80,7 @@ recorder.save("recording.mid");
 ```
 
 Native validation pending; automated tests use constructed MidiMsg objects, not physical devices.
+
+## MIDI recording sessions
+
+start(clockSeconds) starts a new recording and clears previous events; pause(clockSeconds), resume(clockSeconds), stop(clockSeconds) control its lifecycle. All clocks are caller-provided nonnegative monotonic seconds, e.g. (now-origin)/second. recordMessage(clockSeconds,data1,data2,data3) records only while active and excludes paused time. sessionState(): 0 manual, 1 recording, 2 paused, 3 stopped. durationAt(clockSeconds) reports active elapsed duration as of the supplied clock without changing state; invalid queries return -1. Invalid transitions and messages leave state unchanged. Manual append/appendMessage are available in mode 0 only; clear/create return to manual mode. save works on the current event snapshot, including while recording; SMF duration ends at the last event, not necessarily stop time. Pause does not synthesize note-offs or reconcile discarded events; callers must handle held notes and controllers across pauses. Hardware and native validation pending.
