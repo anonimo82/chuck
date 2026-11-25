@@ -4,6 +4,7 @@
     "text-frame-foundation",
     "text-frame-flow",
     "text-frame-mixed",
-    "text-frame-render"
+    "text-frame-render",
+    "text-frame-native"
   ]
 }
