@@ -2,6 +2,20 @@
 #include "chuck_dl.h"
 #include "../file_compat.h"
 #include "../capture/CameraCapture.h"
+#include "../capture/ScreenCapture.h"
+// X11 headers define macros that collide with application identifiers.
+#ifdef None
+#undef None
+#endif
+#ifdef Success
+#undef Success
+#endif
+#ifdef Status
+#undef Status
+#endif
+#ifdef Bool
+#undef Bool
+#endif
 #include "../subtitle/subtitle_io.h"
 #include "../keyframe/keyframe.h"
 #include <array>
@@ -3158,6 +3172,23 @@ struct VideoWriterState {
         if(avcodec_send_frame(codec.ctx,frame.p)<0 || !drain(false)) return -1;
         ++count; return 1;
     }
+
+    int appendRGBA(const std::vector<unsigned char> &rgba) {
+        int w=codec.ctx->width,h=codec.ctx->height;
+        if(count>=1000000||rgba.size()!=static_cast<size_t>(w)*h*4) return 0;
+        for(size_t i=3;i<rgba.size();i+=4) if(rgba[i]!=255) return 0;
+        if(av_frame_make_writable(frame.p)<0) return -1;
+        for(int y=0;y<h;++y) {
+            auto *dst=frame.p->data[0]+static_cast<size_t>(y)*frame.p->linesize[0];
+            for(int x=0;x<w;++x) {
+                size_t i=(static_cast<size_t>(y)*w+x)*4;
+                dst[x*4]=rgba[i+2];dst[x*4+1]=rgba[i+1];dst[x*4+2]=rgba[i];dst[x*4+3]=0;
+            }
+        }
+        frame.p->pts=count;
+        if(avcodec_send_frame(codec.ctx,frame.p)<0||!drain(false)) return -1;
+        ++count;return 1;
+    }
     int64_t nextSamples() const {
         if(!audio || count>=1000000) return 0;
         return av_rescale_q(count+1,codec.ctx->time_base,AVRational{1,rate})-samples;
@@ -3530,6 +3561,10 @@ struct VideoCaptureState {
     std::unique_ptr<media_capture::CameraSession> camera;
     media_capture::Frame frame;
     int mode=0,w=0,h=0;
+    int x=0,y=0;
+    std::chrono::steady_clock::time_point screenStart{};
+    std::unique_ptr<VideoWriterState> recording;
+    t_CKINT recorded=0,lastRecorded=0;
     t_CKINT count=0;
     bool accept(media_capture::Frame &&next) {
         if(!mode||!next.valid()||next.width!=w||next.height!=h||
@@ -3538,6 +3573,7 @@ struct VideoCaptureState {
     }
     void reset(int m,int width,int height) {
         frame=media_capture::Frame{}; count=0; mode=m; w=width; h=height;
+        recorded=lastRecorded=0;
     }
 };
 t_CKUINT videoCaptureOffset=0;
@@ -3568,7 +3604,7 @@ CK_DLL_MFUN(video_capture_open) {
     try {
         auto *p=videoCaptureState(SELF,API); auto name=GET_NEXT_STRING_SAFE(ARGS);
         auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),fps=GET_NEXT_INT(ARGS);
-        if(!p||p->mode||!media_capture::Frame::dimensions(w,h)||fps<1||fps>120||media_capture::cameraAddress(name).empty()) return;
+        if(!p||p->mode||p->recording||!media_capture::Frame::dimensions(w,h)||fps<1||fps>120||media_capture::cameraAddress(name).empty()) return;
         auto camera=std::make_unique<media_capture::CameraSession>();
         if(!camera->open(name,w,h,fps)) return;
         p->reset(1,w,h); p->camera=std::move(camera); RETURN->v_int=1;
@@ -3577,15 +3613,21 @@ CK_DLL_MFUN(video_capture_open) {
 CK_DLL_MFUN(video_capture_synthetic) {
     RETURN->v_int=0;
     auto *p=videoCaptureState(SELF,API); auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
-    if(!p||p->mode||!media_capture::Frame::dimensions(w,h)) return;
+    if(!p||p->mode||p->recording||!media_capture::Frame::dimensions(w,h)) return;
     p->reset(2,w,h); RETURN->v_int=1;
 }
 CK_DLL_MFUN(video_capture_next) {
     RETURN->v_int=0;
     auto *p=videoCaptureState(SELF,API);
-    if(!p||p->mode!=1||!p->camera||p->count>=1000000) return;
+    if(!p||(p->mode!=1&&p->mode!=3)||p->count>=1000000) return;
     try { media_capture::Frame next;
-        if(p->camera->next(next)&&p->accept(std::move(next))) {RETURN->v_int=1;return;}
+        bool ok=false;
+        if(p->mode==1&&p->camera) ok=p->camera->next(next);
+        if(p->mode==3) {
+            ok=media_capture::screenSnapshot(p->x,p->y,p->w,p->h,next);
+            if(ok) next.seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-p->screenStart).count();
+        }
+        if(ok&&p->accept(std::move(next))) {RETURN->v_int=1;return;}
     } catch(...) {}
     p->camera.reset(); p->mode=0;
 }
@@ -3620,6 +3662,53 @@ CK_DLL_MFUN(video_capture_export) {
     for(size_t k=0;k<p->frame.rgba.size();++k) API->object->array_int_set_idx(a,k,p->frame.rgba[k]);
     RETURN->v_int=1;
 }
+
+
+CK_DLL_MFUN(video_capture_screen_supported) { RETURN->v_int=media_capture::screenSupported(); }
+CK_DLL_MFUN(video_capture_screen_width) {int w=0,h=0;RETURN->v_int=media_capture::screenSize(w,h)?w:-1;}
+CK_DLL_MFUN(video_capture_screen_height) {int w=0,h=0;RETURN->v_int=media_capture::screenSize(w,h)?h:-1;}
+CK_DLL_MFUN(video_capture_screen_open) {
+    RETURN->v_int=0;
+    try {
+        auto *p=videoCaptureState(SELF,API);
+        auto x=GET_NEXT_INT(ARGS),y=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        if(!p||p->mode||p->recording||x<0||y<0||!media_capture::Frame::dimensions(w,h)) return;
+        int sw=0,sh=0;
+        if(!media_capture::screenSize(sw,sh)||!media_capture::screenRegion(x,y,w,h,sw,sh)) return;
+        p->reset(3,w,h);p->x=static_cast<int>(x);p->y=static_cast<int>(y);
+        p->screenStart=std::chrono::steady_clock::now(); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_capture_record_start) {
+    RETURN->v_int=0;
+    try {
+        auto *p=videoCaptureState(SELF,API);auto path=GET_NEXT_STRING_SAFE(ARGS);auto fps=GET_NEXT_INT(ARGS);
+        if(!p||!p->mode||p->recording||fps<1||fps>120) return;
+        auto writer=std::make_unique<VideoWriterState>(path);
+        if(!writer->open(p->w,p->h,fps)) return;
+        p->recording=std::move(writer);p->recorded=0;p->lastRecorded=0;RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_capture_record_frame) {
+    RETURN->v_int=0;
+    auto *p=videoCaptureState(SELF,API);
+    if(!p||!p->recording||!p->frame.valid()||p->count<=p->lastRecorded) return;
+    try {
+        int ret=p->recording->appendRGBA(p->frame.rgba);
+        if(ret==1) {++p->recorded;p->lastRecorded=p->count;RETURN->v_int=1;}
+        if(ret<0) p->recording.reset();
+    } catch(...) {p->recording.reset();}
+}
+CK_DLL_MFUN(video_capture_record_finish) {
+    RETURN->v_int=0;
+    auto *p=videoCaptureState(SELF,API);
+    if(!p||!p->recording) return;
+    try {RETURN->v_int=p->recording->finish();} catch(...) {}
+    p->recording.reset();
+}
+CK_DLL_MFUN(video_capture_record_abort) {if(auto *p=videoCaptureState(SELF,API)) p->recording.reset();}
+CK_DLL_MFUN(video_capture_recording) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p&&p->recording;}
+CK_DLL_MFUN(video_capture_recorded) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p?p->recorded:0;}
 
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
@@ -3914,6 +4003,22 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_mfun(QUERY,video_capture_width,"int","width");
     QUERY->add_mfun(QUERY,video_capture_height,"int","height");
     QUERY->add_mfun(QUERY,video_capture_time,"float","timestamp");
+    QUERY->add_mfun(QUERY,video_capture_screen_supported,"int","screenSupported");
+    QUERY->add_mfun(QUERY,video_capture_screen_width,"int","screenWidth");
+    QUERY->add_mfun(QUERY,video_capture_screen_height,"int","screenHeight");
+    QUERY->add_mfun(QUERY,video_capture_screen_open,"int","openScreen");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_mfun(QUERY,video_capture_record_start,"int","startRecording");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_arg(QUERY,"int","fps");
+    QUERY->add_mfun(QUERY,video_capture_record_frame,"int","recordFrame");
+    QUERY->add_mfun(QUERY,video_capture_record_finish,"int","finishRecording");
+    QUERY->add_mfun(QUERY,video_capture_record_abort,"void","abortRecording");
+    QUERY->add_mfun(QUERY,video_capture_recording,"int","recording");
+    QUERY->add_mfun(QUERY,video_capture_recorded,"int","recordedFrames");
     QUERY->add_mfun(QUERY,video_capture_export,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY)) return FALSE;

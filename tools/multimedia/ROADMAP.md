@@ -157,3 +157,5 @@ User-reported Windows Local: expected=174, PASS=174, FAIL=0, missing=0, unreport
 ## Capture cycle 3 — Video and synchronized audio
 
 #183: persistent optional camera session in VideoIO, bounded RGBA8 sequential frames, monotonic host timestamps, explicit synthetic input and lifecycle, 65 headless checks; global 5098, local 65, cadence 16/20. Native compilation and live camera validation pending. Blocking/cooperative timeout; no guaranteed real-time scheduling, audio or recording integration yet. No workflow changes.
+
+#184: sequential primary desktop region acquisition and explicit constant-frame-rate FFV1/MKV recording from capture snapshots; 56 new headless checks, global 5154, local 121, cadence 17/20. Native and physical validation pending. Caller controls sampling and recording cadence; no automatic scheduling, timestamp resampling, cursor capture guarantee, native Wayland or macOS screen backend. No workflow changes.

@@ -1,6 +1,7 @@
 {
   "version": 1,
   "groups": [
-    "video-camera-session"
+    "video-camera-session",
+    "video-screen-recording"
   ]
 }

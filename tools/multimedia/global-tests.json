@@ -41,6 +41,7 @@
     "raster-screen-capture",
     "raster-capture-image",
     "raster-capture-consolidation",
-    "video-camera-session"
+    "video-camera-session",
+    "video-screen-recording"
   ]
 }
