@@ -6414,8 +6414,81 @@ check(flow.frameCount()==1);
         assert (p / "crlf-out.txt").read_bytes() == b"\n" * 65536
         assert not (p / "wrong.ckflow").exists()
 
+
+def text_flow_interop():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextDocument doc;
+TextDocument target;
+TextFlow flow;
+TextFrame frame;
+TextStyle style;
+TextStyle large;
+TextRun run;
+TextParagraphStyle layoutStyle;
+TextContainer box;
+TextList marker;
+int dims[2];
+check(style.fontSize(16)==16);
+check(large.fontSize(64)==64);
+check(doc.addParagraph("small\\n",style));
+check(run.set("café",large));
+check(doc.appendRun(0,run));
+check(layoutStyle.marginLeft(10)==10);
+check(doc.setParagraphLayout(0,layoutStyle));
+check(box.paddingLeft(5)==5);
+check(doc.setParagraphContainer(0,box));
+check(marker.mode(2)==2);
+check(doc.setParagraphList(0,marker));
+check(frame.setGeometry(10,20,200,25));
+check(flow.appendFrame(frame));
+check(flow.setText("old",style));
+check(flow.layout());
+check(!doc.exportParagraphToFlow(-1,flow));
+check(!doc.exportParagraphToFlow(1,flow));
+check(flow.ready()==1 && flow.sourceText()=="old");
+check(doc.exportParagraphToFlow(0,flow));
+check(flow.ready()==0);
+check(flow.sourceText()=="small\\ncafé");
+check(flow.frameCount()==1);
+check(flow.layout());
+check(flow.frameText(0)=="small\\n");
+check(flow.overflowText()=="café");
+check(target.addParagraph("before",style));
+check(target.appendFlow(flow));
+check(target.paragraphCount()==2);
+check(target.paragraphText(1)=="small\\ncafé");
+check(target.runCount(1)==1);
+check(target.runText(1,0)=="café");
+check(target.getParagraphLayout(1,layoutStyle));
+check(layoutStyle.marginLeft()==0);
+check(target.getParagraphContainer(1,box));
+check(box.paddingLeft()==0);
+check(target.getParagraphList(1,marker));
+check(marker.mode()==0);
+check(target.measureParagraph(1,200,dims));
+check(dims[1]>40);
+check(doc.setParagraphText(0,"changed"));
+check(flow.sourceText()=="small\\ncafé");
+check(flow.setText("new",style));
+check(target.paragraphText(1)=="small\\ncafé");
+check(target.exportParagraphToFlow(1,flow));
+check(flow.layout());
+check(flow.overflowText()=="café");
+check(flow.setText("",style));
+check(target.appendFlow(flow));
+check(target.paragraphCount()==3);
+check(target.paragraphText(2)=="");
+check(target.runCount(2)==0);
+check(target.saveNative("interop.cktxt"));
+check(flow.saveNative("interop.ckflow"));
+""",53,p)
+        assert (p / "interop.cktxt").read_bytes().startswith(b"CKTXTDOC")
+        assert (p / "interop.ckflow").read_bytes().startswith(b"CKTXFLOW")
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
