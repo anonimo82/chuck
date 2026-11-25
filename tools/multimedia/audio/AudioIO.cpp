@@ -715,6 +715,30 @@ CK_DLL_MFUN(audio_buffer_detect_pitches) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(audio_buffer_waveform_range) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API);
+        auto channel=GET_NEXT_INT(ARGS),first=GET_NEXT_INT(ARGS),count=GET_NEXT_INT(ARGS);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!imageOutput(p,channel,w,h,a,API)||!audioRange(p,first,count)) return;
+        std::vector<unsigned char> rgba(w*h*4,0);
+        for(size_t i=0;i<rgba.size()/4;++i) rgba[4*i+3]=255;
+        auto row=[&](double v){return static_cast<size_t>(std::llround((1-v)*0.5*(h-1)));};
+        for(size_t x=0;x<static_cast<size_t>(w);++x) {
+            size_t begin=x*uint64_t(count)/w;
+            size_t end=std::max(begin+1,(x+1)*uint64_t(count)/w);
+            double lo=1,hi=-1;
+            for(size_t i=begin;i<end;++i) {
+                double v=p->value(static_cast<size_t>(first)+i,channel);
+                lo=std::min(lo,v); hi=std::max(hi,v);
+            }
+            for(size_t y=row(hi);y<=row(lo);++y) grayPixel(rgba,y*w+x,255);
+        }
+        publishImage(rgba,a,API); RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(AudioIO) {
     QUERY->setname(QUERY, "AudioIO");
     QUERY->begin_class(QUERY, "AudioIO", "Object");
@@ -814,6 +838,13 @@ CK_DLL_QUERY(AudioIO) {
     QUERY->add_arg(QUERY,"int","channel");
     QUERY->add_arg(QUERY,"int","count");
     QUERY->add_arg(QUERY,"float[]","bounds");
+    QUERY->add_mfun(QUERY,audio_buffer_waveform_range,"int","exportWaveform");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","firstFrame");
+    QUERY->add_arg(QUERY,"int","frameCount");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int[]","pixels");
     QUERY->add_mfun(QUERY,audio_buffer_waveform,"int","exportWaveform");
     QUERY->add_arg(QUERY,"int","channel");
     QUERY->add_arg(QUERY,"int","width");
