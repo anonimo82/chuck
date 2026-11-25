@@ -1,4 +1,4 @@
-"""Run native smoke suites, with conservative incremental selection."""
+"""Run native smoke suites using versioned global/local manifests."""
 import argparse
 import json
 import os
@@ -13,9 +13,6 @@ SUITES = ("raster/test_raster.py", "audio/test_audio.py", "test_multimedia.py")
 GROUPS = ("raster", "audio", "legacy", "text-core", "text-recent")
 MARKER = re.compile(r"SMOKE_COUNTS (\d+) (\d+) (\d+)")
 START = re.compile(r"SMOKE_EXPECTED (\d+)")
-PREFIX = "tools/multimedia/"
-# Explicit migration anchor: the last reported 3153-check full baseline.
-MIGRATION = "92933d3894d2c844178e04e2540e1e4524750c9f"
 
 def git(*args):
     return subprocess.check_output(["git", "-C", str(ROOT), *args], text=True).strip()
@@ -33,59 +30,46 @@ def save_state(path, state):
     tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
     tmp.replace(path)
 
-def select(base, head):
-    if not base:
-        return list(GROUPS)
-    try:
-        if subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", base, head],
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
-            return list(GROUPS)
-        paths = git("diff", "--name-only", base, head).splitlines()
-        if not paths:
-            return ["text-recent"]
-        selected = set()
-        for path in paths:
-            if path.endswith(".md"):
-                continue
-            if path.startswith(PREFIX + "text/"):
-                selected.update(("text-core", "text-recent"))
-            elif path == PREFIX + "test_multimedia.py":
-                if base == MIGRATION:
-                    # The pre-group baseline is known; only the new text cycle
-                    # plus its directly affected text regressions need running.
-                    selected.update(("text-core", "text-recent"))
-                else:
-                    old = git("show", base + ":" + path)
-                    new = git("show", head + ":" + path)
-                    def split(source):
-                        a = source.index("\ndef legacy():")
-                        b = source.index("\ndef text_core():")
-                        c = source.index("\ndef text_recent():")
-                        d = source.index('\nif __name__ == "__main__":')
-                        return (source[:a] + source[d:], source[a:b], source[b:c], source[c:d])
-                    before, after = split(old), split(new)
-                    if before[0] != after[0]:
-                        return list(GROUPS)
-                    for group, x, y in zip(GROUPS[2:], before[1:], after[1:]):
-                        if x != y:
-                            selected.add(group)
-            elif base == MIGRATION and path in (PREFIX + "run_smoke_tests.py", PREFIX + "build-and-test.ps1"):
-                # Migration changes only the runner, with full mode retained.
-                continue
-            else:
-                # Shared native code, other modules or unknown changes:
-                # do not guess their cross-module dependencies.
-                return list(GROUPS)
-        return [g for g in GROUPS if g in selected] or ["text-recent"]
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return list(GROUPS)
+def load_manifest(path):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise ValueError(f"Unsupported test manifest: {path}")
+    groups = data.get("groups")
+    if (not isinstance(groups, list) or any(not isinstance(g, str) for g in groups)
+            or len(groups) != len(set(groups)) or any(g not in GROUPS for g in groups)):
+        raise ValueError(f"Invalid groups in {path}")
+    return groups
+
+def manifests():
+    global_groups = load_manifest(HERE / "global-tests.json")
+    local_groups = load_manifest(HERE / "local-tests.json")
+    if set(global_groups) != set(GROUPS):
+        raise ValueError("Global manifest must cover every registered group")
+    if not set(local_groups).issubset(global_groups):
+        raise ValueError("Local manifest must be a subset of global")
+    return global_groups, local_groups
+
+def select_groups(mode, global_groups, local_groups, explicit, pending):
+    if explicit:
+        return [g for g in global_groups if g in explicit]
+    if mode == "Full":
+        return global_groups
+    if mode in ("Local", "Incremental"):
+        return [g for g in global_groups if g in local_groups]
+    if mode == "Failed":
+        if (not isinstance(pending, list) or not pending
+                or any(g not in global_groups for g in pending)):
+            raise ValueError("No valid failed or interrupted selection recorded")
+        return [g for g in global_groups if g in pending or g in local_groups]
+    raise ValueError("Unknown validation mode")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("Full", "Incremental", "Failed"), default="Full")
+    parser.add_argument("--mode", choices=("Full", "Local", "Incremental", "Failed"), default="Full")
     parser.add_argument("--state", type=pathlib.Path, default=ROOT / "build" / "multimedia-smoke-state.json")
-    parser.add_argument("--since", help="Explicit previously validated commit (Incremental only)")
+    parser.add_argument("--since", help="Legacy option; uses conservative full coverage when supplied")
     parser.add_argument("--group", choices=GROUPS, action="append", help="Explicit diagnostic group; does not advance baseline")
+    parser.add_argument("--list", action="store_true", help="Validate manifests and print selection without native execution")
     args = parser.parse_args()
     if args.since and (args.mode != "Incremental" or args.group):
         parser.error("--since requires Incremental and no explicit group")
@@ -97,22 +81,21 @@ def main():
         dirty = bool(git("status", "--porcelain", "--untracked-files=no"))
     except (OSError, subprocess.SubprocessError):
         head, dirty = "", True
-    if args.group:
-        groups = [g for g in GROUPS if g in args.group]
-    elif args.mode == "Failed":
-        if not state.get("pending"):
-            parser.error("No failed or interrupted run recorded")
-        groups = state["pending"]
-        if (not isinstance(groups, list) or any(g not in GROUPS for g in groups)
-                or dirty or state.get("attempt_dirty", True)):
-            groups = list(GROUPS)
-        elif state.get("attempt") != head:
-            changed = select(state.get("attempt"), head)
-            groups = [g for g in GROUPS if g in groups or g in changed]
-    elif args.mode == "Incremental" and not dirty:
-        groups = select(args.since or state.get("validated"), head)
-    else:
-        groups = list(GROUPS)
+    try:
+        global_groups, local_groups = manifests()
+        mode = "Full" if args.since else args.mode
+        groups = select_groups(mode, global_groups, local_groups, args.group, state.get("pending"))
+    except (OSError, ValueError) as exc:
+        parser.error(str(exc))
+    print("SMOKE SELECTION | mode=" + args.mode + " | groups=" + ",".join(groups), flush=True)
+    if args.list:
+        print("Global groups: " + ",".join(global_groups))
+        print("Local groups: " + ",".join(local_groups))
+        return 0
+    if not groups:
+        print("No local tests scheduled; nothing executed.", flush=True)
+        print("MULTIMEDIA SUMMARY | expected=0 | PASS=0 | FAIL=0 | missing=0 | unreported=0 | extra=0 | suites=0/0 | status=SKIP", flush=True)
+        return 0
     plan = []
     for group, name in zip(GROUPS[:2], SUITES[:2]):
         if group in groups:
@@ -120,7 +103,6 @@ def main():
     native = [g for g in GROUPS[2:] if g in groups]
     if native:
         plan.append((SUITES[2], native))
-    print("SMOKE SELECTION | mode=" + args.mode + " | groups=" + ",".join(groups), flush=True)
     # Record the entire attempted plan before launching it. Failed retries
     # repeat that plan, including fixture producers and Python assertions.
     state.update(attempt=head, attempt_dirty=dirty, pending=groups, diagnostic=bool(args.group) or (args.mode == "Failed" and state.get("diagnostic", False)))
@@ -159,7 +141,7 @@ def main():
             if head and not dirty and not state["diagnostic"]:
                 if git("rev-parse", "HEAD") == head and not git("status", "--porcelain", "--untracked-files=no"):
                     state["validated"] = head
-                    if groups == list(GROUPS):
+                    if set(groups) == set(global_groups):
                         state["full_validated"] = head
             state["pending"] = []
             save_state(args.state, state)
