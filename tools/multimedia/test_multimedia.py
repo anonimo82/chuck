@@ -8,7 +8,7 @@ CHUCK = HERE.parents[1] / "src/chuck"
 
 def run(module, script, expected, directory):
     path = directory / "test.ck"
-    name = {"audio": "AudioIO", "vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO", "raster": "RasterIO"}[module]
+    name = {"audio": "AudioIO", "vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO", "raster": "RasterIO", "text": "TextIO"}[module]
     path.write_text(f'@import "{name}";\n' + 'fun void check(int ok) { if(ok) <<< "PASS" >>>; else <<< "FAIL" >>>; }\n' + script, encoding="utf-8")
     print(f"SMOKE_EXPECTED {expected}", flush=True)
     r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
@@ -4235,3 +4235,56 @@ image.clear();
 check(!image.exportAudioSamples(2,2,1,mono));
 check(mono[1]==-1.0);
 """,37,p)
+
+    run("text", """
+TextStyle base;
+TextStyle title;
+TextDocument doc;
+check(base.font()=="Sans" && base.fontSize()==16.0);
+check(base.bold()==0 && base.italic()==0 && base.underline()==0 && base.color()==0);
+"Serif"=>base.font;
+20.0=>base.fontSize;
+0x123456=>base.color;
+check(title.inherit(base));
+check(title.font()=="Serif" && title.fontSize()==20.0 && title.color()==0x123456);
+40.0=>title.fontSize;
+1=>title.bold;
+1=>title.italic;
+1=>title.underline;
+check(title.bold()==1 && title.italic()==1 && title.underline()==1);
+check(base.fontSize()==20.0 && base.bold()==0);
+check(title.fontSize(0.0)==-1.0 && title.fontSize()==40.0);
+check(title.color(-1)==-1 && title.color()==0x123456);
+check(title.bold(2)==-1 && title.bold()==1);
+check(doc.paragraphCount()==0);
+check(doc.addParagraph("Ciao <b>mondo</b> & testo",base));
+check(doc.addParagraph("Titolo",title));
+check(doc.paragraphCount()==2);
+check(doc.paragraphText(0)=="Ciao <b>mondo</b> & testo");
+check(doc.paragraphText(1)=="Titolo");
+int dims[2];
+check(!doc.measureParagraph(-1,500,dims));
+check(doc.measureParagraph(1,500,dims));
+check(dims[0]>0 && dims[1]>0);
+dims[1]=>int tall;
+10.0=>title.fontSize;
+check(doc.measureParagraph(1,500,dims));
+check(dims[1]==tall);
+check(doc.setParagraphStyle(1,title));
+check(doc.measureParagraph(1,500,dims));
+check(dims[1]<tall);
+check(doc.setParagraphText(0,"Testo lungo con molte parole da distribuire su righe"));
+check(doc.measureParagraph(0,500,dims));
+dims[1]=>int wide;
+check(doc.measureParagraph(0,60,dims));
+check(dims[1]>wide);
+check(!doc.measureParagraph(0,0,dims));
+check(!doc.setParagraphText(8,"invalid"));
+check(!doc.setParagraphStyle(8,title));
+check(!doc.removeParagraph(-1));
+check(doc.removeParagraph(0));
+check(doc.paragraphCount()==1 && doc.paragraphText(0)=="Titolo");
+doc.clear();
+check(doc.paragraphCount()==0);
+check(!doc.measureParagraph(0,100,dims));
+""",35,p)
