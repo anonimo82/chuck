@@ -1,6 +1,7 @@
 {
   "version": 1,
   "groups": [
-    "transport-framing"
+    "transport-framing",
+    "transport-loopback"
   ]
 }
