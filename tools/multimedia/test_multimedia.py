@@ -3142,4 +3142,5 @@ check(pixels[20]==64 && pixels[23]==255);
 check(model.load("triangle.obj"));
 check(model.renderOrthographic(0,4,4,2.0,0xffffff,pixels));
 check(pixels[23]==0 && pixels[27]==255);
+check(pixels[59]==0);
 """,25,p)
