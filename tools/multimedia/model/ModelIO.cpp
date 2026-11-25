@@ -1809,7 +1809,7 @@ CK_DLL_MFUN(model3d_project_triangles) {
         for(unsigned i=0;i<m->mNumVertices;++i) {
             auto v=transform*m->mVertices[i];
             double x=w*0.5+v.x*factor,y=h*0.5-v.y*factor;
-            if(!coordinate(x)||!coordinate(y)||!std::isfinite(v.z)) return;
+            if(!std::isfinite(x)||!std::isfinite(y)||std::abs(x)>1000000||std::abs(y)>1000000||!std::isfinite(v.z)) return;
             verts.push_back({x,y,v.z});
         }
         struct Triangle { double depth; std::array<double,7> values; };
