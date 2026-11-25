@@ -811,24 +811,59 @@ CK_DLL_MFUN(midi_capture_create) {
     p->events.clear(); p->tpq=static_cast<int>(tpq); p->bpm=bpm;
     RETURN->v_int=1;
 }
+namespace {
+bool appendCaptured(MidiCaptureState *p,double seconds,t_CKINT status,t_CKINT d1,t_CKINT d2) {
+    if(!p||!p->tpq||!std::isfinite(seconds)||seconds<0||
+       status<0x80||status>0xef||!midiByte(d1)||!midiByte(d2)||
+       p->events.size()>=1000000||
+       (!p->events.empty()&&seconds<p->events.back().seconds)) return false;
+    int type=static_cast<int>(status)&0xf0;
+    int length=(type==0xc0||type==0xd0)?2:3;
+    if(length==2&&d2!=0) return false;
+    double ticks=seconds*p->tpq*p->bpm/60.0;
+    if(!std::isfinite(ticks)||ticks>0x0fffffff) return false;
+    p->events.push_back({seconds,static_cast<int>(status),static_cast<int>(d1),
+        static_cast<int>(d2),length,static_cast<int>(std::llround(ticks))});
+    return true;
+}
+}
 CK_DLL_MFUN(midi_capture_append) {
     RETURN->v_int=0;
     try {
         auto *p=captureState(SELF,API);
         double seconds=GET_NEXT_FLOAT(ARGS);
         auto status=GET_NEXT_INT(ARGS),d1=GET_NEXT_INT(ARGS),d2=GET_NEXT_INT(ARGS);
-        if(!p||!p->tpq||!std::isfinite(seconds)||seconds<0||
-           status<0x80||status>0xef||!midiByte(d1)||!midiByte(d2)||
-           p->events.size()>=1000000||
-           (!p->events.empty()&&seconds<p->events.back().seconds)) return;
-        int type=static_cast<int>(status)&0xf0;
-        int length=(type==0xc0||type==0xd0)?2:3;
-        if(length==2&&d2!=0) return;
-        double ticks=seconds*p->tpq*p->bpm/60.0;
-        if(!std::isfinite(ticks)||ticks>0x0fffffff) return;
-        p->events.push_back({seconds,static_cast<int>(status),static_cast<int>(d1),
-            static_cast<int>(d2),length,static_cast<int>(std::llround(ticks))});
-        RETURN->v_int=1;
+        RETURN->v_int=appendCaptured(p,seconds,status,d1,d2);
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_capture_append_message) {
+    RETURN->v_int=0;
+    try {
+        auto *p=captureState(SELF,API);
+        double seconds=GET_NEXT_FLOAT(ARGS);
+        auto status=GET_NEXT_INT(ARGS),d1=GET_NEXT_INT(ARGS),d2=GET_NEXT_INT(ARGS);
+        // MidiIn exposes three integer fields even for two-byte messages.
+        if(status>=0xc0&&status<=0xdf) d2=0;
+        RETURN->v_int=appendCaptured(p,seconds,status,d1,d2);
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_capture_save) {
+    RETURN->v_int=0;
+    try {
+        auto *p=captureState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(!p||!p->tpq) return;
+        smf::MidiFile file;
+        file.setTicksPerQuarterNote(p->tpq);
+        file.addTempo(0,0,p->bpm);
+        for(const auto &e:p->events) {
+            std::vector<unsigned char> bytes{static_cast<unsigned char>(e.status),
+                static_cast<unsigned char>(e.data1)};
+            if(e.length==3) bytes.push_back(static_cast<unsigned char>(e.data2));
+            file.addEvent(0,e.tick,bytes);
+        }
+        // Events are already in absolute tick and arrival order. Do not sort
+        // simultaneous note-off/on or controller messages by message type.
+        RETURN->v_int=saveNew(file,path);
     } catch(...) {}
 }
 CK_DLL_MFUN(midi_capture_count) {
@@ -1016,6 +1051,13 @@ CK_DLL_QUERY(MidiFileIO) {
     QUERY->add_arg(QUERY,"int","status");
     QUERY->add_arg(QUERY,"int","data1");
     QUERY->add_arg(QUERY,"int","data2");
+    QUERY->add_mfun(QUERY,midi_capture_append_message,"int","appendMessage");
+    QUERY->add_arg(QUERY,"float","seconds");
+    QUERY->add_arg(QUERY,"int","data1");
+    QUERY->add_arg(QUERY,"int","data2");
+    QUERY->add_arg(QUERY,"int","data3");
+    QUERY->add_mfun(QUERY,midi_capture_save,"int","save");
+    QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,midi_capture_count,"int","count");
     QUERY->add_mfun(QUERY,midi_capture_seconds,"float","secondsAt");
     QUERY->add_arg(QUERY,"int","index");
