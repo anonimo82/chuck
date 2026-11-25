@@ -43,6 +43,7 @@ check(RasterIO.convert("input.png", "output.unknown") == 0, "unsupported output"
             cwd=tmp, capture_output=True, text=True, timeout=30)
         log = result.stdout + result.stderr
         print(log)
+        print(f"SMOKE_COUNTS {8} {log.count('PASS')} {log.count('FAIL')}", flush=True)
         if result.returncode or "FAIL" in log or log.count("PASS") != 8:
             raise SystemExit("RasterIO smoke test failed")
         header = (tmp / "output.bmp").read_bytes()[:16]

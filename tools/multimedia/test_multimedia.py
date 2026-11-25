@@ -13,6 +13,7 @@ def run(module, script, expected, directory):
     r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
     log = r.stdout + r.stderr
     print(module, log)
+    print(f"SMOKE_COUNTS {expected} {log.count('PASS')} {log.count('FAIL')}", flush=True)
     if r.returncode or "FAIL" in log or log.count("PASS") != expected:
         raise RuntimeError(module + " smoke test failed")
 

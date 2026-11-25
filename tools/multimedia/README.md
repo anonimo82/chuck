@@ -37,3 +37,7 @@ Use chuck --chugin-path:/absolute/path/to/chugins with your script. The install 
 ## Automated multimedia CI
 
 The separate Multimedia CI workflow runs on relevant pull requests, pushes to main and manual dispatch. Linux and macOS use the unified CMake build (all eight modules); Windows reuses build-and-test.ps1 with MSYS2 UCRT64 dependencies and a runner-native CMake. Each job uploads its build/test log even on failure. The checks are independent of the existing core workflows; a red job is not a successful validation. The optional graphical ChuGL bridge is not covered by these headless jobs. MIDI dependency is currently fetched from upstream HEAD; the checkout SHA is logged for diagnosis. Runner compatibility and first-run results remain to be verified.
+
+### Native smoke-test summary
+
+The Windows build-and-test script now invokes run_smoke_tests.py, which runs the existing raster, audio and multimedia Python suites and prints one MULTIMEDIA SUMMARY line with planned ChucK checks, observed PASS/FAIL tokens, missing checks within reported batches, unreported checks (batches that never returned counts), extra checks, completed suites and overall status. Planned counts are derived from the suites' existing expected values. Python fixture assertions, FFmpeg errors and other suite errors affect overall status but are not counted as ChucK checks. A compilation/probe failure before the suites start produces no test summary. The full transcript remains available for diagnosis. No additional manual test invocation is required.
