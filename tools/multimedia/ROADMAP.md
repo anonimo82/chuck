@@ -221,3 +221,7 @@ User-reported Windows Local: expected=407, PASS=407, FAIL=0, missing=0, unreport
 ## Validation checkpoint after #205 and maintenance fix #206
 
 User-reported Windows Local: expected=466, PASS=466, FAIL=0, missing=0, unreported=0, extra=0, suites=1/1, status=PASS. All five waveform/MIDI transport groups validated after the reserved identifier correction in #206. Cumulative validated checks 6503; last Full baseline remains 5345 after #187. Transmission cycle 2 complete (10/25 functional PRs), global functional cadence 15/20, local cadence resets to 0/5. Clear validated local groups; retain global manifest unchanged. Matrix coverage retained at 88.89% pending explicit matrix reassessment of media-specific transmission and remaining limitations. Actual cross-host operation, device clock synchronization, automatic playback scheduling, system MIDI/SysEx, authentication, encryption and hard-realtime behavior remain uncertified or unimplemented. Next functional cycle: raster, vector and 3D model transmission/reception. No workflow changes.
+
+## Transmission cycle 3 — Raster, vector and 3D models
+
+#208: CKRA v1 lossless RGBA8 raster packet codec, bounded dimensions, metadata validation, RasterImage array interoperability and bidirectional negotiated session tests. 93 new checks, global 6596, local 93, cadence 16/20. Native validation pending. Larger images require fragmentation/compression; sequential images and display scheduling remain pending. No workflow changes.

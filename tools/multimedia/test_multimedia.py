@@ -9828,8 +9828,113 @@ server.close(); client.close();
 """,92,p)
 
 
+def transport_raster():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("transport", """
+@import "RasterIO";
+RasterImage source;
+RasterImage target;
+[255,0,0,255,0,255,0,128,0,0,255,0,12,34,56,78] @=> int pixels[];
+int exported[16];
+int recovered[16];
+int packet[64];
+int metadata[5];
+check(source.importPixels(2,2,pixels));
+check(source.exportPixels(exported));
+check(MediaRaster.packetSize(2,2)==64);
+check(MediaRaster.packetSize(1,1)==52);
+check(MediaRaster.packetSize(0,2)==0);
+check(MediaRaster.packetSize(-1,2)==0);
+check(MediaRaster.packetSize(2,0)==0);
+check(MediaRaster.packetSize(262140,1)==1048608);
+check(MediaRaster.packetSize(262141,1)==0);
+check(MediaRaster.packetSize(512,512)==0);
+check(MediaRaster.encode(9,12,34567,2,2,exported,packet));
+check(packet[5]==1);
+check(packet[32]==67 && packet[33]==75 && packet[34]==82 && packet[35]==65);
+check(packet[36]==1 && packet[37]==1 && packet[38]==0 && packet[39]==0);
+check(packet[43]==2 && packet[47]==2);
+check(MediaRaster.inspect(packet,metadata));
+check(metadata[0]==9 && metadata[1]==12 && metadata[2]==34567);
+check(metadata[3]==2 && metadata[4]==2);
+check(MediaRaster.decode(packet,recovered));
+for(0=>int i;i<16;i++) check(recovered[i]==pixels[i]);
+check(target.importPixels(metadata[3],metadata[4],recovered));
+check(target.width()==2 && target.height()==2);
+check(target.pixelAt(1,0,3)==128);
+check(target.pixelAt(0,1,2)==255 && target.pixelAt(0,1,3)==0);
+check(!MediaRaster.encode(0,12,34567,2,2,pixels,packet));
+check(!MediaRaster.encode(9,-1,34567,2,2,pixels,packet));
+check(!MediaRaster.encode(9,12,-1,2,2,pixels,packet));
+check(!MediaRaster.encode(9,12,34567,2,3,pixels,packet));
+check(!MediaRaster.encode(9,12,34567,2,2,pixels,[0]));
+check(!MediaRaster.encode(9,12,34567,2,2,[0],packet));
+256=>pixels[0];
+check(!MediaRaster.encode(9,12,34567,2,2,pixels,packet));
+255=>pixels[0];
+check(!MediaRaster.inspect(packet,[0]));
+check(!MediaRaster.decode(packet,[0]));
+check(MediaRaster.inspect(packet,metadata));
+check(metadata[1]==12);
+0=>packet[48];
+check(!MediaRaster.inspect(packet,metadata));
+check(!MediaRaster.decode(packet,recovered));
+check(recovered[0]==255 && metadata[0]==9);
+255=>packet[48];
+int raw[32];
+int genericMeta[4];
+int malformed[64];
+check(MediaTransport.decode(packet,genericMeta,raw));
+check(MediaTransport.encode(2,9,12,34567,raw,malformed));
+check(!MediaRaster.inspect(malformed,metadata));
+2=>raw[4];
+check(MediaTransport.encode(1,9,12,34567,raw,malformed));
+check(!MediaRaster.decode(malformed,recovered));
+1=>raw[4];
+1=>raw[6];
+check(MediaTransport.encode(1,9,12,34567,raw,malformed));
+check(!MediaRaster.inspect(malformed,metadata));
+0=>raw[6];
+3=>raw[15];
+check(MediaTransport.encode(1,9,12,34567,raw,malformed));
+check(!MediaRaster.inspect(malformed,metadata));
+MediaSession server;
+MediaSession client;
+check(server.configure(1,32));
+check(client.configure(1,32));
+check(server.listen(0));
+check(client.connect(server.port()));
+0=>int accepted;
+for(0=>int i;i<100000 && !accepted;i++) server.accept()=>accepted;
+check(accepted==1);
+for(0=>int i;i<100000 && (!server.connected()||!client.connected());i++) {
+    server.poll(); client.poll();
+}
+check(server.connected() && client.connected());
+check(client.sendPacket(packet));
+for(0=>int i;i<100000 && !server.packetSize();i++) {
+    client.poll(); server.poll();
+}
+check(server.packetSize()==64);
+int got[64];
+check(server.receivePacket(got));
+check(MediaRaster.inspect(got,metadata));
+check(MediaRaster.decode(got,recovered));
+for(0=>int i;i<16;i++) check(recovered[i]==pixels[i]);
+check(server.sendPacket(got));
+for(0=>int i;i<100000 && !client.packetSize();i++) {
+    server.poll(); client.poll();
+}
+check(client.receivePacket(got));
+check(MediaRaster.decode(got,recovered));
+check(recovered[7]==128 && recovered[11]==0);
+server.close(); client.close();
+""",93,p)
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing, "transport-loopback": transport_loopback, "transport-session": transport_session, "transport-endpoints": transport_endpoints, "transport-consolidation": transport_consolidation, "transport-pcm": transport_pcm, "transport-pcm-stream": transport_pcm_stream, "transport-pcm-buffer": transport_pcm_buffer, "transport-midi": transport_midi, "transport-audio-midi": transport_audio_midi}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing, "transport-loopback": transport_loopback, "transport-session": transport_session, "transport-endpoints": transport_endpoints, "transport-consolidation": transport_consolidation, "transport-pcm": transport_pcm, "transport-pcm-stream": transport_pcm_stream, "transport-pcm-buffer": transport_pcm_buffer, "transport-midi": transport_midi, "transport-audio-midi": transport_audio_midi, "transport-raster": transport_raster}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")

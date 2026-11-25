@@ -1,6 +1,7 @@
 #include "MediaSession.h"
 #include "MediaPCMBuffer.h"
 #include "MediaAudioMidi.h"
+#include "MediaRaster.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -539,6 +540,53 @@ CK_DLL_MFUN(av_consumedFrames) { auto *p=avState(SELF,API); RETURN->v_int=p?p->c
 CK_DLL_MFUN(av_error) { auto *p=avState(SELF,API); RETURN->v_int=p?p->error():0; }
 CK_DLL_MFUN(av_audioError) { auto *p=avState(SELF,API); RETURN->v_int=p?p->audioError():0; }
 CK_DLL_MFUN(av_midiDue) { auto *p=avState(SELF,API); RETURN->v_int=p?p->midiDue():0; }
+CK_DLL_SFUN(ra_size) {
+    auto width=GET_NEXT_INT(ARGS),height=GET_NEXT_INT(ARGS);
+    RETURN->v_int=mediawire::rasterPacketSize(width,height);
+}
+CK_DLL_SFUN(ra_encode) {
+    RETURN->v_int=0;
+    try {
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS);
+        auto width=GET_NEXT_INT(ARGS),height=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto n=mediawire::rasterPacketSize(width,height);
+        if(!n||stream<1||static_cast<uint64_t>(stream)>=0xffffffffu||seq<0||
+           static_cast<uint64_t>(seq)>0xffffffffu||ts<0||!exact(dst,API,n)||
+           !exact(src,API,n-mediawire::headerSize-mediawire::rasterHeader)) return;
+        mediawire::Bytes rgba,wire;
+        if(!read(src,API,mediawire::maxPayload,rgba)) return;
+        if(mediawire::encodeRaster({1,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},
+           {static_cast<uint32_t>(width),static_cast<uint32_t>(height)},rgba,wire)) {
+            write(dst,API,wire); RETURN->v_int=1;
+        }
+    } catch(...) {}
+}
+CK_DLL_SFUN(ra_inspect) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire,rgba; mediawire::Header h; mediawire::RasterInfo info;
+        if(!exact(dst,API,5)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeRaster(wire,h,info,rgba)) return;
+        const uint64_t fields[]={h.stream,h.sequence,h.timestamp,info.width,info.height};
+        for(size_t i=0;i<5;++i) API->object->array_int_set_idx(dst,i,fields[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_SFUN(ra_decode) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire,rgba; mediawire::Header h; mediawire::RasterInfo info;
+        if(!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeRaster(wire,h,info,rgba)||!exact(dst,API,rgba.size())) return;
+        write(dst,API,rgba); RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -797,5 +845,24 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_mfun(QUERY,av_error,"int","error");
     QUERY->add_mfun(QUERY,av_audioError,"int","audioError");
     QUERY->add_mfun(QUERY,av_midiDue,"int","midiDue");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaRaster","Object");
+    QUERY->add_sfun(QUERY,ra_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_sfun(QUERY,ra_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,ra_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,ra_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","pixels");
     return QUERY->end_class(QUERY);
 }
