@@ -131,3 +131,7 @@ TextFlow.loadTXT(path, TextStyle) imports lowercase .txt files as a single style
 ## TextDocument and TextFlow interoperability
 
 TextDocument.appendFlow(TextFlow) appends the complete source (including overflow) as one paragraph, with independent copies of the base style and inline runs. TextDocument.exportParagraphToFlow(index, TextFlow) replaces the destination source with an independent copy of the selected paragraph's inline content, preserves its frame chain, and invalidates layout. Paragraph layout, decorations and list markers are not transferred: those are distinct from frame geometry. Both operations return 1 on success or 0 on invalid arguments or document limits, without changing the destination on failure. No implicit layout or native format changes. Native validation pending.
+
+## TextFlow layout storage optimization
+
+The derived frame plan stores half-open source byte ranges and logical clipping heights rather than duplicated fragment strings. frameStartByte and frameEndByte now perform constant-time lookup; frameText constructs the requested substring on demand. Remainder layout construction avoids copying discarded runs. Frame geometry, rendering, invalidation, public API and native formats are unchanged. The new regression group covers empty slices, UTF-8 boundaries, repeated layouts, source and frame mutation and the 256-frame limit. Native validation and performance measurements pending.

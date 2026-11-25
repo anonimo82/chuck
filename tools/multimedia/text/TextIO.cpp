@@ -113,7 +113,8 @@ struct PageStyle {
     t_CKINT numbering=0,firstNumber=1,splitParagraphs=0,splitTables=0;
 };
 struct FrameStyle { t_CKINT x=0,y=0,width=320,height=240,page=0; Container box; };
-struct FrameFlow { std::vector<FrameStyle> frames; Paragraph source; std::vector<std::string> fragments; std::vector<int> lineBottoms; size_t consumed=0; bool planned=false; };
+struct FlowSlice { size_t start=0,end=0; int bottom=0; };
+struct FrameFlow { std::vector<FrameStyle> frames; Paragraph source; std::vector<FlowSlice> slices; size_t consumed=0; bool planned=false; };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; std::vector<NodeBlock> nodes; size_t nextOrder=0; };
 t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0,frameOffset=0,flowOffset=0;
 FrameFlow *flowState(Chuck_Object *self,CK_DL_API API) {
@@ -912,7 +913,13 @@ CK_DLL_MFUN(text_flow_clear_frames) {
 }
 CK_DLL_MFUN(text_flow_frame_text) {
     auto *p=flowState(SELF,API); auto i=GET_NEXT_INT(ARGS);
-    RETURN->v_string=API->object->create_string(VM,p&&p->planned&&i>=0&&static_cast<uint64_t>(i)<p->fragments.size()?p->fragments[i].c_str():"",FALSE);
+    std::string out;
+    try {
+        if(p&&p->planned&&i>=0&&static_cast<uint64_t>(i)<p->slices.size()) {
+            const auto &s=p->slices[i]; out=p->source.text.substr(s.start,s.end-s.start);
+        }
+    } catch(...) { out.clear(); }
+    RETURN->v_string=API->object->create_string(VM,out.c_str(),FALSE);
 }
 CK_DLL_MFUN(text_flow_source_text) {
     auto *p=flowState(SELF,API);
@@ -921,18 +928,14 @@ CK_DLL_MFUN(text_flow_source_text) {
 CK_DLL_MFUN(text_flow_frame_start) {
     auto *p=flowState(SELF,API); auto i=GET_NEXT_INT(ARGS);
     RETURN->v_int=-1;
-    if(!p||!p->planned||i<0||static_cast<uint64_t>(i)>=p->fragments.size()) return;
-    size_t offset=0;
-    for(size_t j=0;j<static_cast<size_t>(i);++j) offset+=p->fragments[j].size();
-    RETURN->v_int=static_cast<t_CKINT>(offset);
+    if(!p||!p->planned||i<0||static_cast<uint64_t>(i)>=p->slices.size()) return;
+    RETURN->v_int=static_cast<t_CKINT>(p->slices[i].start);
 }
 CK_DLL_MFUN(text_flow_frame_end) {
     auto *p=flowState(SELF,API); auto i=GET_NEXT_INT(ARGS);
     RETURN->v_int=-1;
-    if(!p||!p->planned||i<0||static_cast<uint64_t>(i)>=p->fragments.size()) return;
-    size_t offset=0;
-    for(size_t j=0;j<=static_cast<size_t>(i);++j) offset+=p->fragments[j].size();
-    RETURN->v_int=static_cast<t_CKINT>(offset);
+    if(!p||!p->planned||i<0||static_cast<uint64_t>(i)>=p->slices.size()) return;
+    RETURN->v_int=static_cast<t_CKINT>(p->slices[i].end);
 }
 CK_DLL_MFUN(text_flow_ready) {
     auto *p=flowState(SELF,API); RETURN->v_int=p&&p->planned;
@@ -1444,10 +1447,11 @@ bool paragraphDimensions(cairo_t *cr,const Paragraph &p,int width,int &w,int &h)
 }
 
 Paragraph flowRemainder(const Paragraph &source,size_t consumed) {
-    Paragraph rest=source;
+    Paragraph rest;
+    rest.style=source.style;
+    rest.layout=source.layout; rest.box=source.box; rest.list=source.list;
     rest.text=source.text.substr(consumed);
     rest.baseBytes=consumed<source.baseBytes?source.baseBytes-consumed:0;
-    rest.runs.clear();
     size_t offset=source.baseBytes;
     for(const auto &run:source.runs) {
         size_t next=offset+run.text.size();
@@ -1461,8 +1465,8 @@ Paragraph flowRemainder(const Paragraph &source,size_t consumed) {
     return rest;
 }
 bool planFrameFlow(FrameFlow &flow) {
-    std::vector<std::string> fragments;
-    std::vector<int> bottoms;
+    std::vector<FlowSlice> slices;
+    slices.reserve(flow.frames.size());
     size_t consumed=0;
     std::unique_ptr<cairo_surface_t,decltype(&cairo_surface_destroy)> surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1),cairo_surface_destroy);
     if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return false;
@@ -1473,7 +1477,7 @@ bool planFrameFlow(FrameFlow &flow) {
         double dh=f.height-f.box.paddingTop-f.box.paddingBottom-2*f.box.borderWidth;
         if(dw<1||dh<1) return false;
         int w=static_cast<int>(std::floor(dw)),h=static_cast<int>(std::floor(dh));
-        if(consumed==flow.source.text.size()) { fragments.emplace_back(); bottoms.push_back(0); continue; }
+        if(consumed==flow.source.text.size()) { slices.push_back({consumed,consumed,0}); continue; }
         Paragraph rest=flowRemainder(flow.source,consumed);
         auto layout=makeLayout(cr.get(),rest,w);
         if(!layout) return false;
@@ -1489,9 +1493,9 @@ bool planFrameFlow(FrameFlow &flow) {
             if(!line||line->start_index<0||static_cast<size_t>(line->start_index)>rest.text.size()) return false;
             end=static_cast<size_t>(line->start_index);
         }
-        fragments.push_back(rest.text.substr(0,end)); bottoms.push_back(end?bottom:0); consumed+=end;
+        slices.push_back({consumed,consumed+end,end?bottom:0}); consumed+=end;
     }
-    flow.fragments.swap(fragments); flow.lineBottoms.swap(bottoms); flow.consumed=consumed; flow.planned=true; return true;
+    flow.slices.swap(slices); flow.consumed=consumed; flow.planned=true; return true;
 }
 
 bool tableGeometry(cairo_t *cr,const Table &t,int width,std::vector<int> &xs,std::vector<int> &heights,int &height) {
@@ -2002,10 +2006,9 @@ SurfacePtr renderFlowPage(const FrameFlow &flow,int w,int h,t_CKINT bg,t_CKINT p
     cairo_set_operator(ctx,CAIRO_OPERATOR_SOURCE);
     if(bg<0) cairo_set_source_rgba(ctx,0,0,0,0); else nodeColor(ctx,bg);
     cairo_paint(ctx); cairo_set_operator(ctx,CAIRO_OPERATOR_OVER);
-    size_t consumed=0;
     for(size_t i=0;i<flow.frames.size();++i) {
         const auto &f=flow.frames[i]; const auto &b=f.box;
-        size_t offset=consumed; consumed+=flow.fragments[i].size();
+        const auto &slice=flow.slices[i];
         if(f.page!=page||b.opacity==0) continue;
         cairo_save(ctx); cairo_rectangle(ctx,f.x,f.y,f.width,f.height); cairo_clip(ctx);
         if(b.opacity<1) cairo_push_group(ctx);
@@ -2015,14 +2018,14 @@ SurfacePtr renderFlowPage(const FrameFlow &flow,int w,int h,t_CKINT bg,t_CKINT p
             double half=b.borderWidth/2;
             cairo_rectangle(ctx,f.x+half,f.y+half,f.width-b.borderWidth,f.height-b.borderWidth); cairo_stroke(ctx);
         }
-        if(!flow.fragments[i].empty()) {
+        if(slice.start!=slice.end) {
             double tx=f.x+b.paddingLeft+b.borderWidth,ty=f.y+b.paddingTop+b.borderWidth;
             int iw=static_cast<int>(std::floor(f.width-b.paddingLeft-b.paddingRight-2*b.borderWidth));
-            auto rest=flowRemainder(flow.source,offset);
+            auto rest=flowRemainder(flow.source,slice.start);
             auto layout=makeLayout(ctx,rest,iw);
             if(!layout) return fail();
             cairo_save(ctx);
-            cairo_rectangle(ctx,tx,ty,iw,flow.lineBottoms[i]/static_cast<double>(PANGO_SCALE)); cairo_clip(ctx);
+            cairo_rectangle(ctx,tx,ty,iw,slice.bottom/static_cast<double>(PANGO_SCALE)); cairo_clip(ctx);
             cairo_set_source_rgb(ctx,0,0,0); cairo_move_to(ctx,tx,ty);
             pango_cairo_show_layout(ctx,layout.get()); cairo_restore(ctx);
         }
