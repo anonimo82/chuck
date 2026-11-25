@@ -7145,8 +7145,90 @@ check(image.exportPixels(16,16,pixels));
         assert float(root[0].get("width")) == 3
         assert root[1].get("transform") is None
 
+
+def vector_shape_style():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("vector", """
+VectorImage image;
+float paint[6];
+float wrong[5];
+check(!image.getShapeStyle(0,paint));
+check(image.create(16,16));
+check(image.addRect(4,4,8,8,16711680,1));
+check(image.addLine(1,1,3,1,2,255,0.5));
+check(image.getShapeStyle(0,paint));
+check(paint[0]==16711680 && paint[1]==1 && paint[2]==-1);
+check(paint[3]==1 && paint[4]==1 && paint[5]==1);
+check(image.getShapeStyle(1,paint));
+check(paint[0]==-1 && paint[2]==255 && paint[3]==0.5 && paint[4]==2);
+check(!image.getShapeStyle(0,wrong));
+check(!image.setShapeStyle(0,wrong));
+check(!image.setShapeFill(1,0,1));
+check(image.setShapeFill(0,65280,1));
+check(image.setShapeStroke(0,255,1,2));
+check(image.getShapeStyle(0,paint));
+check(paint[0]==65280 && paint[2]==255 && paint[4]==2);
+int pixels[1024];
+check(image.exportPixels(16,16,pixels));
+check(pixels[(8*16+8)*4+1]==255 && pixels[(8*16+8)*4+3]==255);
+check(pixels[(4*16+8)*4+2]==255 && pixels[(4*16+8)*4+3]==255);
+check(image.setShapeOpacity(0,0.5));
+check(image.exportPixels(16,16,pixels));
+check(pixels[(8*16+8)*4+1]==255);
+check(pixels[(8*16+8)*4+3]>=127 && pixels[(8*16+8)*4+3]<=128);
+check(image.setShapeFill(0,-1,1));
+check(image.exportPixels(16,16,pixels));
+check(pixels[(8*16+8)*4+3]==0);
+check(pixels[(4*16+8)*4+2]==255);
+check(image.setShapeStroke(0,-1,1,2));
+check(image.exportPixels(16,16,pixels));
+check(pixels[(4*16+8)*4+3]==0);
+check(!image.setShapeFill(0,16777216,1));
+check(!image.setShapeStroke(0,0,1,0));
+check(!image.setShapeOpacity(0,1.1));
+check(image.getShapeStyle(0,paint));
+check(paint[0]==-1 && paint[2]==-1 && paint[5]==0.5);
+[16711680.0,0.75,255.0,0.5,2.0,1.0] @=> float newPaint[];
+check(image.setShapeStyle(0,newPaint));
+check(image.getShapeStyle(0,paint));
+check(paint[0]==16711680 && paint[1]==0.75 && paint[2]==255 && paint[3]==0.5 && paint[4]==2 && paint[5]==1);
+0.5=>newPaint[0];
+check(!image.setShapeStyle(0,newPaint));
+check(image.getShapeStyle(0,paint));
+check(paint[0]==16711680);
+check(image.translateShape(0,1,0));
+check(image.setShapeOpacity(0,0.8));
+float matrix[6];
+check(image.getShapeTransform(0,matrix));
+check(matrix[4]==1);
+float geometry[4];
+check(image.getShapeGeometry(0,geometry));
+check(geometry[0]==4 && geometry[2]==8);
+check(image.setShapeStroke(1,65280,1,3));
+float lineValues[5];
+check(image.getShapeGeometry(1,lineValues));
+check(lineValues[4]==3);
+4.0=>lineValues[4];
+check(image.setShapeGeometry(1,lineValues));
+check(image.getShapeStyle(1,paint));
+check(paint[4]==4 && paint[2]==65280);
+check(image.save("styled.svg"));
+check(image.load("styled.svg"));
+check(!image.getShapeStyle(0,paint));
+check(image.exportPixels(16,16,pixels));
+""",57,p)
+        import xml.etree.ElementTree as ET
+        root = ET.parse(p / "styled.svg").getroot()
+        assert root[0].get("fill") == "#ff0000"
+        assert root[0].get("stroke") == "#0000ff"
+        assert float(root[0].get("opacity")) == 0.8
+        assert root[0].get("transform") == "matrix(1 0 0 1 1 0)"
+        assert root[1].get("fill") == "none"
+        assert float(root[1].get("stroke-width")) == 4
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
