@@ -34,9 +34,22 @@ struct ParagraphStyle {
     double marginTop=0;
     double marginBottom=0;
 };
-struct Paragraph { std::string text; Style style; size_t baseBytes=0; std::vector<Run> runs; ParagraphStyle layout; };
+struct Container {
+    double paddingLeft=0;
+    double paddingRight=0;
+    double paddingTop=0;
+    double paddingBottom=0;
+    double borderWidth=0;
+    t_CKINT borderColor=0;
+    t_CKINT backgroundColor=-1;
+    double opacity=1;
+};
+struct Paragraph { std::string text; Style style; size_t baseBytes=0; std::vector<Run> runs; ParagraphStyle layout; Container box; };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; };
-t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0;
+t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0;
+Container *containerState(Chuck_Object *self,CK_DL_API API) {
+    return self?reinterpret_cast<Container *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,containerOffset))):nullptr;
+}
 ParagraphStyle *paragraphStyleState(Chuck_Object *self,CK_DL_API API) {
     return self?reinterpret_cast<ParagraphStyle *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,paragraphStyleOffset))):nullptr;
 }
@@ -354,10 +367,86 @@ CK_DLL_MFUN(text_paragraph_marginBottom_set) {
     auto *p=paragraphStyleState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
     if(p&&std::isfinite(v)&&v>=0&&v<=2048) RETURN->v_float=p->marginBottom=v;
 }
+CK_DLL_CTOR(text_container_ctor) {
+    OBJ_MEMBER_UINT(SELF,containerOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,containerOffset)=reinterpret_cast<uintptr_t>(new Container); } catch(...) {}
+}
+CK_DLL_DTOR(text_container_dtor) { delete containerState(SELF,API); OBJ_MEMBER_UINT(SELF,containerOffset)=0; }
+CK_DLL_MFUN(text_container_inherit) {
+    RETURN->v_int=0;
+    auto *p=containerState(SELF,API); auto *s=containerState(GET_NEXT_OBJECT(ARGS),API);
+    if(p&&s) { *p=*s; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_doc_set_container) {
+    RETURN->v_int=0;
+    auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *p=containerState(GET_NEXT_OBJECT(ARGS),API);
+    if(indexOK(d,i)&&p) { d->paragraphs[i].box=*p; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_doc_get_container) {
+    RETURN->v_int=0;
+    auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *p=containerState(GET_NEXT_OBJECT(ARGS),API);
+    if(indexOK(d,i)&&p) { *p=d->paragraphs[i].box; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_container_paddingLeft_get) {
+    auto *p=containerState(SELF,API); RETURN->v_float=p?p->paddingLeft:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_container_paddingLeft_set) {
+    auto *p=containerState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=512) RETURN->v_float=p->paddingLeft=v;
+}
+CK_DLL_MFUN(text_container_paddingRight_get) {
+    auto *p=containerState(SELF,API); RETURN->v_float=p?p->paddingRight:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_container_paddingRight_set) {
+    auto *p=containerState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=512) RETURN->v_float=p->paddingRight=v;
+}
+CK_DLL_MFUN(text_container_paddingTop_get) {
+    auto *p=containerState(SELF,API); RETURN->v_float=p?p->paddingTop:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_container_paddingTop_set) {
+    auto *p=containerState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=512) RETURN->v_float=p->paddingTop=v;
+}
+CK_DLL_MFUN(text_container_paddingBottom_get) {
+    auto *p=containerState(SELF,API); RETURN->v_float=p?p->paddingBottom:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_container_paddingBottom_set) {
+    auto *p=containerState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=512) RETURN->v_float=p->paddingBottom=v;
+}
+CK_DLL_MFUN(text_container_borderWidth_get) {
+    auto *p=containerState(SELF,API); RETURN->v_float=p?p->borderWidth:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_container_borderWidth_set) {
+    auto *p=containerState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=128) RETURN->v_float=p->borderWidth=v;
+}
+CK_DLL_MFUN(text_container_borderColor_get) {
+    auto *p=containerState(SELF,API); RETURN->v_int=p?p->borderColor:-1;
+}
+CK_DLL_MFUN(text_container_borderColor_set) {
+    auto *p=containerState(SELF,API); t_CKINT v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=0&&v<=16777215) RETURN->v_int=p->borderColor=v;
+}
+CK_DLL_MFUN(text_container_backgroundColor_get) {
+    auto *p=containerState(SELF,API); RETURN->v_int=p?p->backgroundColor:-2;
+}
+CK_DLL_MFUN(text_container_backgroundColor_set) {
+    auto *p=containerState(SELF,API); t_CKINT v=GET_NEXT_INT(ARGS); RETURN->v_int=-2;
+    if(p&&v>=-1&&v<=16777215) RETURN->v_int=p->backgroundColor=v;
+}
+CK_DLL_MFUN(text_container_opacity_get) {
+    auto *p=containerState(SELF,API); RETURN->v_float=p?p->opacity:std::numeric_limits<double>::quiet_NaN();
+}
+CK_DLL_MFUN(text_container_opacity_set) {
+    auto *p=containerState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=1) RETURN->v_float=p->opacity=v;
+}
 namespace {
 using LayoutPtr=std::unique_ptr<PangoLayout,decltype(&g_object_unref)>;
 LayoutPtr makeLayout(cairo_t *cr,const Paragraph &p,int width) {
-    double inner=width-p.layout.marginLeft-p.layout.marginRight;
+    double inner=width-p.layout.marginLeft-p.layout.marginRight-p.box.paddingLeft-p.box.paddingRight-2*p.box.borderWidth;
     if(inner<1||std::abs(p.layout.indent)>=inner) return LayoutPtr(nullptr,g_object_unref);
         std::unique_ptr<PangoLayout,decltype(&g_object_unref)> layout(pango_cairo_create_layout(cr),g_object_unref);
         if(!layout) return LayoutPtr(nullptr,g_object_unref);
@@ -417,8 +506,8 @@ bool paragraphDimensions(cairo_t *cr,const Paragraph &p,int width,int &w,int &h)
     auto layout=makeLayout(cr,p,width);
     if(!layout) return false;
     int contentW=0,contentH=0; pango_layout_get_pixel_size(layout.get(),&contentW,&contentH);
-    double totalW=contentW+p.layout.marginLeft+p.layout.marginRight;
-    double totalH=contentH+p.layout.marginTop+p.layout.marginBottom;
+    double totalW=contentW+p.layout.marginLeft+p.layout.marginRight+p.box.paddingLeft+p.box.paddingRight+2*p.box.borderWidth;
+    double totalH=contentH+p.layout.marginTop+p.layout.marginBottom+p.box.paddingTop+p.box.paddingBottom+2*p.box.borderWidth;
     if(totalW<0||totalH<0||totalW>100000000||totalH>100000000) return false;
     w=static_cast<int>(std::ceil(totalW)); h=static_cast<int>(std::ceil(totalH)); return true;
 }
@@ -478,16 +567,46 @@ SurfacePtr renderDocument(const Document &d,int w,int h,t_CKINT bg) {
         if(!layout) return SurfacePtr(nullptr,cairo_surface_destroy);
         int contentW=0,contentH=0;
         pango_layout_get_pixel_size(layout.get(),&contentW,&contentH);
-        double totalW=contentW+p.layout.marginLeft+p.layout.marginRight;
-        double totalH=contentH+p.layout.marginTop+p.layout.marginBottom;
+        double totalW=contentW+p.layout.marginLeft+p.layout.marginRight+p.box.paddingLeft+p.box.paddingRight+2*p.box.borderWidth;
+        double totalH=contentH+p.layout.marginTop+p.layout.marginBottom+p.box.paddingTop+p.box.paddingBottom+2*p.box.borderWidth;
         if(totalW<0||totalH<0||totalW>100000000||totalH>100000000) return SurfacePtr(nullptr,cairo_surface_destroy);
-        if(y<h) {
+        if(y<h&&p.box.opacity==1&&p.box.borderWidth==0&&p.box.backgroundColor<0&&p.box.paddingLeft==0&&p.box.paddingRight==0&&p.box.paddingTop==0&&p.box.paddingBottom==0) {
             cairo_save(cr.get());
             cairo_rectangle(cr.get(),p.layout.marginLeft,0,w-p.layout.marginLeft-p.layout.marginRight,h);
             cairo_clip(cr.get());
             cairo_move_to(cr.get(),p.layout.marginLeft,y+p.layout.marginTop);
             cairo_set_source_rgb(cr.get(),0,0,0);
             pango_cairo_show_layout(cr.get(),layout.get());
+            cairo_restore(cr.get());
+        } else if(y<h&&p.box.opacity>0) {
+            const auto &box=p.box;
+            double x=p.layout.marginLeft, top=y+p.layout.marginTop;
+            double bw=w-p.layout.marginLeft-p.layout.marginRight;
+            double bh=contentH+box.paddingTop+box.paddingBottom+2*box.borderWidth;
+            auto color=[&](t_CKINT rgb) { cairo_set_source_rgb(cr.get(),((rgb>>16)&255)/255.0,((rgb>>8)&255)/255.0,(rgb&255)/255.0); };
+            cairo_save(cr.get());
+            cairo_rectangle(cr.get(),x,top,bw,bh);
+            cairo_clip(cr.get());
+            if(box.opacity<1) cairo_push_group(cr.get());
+            if(box.backgroundColor>=0) {
+                color(box.backgroundColor); cairo_paint(cr.get());
+            }
+            if(box.borderWidth>0) {
+                color(box.borderColor);
+                cairo_set_line_width(cr.get(),box.borderWidth);
+                double half=box.borderWidth/2;
+                cairo_rectangle(cr.get(),x+half,top+half,bw-box.borderWidth,bh-box.borderWidth);
+                cairo_stroke(cr.get());
+            }
+            cairo_save(cr.get());
+            double tx=x+box.borderWidth+box.paddingLeft,ty=top+box.borderWidth+box.paddingTop;
+            cairo_rectangle(cr.get(),tx,ty,bw-2*box.borderWidth-box.paddingLeft-box.paddingRight,contentH);
+            cairo_clip(cr.get());
+            cairo_move_to(cr.get(),tx,ty);
+            cairo_set_source_rgb(cr.get(),0,0,0);
+            pango_cairo_show_layout(cr.get(),layout.get());
+            cairo_restore(cr.get());
+            if(box.opacity<1) { cairo_pop_group_to_source(cr.get()); cairo_paint_with_alpha(cr.get(),box.opacity); }
             cairo_restore(cr.get());
         }
         y+=static_cast<int64_t>(std::ceil(totalH));
@@ -637,6 +756,37 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_paragraph_style_inherit,"int","inherit");
     QUERY->add_arg(QUERY,"TextParagraphStyle","source");
     if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"TextContainer","Object");
+    containerOffset=QUERY->add_mvar(QUERY,"int","@textContainerNative",FALSE);
+    if(containerOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,text_container_ctor); QUERY->add_dtor(QUERY,text_container_dtor);
+    QUERY->add_mfun(QUERY,text_container_paddingLeft_get,"float","paddingLeft");
+    QUERY->add_mfun(QUERY,text_container_paddingLeft_set,"float","paddingLeft");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_container_paddingRight_get,"float","paddingRight");
+    QUERY->add_mfun(QUERY,text_container_paddingRight_set,"float","paddingRight");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_container_paddingTop_get,"float","paddingTop");
+    QUERY->add_mfun(QUERY,text_container_paddingTop_set,"float","paddingTop");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_container_paddingBottom_get,"float","paddingBottom");
+    QUERY->add_mfun(QUERY,text_container_paddingBottom_set,"float","paddingBottom");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_container_borderWidth_get,"float","borderWidth");
+    QUERY->add_mfun(QUERY,text_container_borderWidth_set,"float","borderWidth");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_container_borderColor_get,"int","borderColor");
+    QUERY->add_mfun(QUERY,text_container_borderColor_set,"int","borderColor");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_container_backgroundColor_get,"int","backgroundColor");
+    QUERY->add_mfun(QUERY,text_container_backgroundColor_set,"int","backgroundColor");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_container_opacity_get,"float","opacity");
+    QUERY->add_mfun(QUERY,text_container_opacity_set,"float","opacity");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_container_inherit,"int","inherit");
+    QUERY->add_arg(QUERY,"TextContainer","source");
+    if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextDocument","Object");
     docOffset=QUERY->add_mvar(QUERY,"int","@textDocumentNative",FALSE);
     if(docOffset==CK_INVALID_OFFSET) return FALSE;
@@ -681,6 +831,12 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_doc_get_paragraph_layout,"int","getParagraphLayout");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"TextParagraphStyle","style");
+    QUERY->add_mfun(QUERY,text_doc_set_container,"int","setParagraphContainer");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextContainer","container");
+    QUERY->add_mfun(QUERY,text_doc_get_container,"int","getParagraphContainer");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextContainer","container");
     QUERY->add_mfun(QUERY,text_doc_measure_document,"int","measureDocument");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int[]","dimensions");
