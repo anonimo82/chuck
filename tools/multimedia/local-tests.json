@@ -1,6 +1,7 @@
 {
   "version": 1,
   "groups": [
-    "text-accessibility"
+    "text-accessibility",
+    "text-flow-txt"
   ]
 }
