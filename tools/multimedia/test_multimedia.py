@@ -3726,3 +3726,46 @@ check(clip.next()==1);
 check(clip.exportPixels(pixels));
 check(pixels[(7*16+8)*4]==18 && pixels[(7*16+8)*4+3]==255);
 """,15,p)
+
+    run("video", """
+@import "AudioIO";
+VideoAudio source;
+AudioBuffer audio;
+float block[4000];
+float stats[4];
+float bad[3];
+check(!source.readChannel(0,0,block));
+check(!source.analyze(0,0,1,stats));
+check(source.load("avwriter.mkv",0));
+check(source.readChannel(0,0,block));
+check(block[0]==0.25 && block[3999]==0.25);
+check(source.readChannel(1,4000,block));
+check(block[0]==-0.25 && block[3999]==-0.25);
+check(source.readChannel(-1,0,block));
+check(block[0]==-0.125 && block[3999]==-0.125);
+check(!source.readChannel(-2,0,block));
+check(!source.readChannel(2,0,block));
+check(!source.readChannel(0,-1,block));
+check(!source.readChannel(0,4001,block));
+check(block[0]==-0.125);
+check(source.analyze(0,0,8000,stats));
+check(stats[0]==0.125 && stats[1]==0.25 && stats[2]==0.1875);
+check(Math.fabs(stats[3]-Math.sqrt(0.0390625))<0.000001);
+check(source.analyze(1,0,4000,stats));
+check(stats[0]==-0.5 && stats[1]==-0.5 && stats[2]==-0.5 && stats[3]==0.5);
+check(source.analyze(-1,4000,4000,stats));
+check(stats[0]==-0.0625 && stats[1]==-0.0625 && stats[3]==0.0625);
+check(!source.analyze(2,0,1,stats));
+check(!source.analyze(0,-1,1,stats));
+check(!source.analyze(0,0,0,stats));
+check(!source.analyze(0,7999,2,stats));
+check(!source.analyze(0,0,1,bad));
+check(stats[0]==-0.0625 && stats[3]==0.0625);
+check(audio.importSamples(source.sampleRate(),1,block));
+check(audio.channels()==1 && audio.frames()==4000 && audio.sampleAt(0,0)==-0.125);
+check(audio.save("videoaudio-mono-analysis.wav"));
+check(source.frames()==8000 && source.channels()==2);
+source.clear();
+check(!source.analyze(0,0,1,stats));
+""",32,p)
+    assert writer_pcm("videoaudio-mono-analysis.wav")==struct.pack("<h",-4096)*4000
