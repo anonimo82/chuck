@@ -502,6 +502,107 @@ CK_DLL_MFUN(midi_sequence_remove_note) {
     } catch(...) {}
 }
 
+namespace {
+struct RenderNote { size_t begin,end; double hz,gain; };
+struct RenderTempo { int tick; double seconds,us; };
+bool prepareRender(MidiState *p,t_CKINT rate,std::vector<RenderNote> &notes,size_t &frames) {
+    if(!p||!p->file||rate<8000||rate>96000) return false;
+    auto &m=*p->file;
+    int ppq=m.getTicksPerQuarterNote();
+    if(ppq<1||ppq>32767||m.getTrackCount()>256) return false;
+    std::vector<RenderTempo> tempos{{0,0,500000}},map;
+    size_t total=0;
+    int endTick=0;
+    for(int t=0;t<m.getTrackCount();++t) {
+        auto &events=m[t];
+        total+=events.size();
+        if(total>1000000) return false;
+        for(int i=0;i<events.size();++i) {
+            auto &e=events[i];
+            if(!midiTick(e.tick)||(i&&e.tick<events[i-1].tick)) return false;
+            endTick=std::max(endTick,e.tick);
+            if(e.size()>=2&&e[0]==0xff&&e[1]==0x51) {
+                if(e.size()!=6||e[2]!=3) return false;
+                unsigned us=(unsigned(e[3])<<16)|(unsigned(e[4])<<8)|unsigned(e[5]);
+                if(!us) return false;
+                tempos.push_back({e.tick,0,double(us)});
+            }
+        }
+    }
+    std::stable_sort(tempos.begin(),tempos.end(),[](const RenderTempo &a,const RenderTempo &b){return a.tick<b.tick;});
+    for(auto v:tempos) {
+        if(!map.empty()&&map.back().tick==v.tick) map.back().us=v.us;
+        else {
+            if(!map.empty()) {
+                auto &prev=map.back();
+                v.seconds=prev.seconds+(v.tick-prev.tick)*prev.us/(1000000.0*ppq);
+            }
+            map.push_back(v);
+        }
+    }
+    auto at=[&](int tick)->double {
+        auto it=std::upper_bound(map.begin(),map.end(),tick,[](int v,const RenderTempo &t){return v<t.tick;});
+        --it;
+        return (it->seconds+(tick-it->tick)*it->us/(1000000.0*ppq))*rate;
+    };
+    double length=at(endTick);
+    if(!std::isfinite(length)||length<0.5||length>33554432) return false;
+    frames=static_cast<size_t>(std::llround(length));
+    uint64_t work=0;
+    for(int t=0;t<m.getTrackCount();++t) {
+        std::vector<NotePair> pairs;
+        if(!notePairs(m,t,pairs)) return false;
+        for(const auto &pair:pairs) {
+            auto &on=m[t][pair.on]; auto &off=m[t][pair.off];
+            int pitch=int(on[1])+p->transpose;
+            if(pitch<0||pitch>127||(on[0]&15)==9) return false;
+            double hz=440.0*std::pow(2.0,(pitch-69)/12.0);
+            if(hz>=rate/2.0) return false;
+            auto begin=static_cast<size_t>(std::llround(at(on.tick)));
+            auto end=static_cast<size_t>(std::llround(at(off.tick)));
+            if(end<=begin||end>frames) return false;
+            work+=end-begin;
+            if(work>100000000) return false;
+            double gain=std::max(1L,std::min(127L,std::lround(on[2]*p->velocity)))/127.0;
+            notes.push_back({begin,end,hz,gain});
+        }
+    }
+    return true;
+}
+}
+CK_DLL_MFUN(midi_sequence_render_frames) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=midiState(SELF,API); auto rate=GET_NEXT_INT(ARGS);
+        std::vector<RenderNote> notes; size_t frames=0;
+        if(prepareRender(p,rate,notes,frames)) RETURN->v_int=frames;
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_render_samples) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API); auto rate=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        std::vector<RenderNote> notes; size_t frames=0;
+        if(!a||!prepareRender(p,rate,notes,frames)||
+           API->object->array_float_size(a)!=static_cast<t_CKINT>(frames)) return;
+        std::vector<double> pcm(frames,0);
+        constexpr double tau=6.28318530717958647692;
+        for(const auto &note:notes) {
+            size_t count=note.end-note.begin;
+            size_t ramp=std::min<size_t>(rate/200,count/2);
+            double step=tau*note.hz/rate;
+            for(size_t i=0;i<count;++i) {
+                double env=1;
+                if(ramp) env=std::min(1.0,double(std::min(i,count-1-i))/ramp);
+                pcm[note.begin+i]+=std::sin(step*i)*env*note.gain*0.25;
+            }
+        }
+        for(size_t i=0;i<frames;++i)
+            API->object->array_float_set_idx(a,i,std::clamp(pcm[i],-1.0,1.0));
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(MidiFileIO) {
     QUERY->setname(QUERY, "MidiFileIO");
     QUERY->begin_class(QUERY, "MidiFileIO", "Object");
@@ -612,5 +713,10 @@ CK_DLL_QUERY(MidiFileIO) {
     QUERY->add_mfun(QUERY,midi_sequence_remove_note,"int","removeNote");
     QUERY->add_arg(QUERY,"int","track");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,midi_sequence_render_frames,"int","renderFrames");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_mfun(QUERY,midi_sequence_render_samples,"int","renderSamples");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"float[]","samples");
     return QUERY->end_class(QUERY);
 }
