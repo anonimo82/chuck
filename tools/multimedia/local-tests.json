@@ -1,4 +1,7 @@
 {
   "version": 1,
-  "groups": []
+  "groups": [
+    "text-page-breaks",
+    "text-recent"
+  ]
 }

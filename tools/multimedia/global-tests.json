@@ -5,6 +5,7 @@
     "audio",
     "legacy",
     "text-core",
-    "text-recent"
+    "text-recent",
+    "text-page-breaks"
   ]
 }

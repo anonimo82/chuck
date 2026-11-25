@@ -5645,8 +5645,67 @@ check(doc.savePDF("text-pdf-rich.pdf",page));
     assert not (p / "text-pdf-wrong.svg").exists()
     assert not (p / "text-pdf-oversize.pdf").exists()
 
+
+def text_page_breaks():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextDocument doc;
+TextPage page;
+TextStyle style;
+TextTable table;
+TextNode leaf;
+check(page.width(240)==240);
+check(page.height(240)==240);
+check(page.breakCount()==0);
+check(page.breakAt(0)==-1);
+check(!page.addBreak(0));
+check(!page.addBreak(-1));
+check(!page.addBreak(4608));
+check(doc.addParagraph("First",style));
+check(table.create(1,1));
+check(table.setCell(0,0,"Table",style));
+check(doc.appendTable(table));
+check(leaf.setParagraph("Node",style));
+check(doc.appendNode(leaf));
+check(doc.addParagraph("Last",style));
+check(doc.pageCount(page)==1);
+check(page.addBreak(3));
+check(page.addBreak(1));
+check(!page.addBreak(1));
+check(page.breakCount()==2);
+check(page.breakAt(0)==1 && page.breakAt(1)==3);
+check(page.breakAt(-1)==-1 && page.breakAt(2)==-1);
+check(doc.pageCount(page)==3);
+check(doc.savePDF("explicit.pdf",page));
+check(doc.savePagePNG("explicit-page.png",page,2));
+check(!doc.savePagePNG("explicit-bad.png",page,3));
+check(!page.removeBreak(2));
+check(page.removeBreak(1));
+check(doc.pageCount(page)==2);
+check(page.addBreak(4));
+check(doc.pageCount(page)==-1);
+check(!doc.savePDF("invalid-break.pdf",page));
+check(page.removeBreak(4));
+check(doc.pageCount(page)==2);
+page.clearBreaks();
+check(page.breakCount()==0);
+check(doc.pageCount(page)==1);
+check(doc.paragraphCount()==2 && doc.tableCount()==1 && doc.nodeCount()==1);
+doc.clear();
+check(page.addBreak(1));
+check(doc.pageCount(page)==-1);
+page.clearBreaks();
+check(doc.pageCount(page)==1);
+""",39,p)
+        assert (p / "explicit.pdf").read_bytes().startswith(b"%PDF-")
+        assert (p / "explicit-page.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert not (p / "explicit-bad.png").exists()
+        assert not (p / "invalid-break.pdf").exists()
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
