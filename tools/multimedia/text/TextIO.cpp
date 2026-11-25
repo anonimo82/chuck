@@ -1833,6 +1833,120 @@ CK_DLL_MFUN(text_doc_load_native) {
         *d=std::move(next); RETURN->v_int=1;
     } catch(...) {}
 }
+
+namespace {
+constexpr size_t txtLimit=8*1024*1024;
+bool txtPath(const std::string &p) {
+    return p.size()>=4&&p.substr(p.size()-4)==".txt"&&p.find('\0')==std::string::npos;
+}
+std::string plainParagraph(const Paragraph &p) {
+    return p.list.mode?listLabel(p.list)+" "+p.text:p.text;
+}
+std::string plainNode(const Node &n) {
+    if(n.kind==1) return plainParagraph(n.paragraph);
+    std::string out;
+    for(size_t i=0;i<n.children.size();++i) {
+        if(i) out+=((n.kind==3||n.kind==4)&&i%static_cast<size_t>(n.cols)!=0)?"\t":"\n";
+        if(n.kind==5) {
+            auto marker=n.paragraph.list;
+            if(marker.mode==2) marker.number+=static_cast<t_CKINT>(i);
+            out+=listLabel(marker)+" ";
+        }
+        out+=plainNode(n.children[i]);
+    }
+    return out;
+}
+std::string plainTable(const Table &t) {
+    std::string out;
+    for(size_t i=0;i<t.cells.size();++i) {
+        if(i) out+=i%static_cast<size_t>(t.cols)?"\t":"\n";
+        out+=plainParagraph(t.cells[i]);
+    }
+    return out;
+}
+bool plainDocument(const Document &d,std::string &out) {
+    bool first=true;
+    auto add=[&](const std::string &s) {
+        if(!first) out+='\n';
+        first=false;
+        if(out.size()>txtLimit||s.size()>txtLimit-out.size()) return false;
+        out+=s; return true;
+    };
+    struct Entry { size_t after,order,index; bool node; };
+    std::vector<Entry> entries;
+    for(size_t i=0;i<d.tables.size();++i) entries.push_back({d.tables[i].after,d.tables[i].order,i,false});
+    for(size_t i=0;i<d.nodes.size();++i) entries.push_back({d.nodes[i].after,d.nodes[i].order,i,true});
+    std::sort(entries.begin(),entries.end(),[](const Entry &a,const Entry &b) {
+        return a.after<b.after||(a.after==b.after&&a.order<b.order);
+    });
+    size_t k=0;
+    for(size_t i=0;i<=d.paragraphs.size();++i) {
+        while(k<entries.size()&&entries[k].after==i) {
+            const auto &e=entries[k++];
+            if(!add(e.node?plainNode(d.nodes[e.index].node):plainTable(d.tables[e.index].table))) return false;
+        }
+        if(i<d.paragraphs.size()&&!add(plainParagraph(d.paragraphs[i]))) return false;
+    }
+    return k==entries.size();
+}
+}
+CK_DLL_MFUN(text_doc_save_txt) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(!d||!txtPath(path)) return;
+        std::string out; if(!plainDocument(*d,out)) return;
+        // Canonical LF, including line endings embedded in paragraph text.
+        std::string normalized; normalized.reserve(out.size());
+        for(size_t i=0;i<out.size();++i) {
+            if(out[i]=='\r') { normalized+='\n'; if(i+1<out.size()&&out[i+1]=='\n') ++i; }
+            else normalized+=out[i];
+        }
+        FILE *f=mediaio::openNew(path.c_str()); if(!f) return;
+        bool ok=std::fwrite(normalized.data(),1,normalized.size(),f)==normalized.size();
+        if(std::fclose(f)!=0) ok=false;
+        if(!ok) { std::remove(path.c_str()); return; }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_load_txt) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(!d||!txtPath(path)) return;
+        std::unique_ptr<FILE,decltype(&std::fclose)> f(std::fopen(path.c_str(),"rb"),std::fclose);
+        if(!f) return;
+        std::string data; char chunk[16384];
+        for(;;) {
+            size_t n=std::fread(chunk,1,sizeof(chunk),f.get());
+            if(n>txtLimit-data.size()) return;
+            data.append(chunk,n);
+            if(n<sizeof(chunk)) { if(std::ferror(f.get())||!std::feof(f.get())) return; break; }
+        }
+        if(data.compare(0,3,"\xef\xbb\xbf")==0) data.erase(0,3);
+        if(!validText(data,txtLimit)) return;
+        Document next;
+        auto add=[&](size_t start,size_t end) {
+            size_t n=end-start;
+            if(n>65536||next.paragraphs.size()>=4096||n>1048576-next.bytes) return false;
+            Paragraph p; p.text=data.substr(start,n); p.baseBytes=n;
+            next.paragraphs.push_back(std::move(p)); next.bytes+=n; return true;
+        };
+        if(!data.empty()) {
+            size_t start=0;
+            for(size_t i=0;i<data.size();++i) {
+                if(data[i]=='\r'||data[i]=='\n') {
+                    if(!add(start,i)) return;
+                    if(data[i]=='\r'&&i+1<data.size()&&data[i+1]=='\n') ++i;
+                    start=i+1;
+                }
+            }
+            if(!add(start,data.size())) return;
+        }
+        *d=std::move(next); RETURN->v_int=1;
+    } catch(...) {}
+}
+
 CK_DLL_QUERY(TextIO) {
     QUERY->setname(QUERY,"TextIO");
     QUERY->begin_class(QUERY,"TextIO","Object");
@@ -2258,6 +2372,10 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"TextNode","destination");
     QUERY->add_mfun(QUERY,text_doc_remove_node,"int","removeNode");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_doc_load_txt,"int","loadTXT");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,text_doc_save_txt,"int","saveTXT");
+    QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,text_doc_load_native,"int","loadNative");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,text_doc_save_native,"int","saveNative");

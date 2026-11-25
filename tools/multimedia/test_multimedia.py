@@ -5449,3 +5449,72 @@ check(doc.saveNative("native-empty-roundtrip.cktxt"));
     assert (p / "native-roundtrip.cktxt").read_bytes() == native_good
     assert (p / "native-after-error.cktxt").read_bytes() == native_good
     assert (p / "native-empty-roundtrip.cktxt").read_bytes() == (p / "native-empty.cktxt").read_bytes()
+
+    # TXT import/export: exact UTF-8 bytes and transactional failures.
+    (p / "plain-input.txt").write_bytes(b"\xef\xbb\xbf" + "café\r\n\rsecond\n".encode("utf-8"))
+    (p / "plain-empty.txt").write_bytes(b"")
+    (p / "plain-invalid.txt").write_bytes(b"\xff")
+    (p / "plain-nul.txt").write_bytes(b"a\x00b")
+    (p / "plain-long.txt").write_bytes(b"a" * 65537)
+    (p / "plain-lines.txt").write_bytes(b"\n" * 4096)
+    (p / "plain-budget.txt").write_bytes((b"a" * 65536 + b"\n") * 17)
+    run("text", """
+TextDocument doc;
+TextStyle style;
+TextTable table;
+TextGrid grid;
+TextNode root;
+TextNode leaf;
+TextList marker;
+TextRun mixed;
+check(doc.addParagraph("original",style));
+check(!doc.loadTXT("plain-missing.txt"));
+check(!doc.loadTXT("native-full.cktxt"));
+check(!doc.loadTXT("plain-invalid.txt"));
+check(!doc.loadTXT("plain-nul.txt"));
+check(!doc.loadTXT("plain-long.txt"));
+check(!doc.loadTXT("plain-lines.txt"));
+check(!doc.loadTXT("plain-budget.txt"));
+check(doc.paragraphCount()==1 && doc.paragraphText(0)=="original");
+check(doc.loadTXT("plain-input.txt"));
+check(doc.paragraphCount()==4);
+check(doc.paragraphText(0)=="café");
+check(doc.paragraphText(1)=="");
+check(doc.paragraphText(2)=="second");
+check(doc.paragraphText(3)=="");
+check(doc.saveTXT("plain-output.txt"));
+check(!doc.saveTXT("plain-output.txt"));
+check(!doc.saveTXT("plain-wrong.cktxt"));
+check(doc.loadTXT("plain-empty.txt"));
+check(doc.paragraphCount()==0);
+check(doc.saveTXT("plain-empty-out.txt"));
+check(doc.addParagraph("first",style));
+check(mixed.set(" mixed",style));
+check(doc.appendRun(0,mixed));
+check(table.create(1,2));
+check(table.setCell(0,0,"left",style));
+check(table.setCell(0,1,"right",style));
+check(doc.appendTable(table));
+check(grid.create(1,2));
+check(grid.setPanel(0,0,"A",style));
+check(grid.setPanel(0,1,"B",style));
+check(doc.appendGrid(grid));
+check(marker.mode(2)==2);
+check(root.createList(marker));
+check(leaf.setParagraph("nested",style));
+check(root.appendChild(leaf));
+check(doc.appendNode(root));
+check(doc.addParagraph("last",style));
+check(doc.saveTXT("plain-complex.txt"));
+check(doc.loadTXT("plain-complex.txt"));
+check(doc.tableCount()==0 && doc.gridCount()==0 && doc.nodeCount()==0);
+check(doc.paragraphCount()==5);
+check(doc.paragraphText(0)=="first mixed");
+check(doc.paragraphText(3)=="1. nested");
+check(doc.paragraphText(4)=="last");
+check(doc.runCount(0)==0);
+""",46,p)
+    assert (p / "plain-output.txt").read_bytes() == "café\n\nsecond\n".encode("utf-8")
+    assert (p / "plain-empty-out.txt").read_bytes() == b""
+    assert (p / "plain-complex.txt").read_bytes() == b"first mixed\nleft\tright\nA\tB\n1. nested\nlast"
+    assert not (p / "plain-wrong.cktxt").exists()
