@@ -3436,6 +3436,33 @@ CK_DLL_MFUN(video_clip_pitch) {
         RETURN->v_int=lum<gate?-2:low+std::lround(lum*(high-low));
     } catch(...) {}
 }
+CK_DLL_MFUN(video_clip_export_quantized) {
+    RETURN->v_int=0;
+    try {
+        auto *p=clipState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),levels=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->reader||!a||w<1||h<1||w>4096||h>4096||w*h>4096||
+           levels<2||levels>256||API->object->array_int_size(a)!=w*h*4) return;
+        Frame image;
+        if(!image.p) return;
+        image.p->width=w; image.p->height=h; image.p->format=AV_PIX_FMT_BGR0;
+        if(av_frame_get_buffer(image.p,32)<0||!p->reader->render(image.p)) return;
+        for(int y=0;y<h;++y) {
+            auto *row=image.p->data[0]+static_cast<size_t>(y)*image.p->linesize[0];
+            for(int x=0;x<w;++x) {
+                size_t i=(static_cast<size_t>(y)*w+x)*4;
+                for(int c=0;c<3;++c) {
+                    auto v=std::lround(std::clamp(row[x*4+2-c]*p->controls[c]+255*p->controls[3],0.0,255.0));
+                    auto q=std::lround(v*(levels-1)/255.0);
+                    API->object->array_int_set_idx(a,i+c,std::lround(q*255.0/(levels-1)));
+                }
+                API->object->array_int_set_idx(a,i+3,255);
+            }
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -3681,6 +3708,11 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"int","highPitch");
     QUERY->add_arg(QUERY,"float","luminanceGate");
     QUERY->add_mfun(QUERY,video_clip_export_pixels,"int","exportPixels");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,video_clip_export_quantized,"int","exportQuantized");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","levels");
     QUERY->add_arg(QUERY,"int[]","pixels");
     QUERY->add_mfun(QUERY,video_clip_export_pixels_scaled,"int","exportPixels");
     QUERY->add_arg(QUERY,"int","width");
