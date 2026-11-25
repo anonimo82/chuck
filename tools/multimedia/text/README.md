@@ -127,3 +127,7 @@ TextDocument.plainText() returns a logical reading-order string with list labels
 ## TextFlow plain text interchange
 
 TextFlow.loadTXT(path, TextStyle) imports lowercase .txt files as a single styled source, retaining the frame chain, replacing mixed runs and invalidating layout on success. UTF-8 with optional initial BOM is accepted; CRLF and CR normalize to LF, preserving empty lines and final newlines. Invalid UTF-8, embedded NUL, missing files and normalized sources over 65536 bytes are rejected without modifying source or layout. Raw input is bounded to 131075 bytes. TextFlow.saveTXT(path) writes the complete source including overflow, without BOM, with LF normalization; it needs no current layout and never overwrites. TXT does not preserve styles or frame geometry; use .ckflow for lossless persistence. Native validation pending.
+
+## TextDocument and TextFlow interoperability
+
+TextDocument.appendFlow(TextFlow) appends the complete source (including overflow) as one paragraph, with independent copies of the base style and inline runs. TextDocument.exportParagraphToFlow(index, TextFlow) replaces the destination source with an independent copy of the selected paragraph's inline content, preserves its frame chain, and invalidates layout. Paragraph layout, decorations and list markers are not transferred: those are distinct from frame geometry. Both operations return 1 on success or 0 on invalid arguments or document limits, without changing the destination on failure. No implicit layout or native format changes. Native validation pending.
