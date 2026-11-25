@@ -166,6 +166,10 @@ User-reported Windows Local: expected=174, PASS=174, FAIL=0, missing=0, unreport
 
 #187: capture lifecycle inspection and explicit cleanup, bounded rolling PCM via caller-directed discard protecting unwritten AV samples, sample-grid continuity after complete discard, end-to-end recorded video/audio readback and opt-in physical device example. 71 new headless checks, global 5345, local 312, cadence 20/20. Full native validation required before graphics cycle or coverage promotion. Physical device checks remain separate. No workflow changes.
 
+## Full validation checkpoint after #187
+
+User-reported Windows Full: expected=5345, PASS=5345, FAIL=0, missing=0, unreported=0, extra=0, suites=3/3, status=PASS. Global baseline and cumulative validated checks 5345. Original 15-functional-PR capture roadmap implemented and software validated. Clear the five validated local groups; preserve the global manifest unchanged. Reset functional cadence to 0/20 and local cycle to 0/5. Promote video capture to O under the foundational matrix rubric; coverage 88.89% (47 O, 2 P, 5 M, 2 N/A). Real camera, desktop, MIDI and audio-device behavior and hardware clock drift remain separately unverified. Graphics capture extension remains planned and is next, before transmission. No workflow changes.
+
 ## Planned capture extension — graphics output
 
 User approved adding direct graphics capture before multimedia transmission, after the current five-PR video cycle and global validation. Plan five functional milestones: (1) OpenGL framebuffer readback with explicit context ownership and canonical RGBA8 orientation, (2) ChuGL integration after verifying its actual rendering backend and readback API, (3) offscreen rendering/capture, (4) deterministic audiovisual recording, (5) consolidation and local validation. Exact PR numbering and supported backend scope depend on feasibility and checkpoint/maintenance PRs. Do not assume ChuGL uses OpenGL. Keep existing capture matrix rubric and report extension progress separately until validated. No workflow changes.
