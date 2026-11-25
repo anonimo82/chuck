@@ -3,6 +3,7 @@
   "groups": [
     "video-opengl-framebuffer",
     "video-chugl-texture",
-    "video-offscreen-render"
+    "video-offscreen-render",
+    "video-indexed-av"
   ]
 }
