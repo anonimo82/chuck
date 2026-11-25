@@ -2,6 +2,7 @@
   "version": 1,
   "groups": [
     "transport-video-frame",
-    "transport-video-stream"
+    "transport-video-stream",
+    "transport-video-buffer"
   ]
 }
