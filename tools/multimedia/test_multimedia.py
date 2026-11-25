@@ -3550,3 +3550,63 @@ check(soundtrack.frames()==8000 && soundtrack.sampleRate()==8000);
 check(soundtrack.exportSamples(pcm));
 check(Math.fabs(pcm[100])>0.001);
 """,22,p)
+
+    run("raster", """
+RasterImage image;
+int other[8];
+int pixels[8];
+check(!image.exportBlend(other,0.0,0,pixels));
+check(image.importPixels(2,1,[255,0,0,255,255,0,0,0]));
+[0,0,255,255,0,255,0,255] @=> int target[];
+check(image.exportBlend(target,0.0,0,pixels));
+check(pixels[0]==255 && pixels[2]==0 && pixels[3]==255);
+check(pixels[4]==0 && pixels[5]==0 && pixels[7]==255);
+check(image.exportBlend(target,0.5,0,pixels));
+check(pixels[0]==128 && pixels[2]==128 && pixels[5]==128);
+check(image.exportBlend(target,1.0,0,pixels));
+check(pixels[2]==255 && pixels[5]==255);
+check(image.exportBlend(target,0.0,0xffffff,pixels));
+check(pixels[4]==255 && pixels[5]==255 && pixels[6]==255);
+check(!image.exportBlend(target,-0.1,0,pixels));
+check(!image.exportBlend(target,1.1,0,pixels));
+check(!image.exportBlend(target,0.5,-1,pixels));
+check(!image.exportBlend(target,0.5,0x1000000,pixels));
+check(!image.exportBlend([1,2,3,4],0.5,0,pixels));
+256=>target[7];
+check(!image.exportBlend(target,0.5,0,pixels));
+check(pixels[4]==255 && pixels[6]==255);
+255=>target[7];
+0.5=>image.red;
+check(image.exportBlend(target,0.0,0,pixels));
+check(pixels[0]==128 && image.pixelAt(0,0,0)==255);
+check(image.exportBlend(target,0.5,0,target));
+check(target[0]==64 && target[2]==128 && target[5]==128 && target[7]==255);
+""",22,p)
+
+    run("video", """
+@import "RasterIO";
+RasterImage image;
+VideoWriter writer;
+VideoClip clip;
+check(image.create(16,16));
+check(image.fill(255,0,0,255));
+int target[1024];
+int pixels[1024];
+for(0=>int i;i<256;i++) { 255=>target[i*4+2]; 255=>target[i*4+3]; }
+check(writer.open("raster-dissolve.mkv",16,16,3));
+for(0=>int i;i<3;i++) {
+    check(image.exportBlend(target,i/2.0,0,pixels));
+    check(writer.appendFrame(pixels));
+}
+check(writer.frames()==3);
+check(writer.finish());
+check(clip.load("raster-dissolve.mkv"));
+check(clip.exportPixels(pixels));
+check(pixels[0]==255 && pixels[2]==0);
+check(clip.next()==1);
+check(clip.exportPixels(pixels));
+check(pixels[0]==128 && pixels[2]==128);
+check(clip.next()==1);
+check(clip.exportPixels(pixels));
+check(pixels[0]==0 && pixels[2]==255);
+""",20,p)
