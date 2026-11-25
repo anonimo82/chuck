@@ -50,6 +50,7 @@
     "video-chugl-texture",
     "video-offscreen-render",
     "video-indexed-av",
-    "video-graphics-consolidation"
+    "video-graphics-consolidation",
+    "transport-framing"
   ]
 }
