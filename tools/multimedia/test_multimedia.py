@@ -11716,11 +11716,15 @@ check(tx.beginFrame(7,1,101,pixels));
 check(tx.sentPixels()==0 && tx.busy());
 tx.clear();
 check(!tx.configured() && !tx.busy() && tx.completed()==0);
-check(tx.configure(3,4294967295,4294967295,100,44));
+// Decimal lexer uses atoi; construct the uint32 boundary in ChucK int arithmetic.
+65536 => int counterBase;
+counterBase * counterBase => int counterExhausted;
+counterExhausted - 1 => int counterMax;
+check(tx.configure(3,counterMax,counterMax,100,44));
 check(!tx.beginFrame(7,1,100,pixels));
 check(tx.beginFrame(1,1,100,[1,2,3,4]));
 check(tx.prepare() && tx.commit());
-check(tx.nextSequence()==4294967296 && tx.nextFrame()==4294967296);
+check(tx.nextSequence()==counterExhausted && tx.nextFrame()==counterExhausted);
 check(!tx.beginFrame(1,1,101,[1,2,3,4]));
 server.close();client.close();
 """,102,p)
