@@ -2684,3 +2684,38 @@ check(imported.exportMaterial(imported.materialAt(0),props));
 check(Math.fabs(props[0]-0.2)<0.00001 && Math.fabs(props[2]-0.6)<0.00001);
 check(imported.baseColorTextures(imported.materialAt(0))==0);
 """,19,p)
+
+
+    (p/"texmodel").mkdir()
+    (p/"texmodel"/"images").mkdir()
+    (p/"texmodel"/"images"/"albedo.ppm").write_bytes(b"P6\n1 1\n255\n\xff\x00\x00")
+    (p/"texmodel"/"surface.mtl").write_text("newmtl surface\nKd 1 1 1\nmap_Kd images/albedo.ppm\n")
+    (p/"texmodel"/"mesh.obj").write_text("mtllib surface.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nusemtl surface\nf 1/1 2/2 3/3\n")
+    (p/"texmodel"/"missing.mtl").write_text("newmtl surface\nmap_Kd missing.png\n")
+    (p/"texmodel"/"missing.obj").write_text((p/"texmodel"/"mesh.obj").read_text().replace("surface.mtl","missing.mtl"))
+    (p/"texmodel"/"escape.mtl").write_text("newmtl surface\nmap_Kd ../triangle.obj\n")
+    (p/"texmodel"/"escape.obj").write_text((p/"texmodel"/"mesh.obj").read_text().replace("surface.mtl","escape.mtl"))
+    run("model", """
+Model3D model;
+check(model.baseColorTexturePath(0,0)=="");
+check(model.load("texmodel/mesh.obj"));
+model.materialAt(0) => int mat;
+check(model.baseColorTextures(mat)==1);
+model.baseColorTexturePath(mat,0) => string path;
+check(path!="");
+check(path.find("albedo.ppm")>=0);
+check(model.baseColorTexturePath(mat,-1)=="");
+check(model.baseColorTexturePath(mat,1)=="");
+check(model.baseColorTexturePath(-1,0)=="");
+check(!model.load("missing.obj"));
+check(model.baseColorTexturePath(mat,0)==path);
+check(model.load("texmodel/missing.obj"));
+check(model.baseColorTextures(model.materialAt(0))==1);
+check(model.baseColorTexturePath(model.materialAt(0),0)=="");
+check(model.load("texmodel/escape.obj"));
+check(model.baseColorTexturePath(model.materialAt(0),0)=="");
+check(model.createMesh([0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0],[0,1,2]));
+check(model.baseColorTexturePath(0,0)=="");
+model.clear();
+check(model.baseColorTexturePath(0,0)=="");
+""",18,p)
