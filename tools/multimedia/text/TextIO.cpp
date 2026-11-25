@@ -1580,14 +1580,14 @@ bool paragraphCuts(cairo_t *cr,const Paragraph &p,int width,int height,std::vect
     std::unique_ptr<PangoLayoutIter,decltype(&pango_layout_iter_free)> it(pango_layout_get_iter(layout.get()),pango_layout_iter_free);
     if(!it) return false;
     cuts.push_back(0);
-    do {
+    for(;;) {
         int y0=0,y1=0;
         pango_layout_iter_get_line_yrange(it.get(),&y0,&y1);
+        if(!pango_layout_iter_next_line(it.get())) break;
         int cut=static_cast<int>(std::ceil(top+static_cast<double>(y1)/PANGO_SCALE));
         if(cut>cuts.back()&&cut<height) cuts.push_back(cut);
-    } while(pango_layout_iter_next_line(it.get()));
+    }
     // Final line and trailing decoration are indivisible.
-    if(cuts.size()>1) cuts.pop_back();
     cuts.push_back(height);
     return true;
 }
@@ -1681,6 +1681,16 @@ bool drawPageContent(cairo_t *cr,const Document &source,const std::vector<PageEn
     if(!band(p.footer,p.height-p.marginBottom-p.footerHeight,p.footerHeight)) return false;
     cairo_save(cr); cairo_translate(cr,p.marginLeft,p.marginTop+p.headerHeight);
     cairo_rectangle(cr,0,0,w,h); cairo_clip(cr);
+    if(!p.splitParagraphs) {
+        Document selected;
+        for(const auto &e:entries) if(e.page==index) {
+            if(e.kind==1) selected.tables.push_back({selected.paragraphs.size(),source.tables[e.index].table,selected.nextOrder++});
+            else if(e.kind==2) selected.nodes.push_back({selected.paragraphs.size(),source.nodes[e.index].node,selected.nextOrder++});
+            else selected.paragraphs.push_back(source.paragraphs[e.index]);
+        }
+        bool ok=drawDocument(cr,selected,w,h);
+        cairo_restore(cr); return ok;
+    }
     bool ok=true;
     for(const auto &e:entries) if(e.page==index) {
         Document selected;
