@@ -209,3 +209,5 @@ User-reported Windows Local: expected=407, PASS=407, FAIL=0, missing=0, unreport
 ## Transmission cycle 2 — Waveform and MIDI
 
 #201: CKAP v1 PCM16 waveform packets, interleaved 1–8 channels, 8–192 kHz, bounded sample validation and metadata inspection, bidirectional negotiated session integration. 82 new checks, global 6119, local 82, cadence 11/20. Native validation pending; quantization is lossy. Sequential streaming, buffering, synchronization and device integration remain pending. No workflow changes.
+
+#202: sequential PCM blocks with rational cumulative sample timeline, strict stream/format/sequence/timestamp checks, state and error inspection, variable block lengths and negotiated session integration. 103 new checks, global 6222, local 185, cadence 12/20. Native validation pending. Buffering, gap repair, automatic scheduling and device synchronization remain pending. No workflow changes.
