@@ -834,6 +834,32 @@ CK_DLL_MFUN(text_flow_set_text) {
         p->source=std::move(next); p->planned=false; RETURN->v_int=1;
     } catch(...) {}
 }
+// Interchange only inline content: paragraph layout and frame geometry are independent.
+Paragraph inlineContent(const Paragraph &source) {
+    Paragraph next;
+    next.text=source.text; next.baseBytes=source.baseBytes;
+    next.style=source.style; next.runs=source.runs;
+    return next;
+}
+CK_DLL_MFUN(text_doc_import_flow) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto *f=flowState(GET_NEXT_OBJECT(ARGS),API);
+        if(!d||!f||d->paragraphs.size()>=4096||f->source.text.size()>1048576-d->bytes||f->source.runs.size()>16384-d->runs) return;
+        auto next=inlineContent(f->source);
+        d->paragraphs.push_back(std::move(next));
+        d->bytes+=f->source.text.size(); d->runs+=f->source.runs.size(); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_export_flow) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *f=flowState(GET_NEXT_OBJECT(ARGS),API);
+        if(!indexOK(d,i)||!f) return;
+        auto next=inlineContent(d->paragraphs[i]);
+        f->source=std::move(next); f->planned=false; RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_MFUN(text_flow_append_run) {
     RETURN->v_int=0;
     try {
@@ -3229,6 +3255,11 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_doc_load_txt,"int","loadTXT");
     QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,text_doc_import_flow,"int","appendFlow");
+    QUERY->add_arg(QUERY,"TextFlow","flow");
+    QUERY->add_mfun(QUERY,text_doc_export_flow,"int","exportParagraphToFlow");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextFlow","destination");
     QUERY->add_mfun(QUERY,text_doc_plain_text,"string","plainText");
     QUERY->add_mfun(QUERY,text_doc_save_txt,"int","saveTXT");
     QUERY->add_arg(QUERY,"string","path");
