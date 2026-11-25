@@ -2883,6 +2883,23 @@ check(seq.renderFrames(8000)==-1);
 check(!seq.renderSamples(8000,combined));
 """,21,p)
 
+    run("midi", """
+MidiSequence seq;
+check(seq.create(480,120.0));
+check(seq.addNote(0,0,480,0,60,100));
+check(seq.addNote(0,480,480,0,60,90));
+check(seq.notes(0)==2);
+check(seq.noteLength(0,0)==480 && seq.noteLength(0,1)==480);
+check(seq.renderFrames(8000)==8000);
+float pcm[8000];
+check(seq.renderSamples(8000,pcm));
+check(pcm[3999]==0.0 && pcm[4000]==0.0);
+check(seq.addNote(0,240,480,0,60,80));
+check(seq.notes(0)==-1);
+check(seq.renderFrames(8000)==-1);
+check(!seq.renderSamples(8000,pcm));
+""",12,p)
+
     run("audio", """
 AudioBuffer audio;
 int pixels[4*5*4];
