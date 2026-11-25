@@ -64,6 +64,7 @@ public:
     bool push(const Bytes &wire) {
         if(!configured()) return reject(1);
         if(ready_) return reject(5);
+        if(seq_>0xffffffffu||image_>0xffffffffu) return reject(6);
         Header h;Fragment f;Bytes data;
         if(!decodeFragment(wire,h,f,data)) return reject(2);
         if(h.stream!=stream_||h.sequence!=seq_||f.image!=image_||f.offset!=offset_) return reject(3);
