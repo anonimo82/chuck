@@ -70,6 +70,7 @@
     "transport-video-stream",
     "transport-video-buffer",
     "transport-audio-video",
-    "transport-av-consolidation"
+    "transport-av-consolidation",
+    "transport-text"
   ]
 }
