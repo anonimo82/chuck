@@ -345,22 +345,35 @@ bool notePairs(smf::MidiFile &m,int track,std::vector<NotePair> &pairs) {
     if(track<0 || track>=m.getTrackCount()) return false;
     int pending[2048]; std::fill_n(pending,2048,-1);
     auto &events=m[track];
-    for(int i=0;i<events.size();++i) {
-        auto &e=events[i];
-        if(!midiTick(e.tick) || (i>0 && e.tick<events[i-1].tick)) return false;
-        if(e.size()!=3) continue;
-        int status=e[0]&0xf0;
-        if(status!=0x80 && status!=0x90) continue;
-        if(e[1]>127 || e[2]>127) return false;
-        int key=(e[0]&15)*128+e[1];
-        if(status==0x90 && e[2]>0) {
-            if(pending[key]>=0) return false;
-            pending[key]=i;
-        } else {
-            int on=pending[key];
-            if(on<0 || e.tick<=events[on].tick) return false;
-            pairs.push_back({on,i}); pending[key]=-1;
+    // At a shared tick, finish active notes before starting new ones.
+    // This handles both explicit note-off and velocity-zero note-on,
+    // independently of the library's ordering of simultaneous events.
+    for(int first=0;first<events.size();) {
+        int tick=events[first].tick;
+        if(!midiTick(tick)||(first>0&&tick<events[first-1].tick)) return false;
+        int last=first+1;
+        while(last<events.size()&&events[last].tick==tick) ++last;
+        for(int pass=0;pass<2;++pass) {
+            for(int i=first;i<last;++i) {
+                auto &e=events[i];
+                if(e.size()!=3) continue;
+                int status=e[0]&0xf0;
+                if(status!=0x80&&status!=0x90) continue;
+                if(e[1]>127||e[2]>127) return false;
+                bool on=status==0x90&&e[2]>0;
+                if(on!=(pass==1)) continue;
+                int key=(e[0]&15)*128+e[1];
+                if(on) {
+                    if(pending[key]>=0) return false;
+                    pending[key]=i;
+                } else {
+                    int begin=pending[key];
+                    if(begin<0||tick<=events[begin].tick) return false;
+                    pairs.push_back({begin,i}); pending[key]=-1;
+                }
+            }
         }
+        first=last;
     }
     for(int i:pending) if(i>=0) return false;
     std::sort(pairs.begin(),pairs.end(),[](const NotePair &a,const NotePair &b){return a.on<b.on;});
