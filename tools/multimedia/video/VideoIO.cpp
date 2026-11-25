@@ -3903,6 +3903,33 @@ CK_DLL_MFUN(video_capture_gl_ingest) {
     } catch(...) {}
 }
 
+
+CK_DLL_MFUN(video_capture_texture_open) {
+    RETURN->v_int=0;
+    auto *p=videoCaptureState(SELF,API);auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+    if(!p||p->mode||p->recording||!media_capture::Frame::dimensions(w,h)) return;
+    p->reset(5,w,h);RETURN->v_int=1;
+}
+CK_DLL_MFUN(video_capture_texture_ingest) {
+    RETURN->v_int=0;
+    try {
+        auto *p=videoCaptureState(SELF,API);double seconds=GET_NEXT_FLOAT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p||p->mode!=5||!a||!std::isfinite(seconds)||seconds<0||
+           (p->count&&seconds<p->frame.seconds)||p->count>=1000000) return;
+        size_t n=static_cast<size_t>(p->w)*p->h*4;
+        if(API->object->array_float_size(a)!=static_cast<t_CKINT>(n)) return;
+        media_capture::Frame next;next.width=p->w;next.height=p->h;next.seconds=seconds;
+        next.rgba.resize(n);
+        for(size_t k=0;k<n;++k) {
+            double val=API->object->array_float_get_idx(a,k);
+            if(!std::isfinite(val)||val<0||val>1) return;
+            next.rgba[k]=static_cast<unsigned char>(std::lround(val*255.0));
+        }
+        if(media_capture::graphicsPixels(next,false,true)) RETURN->v_int=p->accept(std::move(next));
+    } catch(...) {}
+}
+
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -4251,6 +4278,12 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_mfun(QUERY,video_capture_gl_ingest,"int","ingestGLPixels");
     QUERY->add_arg(QUERY,"float","seconds");
     QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,video_capture_texture_open,"int","openTexture");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_mfun(QUERY,video_capture_texture_ingest,"int","ingestTexture");
+    QUERY->add_arg(QUERY,"float","seconds");
+    QUERY->add_arg(QUERY,"float[]","rgba");
     QUERY->add_mfun(QUERY,video_capture_export,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY)) return FALSE;
