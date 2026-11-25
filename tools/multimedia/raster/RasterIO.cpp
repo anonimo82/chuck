@@ -759,6 +759,20 @@ CK_DLL_MFUN(raster_capture_export) {
 CK_DLL_MFUN(raster_capture_clear) {
     if(auto *p=captureState(SELF,API)) p->frame=media_capture::Frame{};
 }
+CK_DLL_MFUN(raster_image_import_capture) {
+    RETURN->v_int=0;
+    try {
+        auto *p=imageState(SELF,API);
+        auto *obj=GET_NEXT_OBJECT(ARGS);
+        auto *source=obj?captureState(obj,API):nullptr;
+        if(!p||!source||!source->frame.valid()) return;
+        RasterPixels next;
+        next.width=source->frame.width; next.height=source->frame.height;
+        next.rgba=source->frame.rgba;
+        p->input=std::move(next); p->reset();
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(RasterIO) {
     QUERY->setname(QUERY, "RasterIO");
     QUERY->begin_class(QUERY, "RasterIO", "Object");
@@ -845,6 +859,8 @@ CK_DLL_QUERY(RasterIO) {
     QUERY->add_mfun(QUERY,raster_image_create,"int","create");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_mfun(QUERY,raster_image_import_capture,"int","importCapture");
+    QUERY->add_arg(QUERY,"RasterCapture","capture");
     QUERY->add_mfun(QUERY,raster_image_import_pixels,"int","importPixels");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
