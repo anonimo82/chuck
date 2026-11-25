@@ -2187,3 +2187,57 @@ check(!audio.convertChannels(2));
 check(audio.channels()==3);
 """,50,p)
     check_buffer("dsp-constant.wav",[8192]*4)
+
+    run("midi", """
+MidiSequence seq;
+MidiSequence copy;
+check(seq.notes(0)==-1);
+check(seq.create(480,120.0));
+check(seq.addTrack()==1);
+check(seq.addNote(1,113,60,0,60,80));
+check(seq.addNote(1,251,90,0,64,90));
+check(seq.addCC(1,100,0,7,100));
+check(seq.notes(1)==2);
+check(seq.noteLength(1,0)==60 && seq.noteLength(1,1)==90);
+check(seq.noteLength(1,2)==-1);
+check(seq.quantize(1,120,1.0));
+check(seq.noteLength(1,0)==60 && seq.noteLength(1,1)==90);
+check(seq.tickAt(1,0)==100 && seq.tickAt(1,1)==120);
+check(seq.tickAt(1,3)==240);
+check(!seq.quantize(1,0,1.0));
+check(!seq.shiftNotes(1,-121));
+check(seq.tickAt(1,1)==120);
+check(seq.shiftNotes(1,10));
+check(seq.scaleLengths(1,0.5));
+check(seq.noteLength(1,0)==30 && seq.noteLength(1,1)==45);
+check(seq.setNote(1,0,130,40,62,70));
+check(seq.noteLength(1,0)==40);
+check(!seq.setNote(1,0,250,100,64,70));
+check(seq.noteLength(1,0)==40);
+check(seq.save("midi-edited.mid"));
+check(copy.load("midi-edited.mid"));
+check(copy.notes(1)==2 && copy.noteLength(1,0)==40);
+check(copy.removeNote(1,0));
+check(copy.notes(1)==1 && copy.noteLength(1,0)==45);
+check(!copy.removeNote(1,1));
+check(copy.save("midi-removed.mid"));
+check(seq.notes(1)==2);
+check(seq.removeNote(1,1));
+check(seq.notes(1)==1);
+check(seq.removeNote(1,0));
+check(seq.notes(1)==0);
+check(seq.create(480,120.0));
+check(seq.addNote(0,0,100,0,60,80));
+check(seq.addNote(0,50,100,0,60,80));
+check(seq.notes(0)==-1);
+check(!seq.quantize(0,120,1.0));
+""",40,p)
+    edited=procedural_midi("midi-edited.mid")
+    removed=procedural_midi("midi-removed.mid")
+    assert note_ons(edited[1])==[(130,62,70),(250,64,90)]
+    assert note_ons(removed[1])==[(250,64,90)]
+    assert (100,176,bytes((7,100))) in edited[1] and (100,176,bytes((7,100))) in removed[1]
+    def note_ends(events):
+        return sorted((e[0],e[2][0]) for e in events if e[1]==128 or (e[1]==144 and e[2][1]==0))
+    assert note_ends(edited[1])==[(170,62),(295,64)]
+    assert note_ends(removed[1])==[(295,64)]
