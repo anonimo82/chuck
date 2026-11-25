@@ -14,6 +14,7 @@
 #endif
 #include <memory>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <fstream>
 #include <algorithm>
@@ -81,26 +82,40 @@ CK_DLL_SFUN(raster_height) {
 CK_DLL_SFUN(raster_convert) {
     RETURN->v_int = 0;
     try {
+        const char *traceEnv=std::getenv("CHUCK_RASTER_TRACE");
+        const bool trace=traceEnv && std::string(traceEnv)=="1";
+        auto stage=[trace](const char *name) {
+            if(trace) { std::fprintf(stderr,"[RasterIO convert] %s\n",name); std::fflush(stderr); }
+        };
         auto source = GET_NEXT_STRING_SAFE(ARGS);
         auto dest = GET_NEXT_STRING_SAFE(ARGS);
         auto fmt = format(dest);
         if(fmt.empty()) return;
+        stage("create wand");
         auto w = makeWand();
+        stage("read source");
         if(!read(w.get(), source)) return;
         // Set both the wand output format and the current image format.
         // The wand retains the input format from read(), which can override encoding.
+        stage("set output wand format");
         if(MagickSetFormat(w.get(), fmt.c_str()) == MagickFalse) { report(w.get(), "output wand format"); return; }
+        stage("set output image format");
         if(MagickSetImageFormat(w.get(), fmt.c_str()) == MagickFalse) { report(w.get(), "output format"); return; }
         size_t size = 0;
+        stage("encode image blob");
         unsigned char *blob = MagickGetImageBlob(w.get(), &size);
         if(!blob) { report(w.get(), "encode"); return; }
         std::unique_ptr<unsigned char, decltype(&MagickRelinquishMemory)> data(blob, MagickRelinquishMemory);
         // Exclusive creation: never overwrite an existing file.
+        stage("open destination exclusively");
         FILE *out = mediaio::openNew(dest.c_str());
         if(!out) return;
+        stage("write destination");
         bool ok = fwrite(blob, 1, size, out) == size;
+        stage("close destination");
         if(fclose(out) != 0) ok = false;
         if(!ok) { std::remove(dest.c_str()); return; }
+        stage("conversion complete; releasing resources");
         RETURN->v_int = 1;
     } catch(...) {}
 }
