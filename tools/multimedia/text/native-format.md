@@ -11,3 +11,7 @@ Paragraph: text string, baseBytes, style, run count, each run (text string, styl
 Table/grid: grid flag, rows, cols, columnGap, rowGap, cols real weights, rows*cols paragraphs (row-major).
 
 Node: kind, paragraph record, gap real, columnGap, rowGap, rows, cols, weight count, real weights, child count, recursive child records. Kinds 0 group, 1 paragraph, 2 container, 3 table, 4 grid, 5 list. Existing in-memory limits apply; maximum file size 32 MiB. The file must end immediately after the last record. Version 1 is uncompressed and has no checksum. Page configurations and keyframe curves are external objects, not included.
+
+## Reader invariants
+
+Reader validates all ranges against the corresponding public API, checks UTF-8 boundaries and exact reconstruction of run text, validates separate paragraph/table/tree budgets and maximum depth, verifies unique dense insertion ranks and nondecreasing anchors, and rejects trailing bytes. Load is transactional. No checksum or authentication is provided.
