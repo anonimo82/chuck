@@ -1,6 +1,7 @@
 // Optional offline video I/O for ChucK.
 #include "chuck_dl.h"
 #include "../file_compat.h"
+#include "../capture/CameraCapture.h"
 #include "../subtitle/subtitle_io.h"
 #include "../keyframe/keyframe.h"
 #include <array>
@@ -3523,6 +3524,103 @@ CK_DLL_MFUN(video_clip_export_matrix) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+
+namespace {
+struct VideoCaptureState {
+    std::unique_ptr<media_capture::CameraSession> camera;
+    media_capture::Frame frame;
+    int mode=0,w=0,h=0;
+    t_CKINT count=0;
+    bool accept(media_capture::Frame &&next) {
+        if(!mode||!next.valid()||next.width!=w||next.height!=h||
+           (count&&next.seconds<frame.seconds)||count>=1000000) return false;
+        frame=std::move(next); ++count; return true;
+    }
+    void reset(int m,int width,int height) {
+        frame=media_capture::Frame{}; count=0; mode=m; w=width; h=height;
+    }
+};
+t_CKUINT videoCaptureOffset=0;
+VideoCaptureState *videoCaptureState(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<VideoCaptureState*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,videoCaptureOffset)));
+}
+}
+CK_DLL_CTOR(video_capture_ctor) {
+    OBJ_MEMBER_UINT(SELF,videoCaptureOffset)=reinterpret_cast<uintptr_t>(new(std::nothrow) VideoCaptureState);
+}
+CK_DLL_DTOR(video_capture_dtor) {
+    delete videoCaptureState(SELF,API); OBJ_MEMBER_UINT(SELF,videoCaptureOffset)=0;
+}
+CK_DLL_MFUN(video_capture_supported) { RETURN->v_int=media_capture::cameraSupported(); }
+CK_DLL_MFUN(video_capture_devices) {
+    RETURN->v_int=-1;
+    try { std::vector<std::string> names; RETURN->v_int=media_capture::cameraDevices(names); } catch(...) {}
+}
+CK_DLL_MFUN(video_capture_name) {
+    std::string name;
+    try { auto i=GET_NEXT_INT(ARGS); std::vector<std::string> names;
+        if(i>=0&&media_capture::cameraDevices(names)>=0&&static_cast<uint64_t>(i)<names.size()) name=names[i];
+    } catch(...) {}
+    RETURN->v_string=API->object->create_string(VM,name.c_str(),FALSE);
+}
+CK_DLL_MFUN(video_capture_open) {
+    RETURN->v_int=0;
+    try {
+        auto *p=videoCaptureState(SELF,API); auto name=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),fps=GET_NEXT_INT(ARGS);
+        if(!p||p->mode||!media_capture::Frame::dimensions(w,h)||fps<1||fps>120||media_capture::cameraAddress(name).empty()) return;
+        auto camera=std::make_unique<media_capture::CameraSession>();
+        if(!camera->open(name,w,h,fps)) return;
+        p->reset(1,w,h); p->camera=std::move(camera); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_capture_synthetic) {
+    RETURN->v_int=0;
+    auto *p=videoCaptureState(SELF,API); auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+    if(!p||p->mode||!media_capture::Frame::dimensions(w,h)) return;
+    p->reset(2,w,h); RETURN->v_int=1;
+}
+CK_DLL_MFUN(video_capture_next) {
+    RETURN->v_int=0;
+    auto *p=videoCaptureState(SELF,API);
+    if(!p||p->mode!=1||!p->camera||p->count>=1000000) return;
+    try { media_capture::Frame next;
+        if(p->camera->next(next)&&p->accept(std::move(next))) {RETURN->v_int=1;return;}
+    } catch(...) {}
+    p->camera.reset(); p->mode=0;
+}
+CK_DLL_MFUN(video_capture_ingest) {
+    RETURN->v_int=0;
+    try {
+        auto *p=videoCaptureState(SELF,API); double seconds=GET_NEXT_FLOAT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||p->mode!=2||!a||!std::isfinite(seconds)||seconds<0||
+            (p->count&&seconds<p->frame.seconds)||p->count>=1000000) return;
+        size_t n=static_cast<size_t>(p->w)*p->h*4;
+        if(API->object->array_int_size(a)!=static_cast<t_CKINT>(n)) return;
+        media_capture::Frame next; next.width=p->w; next.height=p->h; next.seconds=seconds;
+        next.rgba.resize(n);
+        for(size_t k=0;k<n;++k) {auto v=API->object->array_int_get_idx(a,k);if(v<0||v>255)return;next.rgba[k]=static_cast<unsigned char>(v);}
+        RETURN->v_int=p->accept(std::move(next));
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_capture_close) {
+    if(auto *p=videoCaptureState(SELF,API)) {p->camera.reset();p->mode=0;}
+}
+CK_DLL_MFUN(video_capture_active) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p&&p->mode;}
+CK_DLL_MFUN(video_capture_ready) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p&&p->frame.valid();}
+CK_DLL_MFUN(video_capture_count) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p?p->count:0;}
+CK_DLL_MFUN(video_capture_width) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p&&(p->mode||p->count)?p->w:-1;}
+CK_DLL_MFUN(video_capture_height) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p&&(p->mode||p->count)?p->h:-1;}
+CK_DLL_MFUN(video_capture_time) {auto *p=videoCaptureState(SELF,API);RETURN->v_float=p&&p->frame.valid()?p->frame.seconds:-1;}
+CK_DLL_MFUN(video_capture_export) {
+    RETURN->v_int=0;
+    auto *p=videoCaptureState(SELF,API);auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+    if(!p||!p->frame.valid()||!a||API->object->array_int_size(a)!=static_cast<t_CKINT>(p->frame.rgba.size())) return;
+    for(size_t k=0;k<p->frame.rgba.size();++k) API->object->array_int_set_idx(a,k,p->frame.rgba[k]);
+    RETURN->v_int=1;
+}
+
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -3786,6 +3884,37 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_mfun(QUERY,video_clip_export_pixels_scaled,"int","exportPixels");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"VideoCapture","Object");
+    videoCaptureOffset=QUERY->add_mvar(QUERY,"int","@videoCaptureNative",FALSE);
+    if(videoCaptureOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,video_capture_ctor);
+    QUERY->add_dtor(QUERY,video_capture_dtor);
+    QUERY->add_mfun(QUERY,video_capture_supported,"int","cameraSupported");
+    QUERY->add_mfun(QUERY,video_capture_devices,"int","cameraCount");
+    QUERY->add_mfun(QUERY,video_capture_name,"string","cameraName");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,video_capture_open,"int","openCamera");
+    QUERY->add_arg(QUERY,"string","name");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","fps");
+    QUERY->add_mfun(QUERY,video_capture_synthetic,"int","openSynthetic");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_mfun(QUERY,video_capture_next,"int","next");
+    QUERY->add_mfun(QUERY,video_capture_ingest,"int","ingestFrame");
+    QUERY->add_arg(QUERY,"float","seconds");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,video_capture_close,"void","close");
+    QUERY->add_mfun(QUERY,video_capture_active,"int","active");
+    QUERY->add_mfun(QUERY,video_capture_ready,"int","ready");
+    QUERY->add_mfun(QUERY,video_capture_count,"int","frames");
+    QUERY->add_mfun(QUERY,video_capture_width,"int","width");
+    QUERY->add_mfun(QUERY,video_capture_height,"int","height");
+    QUERY->add_mfun(QUERY,video_capture_time,"float","timestamp");
+    QUERY->add_mfun(QUERY,video_capture_export,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"VideoWriter","Object");
