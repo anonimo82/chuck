@@ -4116,3 +4116,66 @@ check(image.x()==0.0 && image.shapes()==1);
 check(image.exportPixels(8,8,pixels));
 check(pixels[0]==255 && pixels[3]>=127 && pixels[3]<=128);
 """,16,p)
+
+    run("midi", """
+@import "ModelIO";
+MidiSequence seq;
+Model3D model;
+float boxes[12];
+check(!seq.exportNoteBoxes(8.0,2.0,4.0,boxes));
+check(seq.create(480,120.0));
+check(seq.addNote(0,0,480,0,60,127));
+check(seq.addNote(0,480,480,9,64,64));
+check(seq.pianoRollRectCount()==2);
+check(seq.exportNoteBoxes(8.0,2.0,4.0,boxes));
+check(boxes[0]==-4.0 && boxes[3]==0.0 && boxes[2]==0.0 && boxes[5]==4.0);
+check(Math.fabs(boxes[1]+7.8)<0.000001 && Math.fabs(boxes[4]+6.2)<0.000001);
+check(boxes[6]==0.0 && boxes[9]==4.0 && Math.fabs(boxes[11]-256.0/127.0)<0.000001);
+check(!seq.exportNoteBoxes(0.0,2.0,4.0,boxes));
+check(!seq.exportNoteBoxes(8.0,-1.0,4.0,boxes));
+check(!seq.exportNoteBoxes(8.0,2.0,0.0,boxes));
+float wrong[6];
+check(!seq.exportNoteBoxes(8.0,2.0,4.0,wrong));
+check(boxes[0]==-4.0 && boxes[5]==4.0);
+check(model.createBoxes(boxes));
+check(model.meshVertices(0)==48 && model.faces(0)==24);
+check(model.hasNormals(0));
+check(model.vertexAt(0,0,0)==-4.0 && model.vertexAt(0,4,2)==4.0);
+check(Math.fabs(model.vertexAt(0,28,2)-256.0/127.0)<0.00001);
+1=>seq.transpose;
+0.5=>seq.velocityGain;
+check(seq.exportNoteBoxes(8.0,2.0,4.0,boxes));
+check(Math.fabs(boxes[1]+5.8)<0.000001 && Math.fabs(boxes[5]-256.0/127.0)<0.000001);
+check(model.createBoxes(boxes));
+check(Math.fabs(model.vertexAt(0,4,2)-256.0/127.0)<0.00001);
+check(seq.notes(0)==2 && seq.noteLength(0,0)==480);
+seq.clear();
+check(!seq.exportNoteBoxes(8.0,2.0,4.0,boxes));
+""",25,p)
+
+    run("model", """
+Model3D model;
+float boxes[6];
+check(!model.createBoxes(boxes));
+check(model.createBoxes([-1.0,-1.0,0.0,1.0,1.0,2.0]));
+check(model.meshVertices(0)==24 && model.faces(0)==12);
+check(model.hasNormals(0));
+float normals[72];
+check(model.exportNormals(0,normals));
+check(normals[2]==-1.0 && normals[14]==1.0 && normals[25]==-1.0);
+float uv[48];
+check(model.exportUV(0,uv));
+check(uv[0]==0.0 && uv[1]==0.0 && uv[2]==1.0 && uv[3]==0.0);
+check(model.faceIndex(0,0,0)==0 && model.faceIndex(0,0,1)==1 && model.faceIndex(0,0,2)==2);
+int pixels[64];
+check(model.renderOrthographic(0,4,4,2.0,0xffffff,pixels));
+check(pixels[0]==255 && pixels[3]==255 && pixels[63]==255);
+check(!model.createBoxes([0.0,0.0,0.0,1.0,1.0,0.0]));
+check(!model.createBoxes([2.0,0.0,0.0,1.0,1.0,1.0]));
+check(!model.createBoxes([0.0,0.0,0.0,1.0,1.0,1000000001.0]));
+check(!model.createBoxes([0.0,0.0,0.0]));
+check(model.meshVertices(0)==24 && model.vertexAt(0,4,2)==2.0);
+check(model.createBoxes([0.0,0.0,0.0,1.0,1.0,1.0,2.0,2.0,0.0,3.0,3.0,2.0]));
+check(model.meshVertices(0)==48 && model.faces(0)==24);
+check(model.vertexAt(0,28,2)==2.0);
+""",19,p)

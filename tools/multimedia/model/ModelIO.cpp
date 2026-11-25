@@ -1923,6 +1923,51 @@ CK_DLL_MFUN(model3d_export_pitches) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(model3d_create_boxes) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!a) return;
+        auto n=API->object->array_float_size(a);
+        if(n<6||n>4096*6||n%6) return;
+        std::vector<aiVector3D> vertices;
+        std::vector<unsigned> indices;
+        vertices.reserve(n/6*24); indices.reserve(n/6*36);
+        // Separate vertices per face retain sharp edges and face normals.
+        constexpr unsigned corners[6][4]={{0,3,2,1},{4,5,6,7},{0,1,5,4},
+                                         {3,7,6,2},{0,4,7,3},{1,2,6,5}};
+        const aiVector3D normals[6]={{0,0,-1},{0,0,1},{0,-1,0},{0,1,0},{-1,0,0},{1,0,0}};
+        auto ns=std::make_unique<aiVector3D[]>(n/6*24);
+        auto uv=std::make_unique<aiVector3D[]>(n/6*24);
+        const aiVector3D faceUV[4]={{0,0,0},{1,0,0},{1,1,0},{0,1,0}};
+        for(t_CKINT i=0;i<n;i+=6) {
+            double v[6];
+            for(int k=0;k<6;++k) {
+                v[k]=API->object->array_float_get_idx(a,i+k);
+                if(!coordinate(v[k])) return;
+            }
+            for(int k=0;k<3;++k)
+                if(!(static_cast<ai_real>(v[k])<static_cast<ai_real>(v[k+3]))) return;
+            ai_real x0=v[0],y0=v[1],z0=v[2],x1=v[3],y1=v[4],z1=v[5];
+            aiVector3D box[8]={{x0,y0,z0},{x1,y0,z0},{x1,y1,z0},{x0,y1,z0},
+                                {x0,y0,z1},{x1,y0,z1},{x1,y1,z1},{x0,y1,z1}};
+            for(unsigned f=0;f<6;++f) {
+                unsigned offset=static_cast<unsigned>(vertices.size());
+                for(unsigned k=0;k<4;++k) {
+                    vertices.push_back(box[corners[f][k]]);
+                    ns[offset+k]=normals[f]; uv[offset+k]=faceUV[k];
+                }
+                indices.insert(indices.end(),{offset,offset+1,offset+2,offset,offset+2,offset+3});
+            }
+        }
+        if(!makeMesh(p,vertices,indices)) return;
+        auto *mesh=p->generated->mMeshes[0];
+        mesh->mNormals=ns.release(); mesh->mTextureCoords[0]=uv.release();
+        mesh->mNumUVComponents[0]=2;
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(ModelIO) {
     QUERY->setname(QUERY, "ModelIO");
     QUERY->begin_class(QUERY, "ModelIO", "Object");
@@ -2024,6 +2069,8 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_create_mesh,"int","createMesh");
     QUERY->add_arg(QUERY,"float[]","xyz");
     QUERY->add_arg(QUERY,"int[]","triangles");
+    QUERY->add_mfun(QUERY,model3d_create_boxes,"int","createBoxes");
+    QUERY->add_arg(QUERY,"float[]","boxes");
     QUERY->add_mfun(QUERY,model3d_create_box,"int","createBox");
     QUERY->add_arg(QUERY,"float","width");
     QUERY->add_arg(QUERY,"float","height");
