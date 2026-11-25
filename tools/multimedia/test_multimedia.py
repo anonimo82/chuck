@@ -10716,7 +10716,8 @@ check(rx.videoLateness()==20 && rx.videoIndex()==1);
 check(rx.pullVideo(pixels));
 check(pixels[0]==5 && pixels[3]==8);
 check(rx.pullAudio(pair));
-check(pair[0]==0.5 && pair[1]==-0.5);
+// PCM16 positive full scale is 32767; negative full scale is 32768.
+check(Math.fabs(pair[0]-16384.0/32767.0)<0.000000001 && pair[1]==-0.5);
 check(rx.playTimestamp()==1062 && rx.consumedFrames()==3);
 check(rx.push(v2));
 check(rx.videoDue() && rx.videoLateness()==2);
