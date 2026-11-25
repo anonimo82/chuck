@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <limits>
 #include <new>
@@ -546,6 +547,101 @@ CK_DLL_MFUN(audio_buffer_highpass) {
     try { auto *p=audioState(SELF,API); auto hz=GET_NEXT_FLOAT(ARGS); RETURN->v_int=filterBuffer(p,hz,true); } catch(...) {}
 }
 
+namespace {
+bool imageOutput(AudioBufferState *p,t_CKINT channel,t_CKINT w,t_CKINT h,
+                 Chuck_DL_Api::ArrayInt a,CK_DL_API API) {
+    return p&&p->loaded()&&channel>=0&&channel<p->channels&&w>=1&&w<=4096&&
+           h>=1&&h<=4096&&w*h<=4194304&&a&&API->object->array_int_size(a)==w*h*4;
+}
+void grayPixel(std::vector<unsigned char> &rgba,size_t pixel,unsigned char level) {
+    rgba[4*pixel]=rgba[4*pixel+1]=rgba[4*pixel+2]=level;
+    rgba[4*pixel+3]=255;
+}
+void publishImage(const std::vector<unsigned char> &rgba,Chuck_DL_Api::ArrayInt a,CK_DL_API API) {
+    for(size_t i=0;i<rgba.size();++i) API->object->array_int_set_idx(a,i,rgba[i]);
+}
+void fft(std::vector<std::complex<double>> &v) {
+    size_t n=v.size();
+    for(size_t i=1,j=0;i<n;++i) {
+        size_t bit=n>>1;
+        for(;j&bit;bit>>=1) j^=bit;
+        j^=bit;
+        if(i<j) std::swap(v[i],v[j]);
+    }
+    for(size_t len=2;len<=n;len*=2) {
+        double angle=-6.28318530717958647692/len;
+        std::complex<double> step(std::cos(angle),std::sin(angle));
+        for(size_t i=0;i<n;i+=len) {
+            std::complex<double> phase(1,0);
+            for(size_t j=0;j<len/2;++j) {
+                auto a=v[i+j],b=v[i+j+len/2]*phase;
+                v[i+j]=a+b; v[i+j+len/2]=a-b;
+                phase*=step;
+            }
+        }
+    }
+}
+}
+CK_DLL_MFUN(audio_buffer_waveform) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API);
+        auto channel=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!imageOutput(p,channel,w,h,a,API)) return;
+        std::vector<unsigned char> rgba(w*h*4,0);
+        for(size_t i=0;i<rgba.size()/4;++i) rgba[4*i+3]=255;
+        auto row=[&](double v){return static_cast<size_t>(std::llround((1-v)*0.5*(h-1)));};
+        for(size_t x=0;x<static_cast<size_t>(w);++x) {
+            size_t begin=x*uint64_t(p->frames())/w;
+            size_t end=std::max(begin+1,(x+1)*uint64_t(p->frames())/w);
+            double lo=1,hi=-1;
+            for(size_t i=begin;i<end;++i) {
+                double v=p->value(i,channel);
+                lo=std::min(lo,v); hi=std::max(hi,v);
+            }
+            for(size_t y=row(hi);y<=row(lo);++y) grayPixel(rgba,y*w+x,255);
+        }
+        publishImage(rgba,a,API); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(audio_buffer_spectrogram) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API);
+        auto channel=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),n=GET_NEXT_INT(ARGS);
+        double floorDb=GET_NEXT_FLOAT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(n<32||n>4096||(n&(n-1))||!std::isfinite(floorDb)||floorDb< -160||floorDb> -10) return;
+        auto h=n/2+1;
+        if(!imageOutput(p,channel,w,h,a,API)||uint64_t(w)*n>8388608) return;
+        std::vector<unsigned char> rgba(w*h*4,0);
+        std::vector<double> window(n);
+        std::vector<std::complex<double>> bins(n);
+        double sum=0;
+        for(size_t i=0;i<window.size();++i) {
+            window[i]=0.5-0.5*std::cos(6.28318530717958647692*i/(n-1));
+            sum+=window[i];
+        }
+        for(size_t x=0;x<static_cast<size_t>(w);++x) {
+            // Uniform frame centers over the source; zero-pad outside it.
+            int64_t center=static_cast<int64_t>((2*x+1)*uint64_t(p->frames())/(2*w));
+            for(int64_t i=0;i<n;++i) {
+                int64_t src=center+i-n/2;
+                bins[i]=(src>=0&&static_cast<uint64_t>(src)<p->frames()?p->value(src,channel):0.0)*window[i];
+            }
+            fft(bins);
+            for(size_t k=0;k<static_cast<size_t>(h);++k) {
+                double magnitude=std::abs(bins[k])/sum;
+                if(k>0&&k<static_cast<size_t>(n/2)) magnitude*=2;
+                double db=20*std::log10(std::max(magnitude,1e-12));
+                auto level=static_cast<unsigned char>(std::lround(255*std::clamp((db-floorDb)/(-floorDb),0.0,1.0)));
+                grayPixel(rgba,(h-1-k)*w+x,level);
+            }
+        }
+        publishImage(rgba,a,API); RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(AudioIO) {
     QUERY->setname(QUERY, "AudioIO");
     QUERY->begin_class(QUERY, "AudioIO", "Object");
@@ -635,5 +731,16 @@ CK_DLL_QUERY(AudioIO) {
     QUERY->add_arg(QUERY,"float","frequency");
     QUERY->add_mfun(QUERY,audio_buffer_highpass,"int","highPass");
     QUERY->add_arg(QUERY,"float","frequency");
+    QUERY->add_mfun(QUERY,audio_buffer_waveform,"int","exportWaveform");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,audio_buffer_spectrogram,"int","exportSpectrogram");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","fftSize");
+    QUERY->add_arg(QUERY,"float","floorDb");
+    QUERY->add_arg(QUERY,"int[]","pixels");
     return QUERY->end_class(QUERY);
 }

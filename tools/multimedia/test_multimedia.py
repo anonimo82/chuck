@@ -2882,3 +2882,32 @@ check(seq.addNote(0,960,480,9,36,100));
 check(seq.renderFrames(8000)==-1);
 check(!seq.renderSamples(8000,combined));
 """,21,p)
+
+    run("audio", """
+AudioBuffer audio;
+int pixels[4*5*4];
+check(!audio.exportWaveform(0,4,5,pixels));
+check(audio.importSamples(8000,1,[-1.0,1.0,0.0,0.0]));
+check(audio.exportWaveform(0,4,5,pixels));
+check(pixels[(4*4)*4]==255 && pixels[4]==255);
+check(pixels[(2*4+2)*4]==255 && pixels[(2*4+3)*4]==255);
+check(pixels[0]==0 && pixels[3]==255);
+check(!audio.exportWaveform(1,4,5,pixels));
+check(!audio.exportWaveform(0,3,5,pixels));
+check(pixels[0]==0 && pixels[3]==255);
+check(audio.create(64,8000,1));
+int spec[17*4];
+check(audio.exportSpectrogram(0,1,32,-80.0,spec));
+check(spec[0]==0 && spec[3]==255 && spec[64]==0);
+for(0=>int i;i<64;i++) audio.setSample(i,0,Math.sin(2.0*Math.pi*4.0*i/32.0));
+check(audio.exportSpectrogram(0,1,32,-80.0,spec));
+check(spec[(16-4)*4]>250);
+check(spec[(16-4)*4]>spec[(16-8)*4]);
+check(!audio.exportSpectrogram(0,1,31,-80.0,spec));
+check(!audio.exportSpectrogram(0,1,32,0.0,spec));
+check(!audio.exportSpectrogram(1,1,32,-80.0,spec));
+check(spec[(16-4)*4]>250);
+0.0=>audio.gain;
+check(audio.exportSpectrogram(0,1,32,-80.0,spec));
+check(spec[(16-4)*4]==0);
+""",21,p)
