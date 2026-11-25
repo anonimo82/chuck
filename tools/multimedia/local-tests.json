@@ -1,6 +1,7 @@
 {
   "version": 1,
   "groups": [
-    "transport-video-frame"
+    "transport-video-frame",
+    "transport-video-stream"
   ]
 }
