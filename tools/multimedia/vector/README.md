@@ -64,3 +64,7 @@ exportFrame(width,height,backgroundRGB,int[] pixels) renders the current SVG wit
 ## Batch editable rectangle import
 
 importRects(width,height,float[] rects) replaces the document with independent SVG rectangles from groups of six values x,y,width,height,packed RGB,opacity. Canvas dimensions 1–4096; up to 4096 rectangles, finite coordinates within +/-1000000, positive extents, integral RGB 0–0xffffff, opacity 0–1. Out-of-canvas geometry is clipped by the viewport. Empty array creates an empty canvas. Success resets controls; failure preserves document and controls. Compatible with MidiSequence.exportPianoRollRects. No new dependency. Native validation pending.
+
+## SVG-to-audio sonification
+
+exportAudioSamples(width,height,channels,float[] samples) renders the current SVG in memory including global transforms and opacity, recovers straight RGBA8 from Cairo premultiplied pixels, and maps one row-major pixel to one PCM frame. Mono is (2*weighted RGB luminance-1)*alpha; stereo is (R+G-1)*alpha and (B+G-1)*alpha, components normalized to 0–1. Transparent pixels are silent. Same mapping as RasterImage.exportAudioSamples. Dimensions 1–4096, max 4194304 pixels, channels 1 or 2, exact array length width*height*channels. Invalid input preserves output; document and controls unchanged. Pass samples to AudioBuffer.importSamples at a chosen sample rate. Example sonify_svg.ck uses stereo at 44100 Hz and attenuates before WAV export. This is creative pixel sonification, not reconstruction of encoded audio. No new dependencies. Native validation pending.
