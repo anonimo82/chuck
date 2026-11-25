@@ -6002,8 +6002,64 @@ check(copy.paddingLeft==0 && copy.borderWidth==0);
 """,35,p)
 
 
+
+def text_frame_flow():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextFlow flow;
+TextFrame frame;
+TextFrame copy;
+TextStyle style;
+check(flow.frameCount()==0);
+check(flow.ready()==0);
+check(flow.frameText(0)=="");
+check(style.fontSize(16)==16);
+check(frame.setGeometry(0,0,200,25));
+check(flow.appendFrame(frame));
+check(frame.page(1)==1);
+check(flow.appendFrame(frame));
+check(flow.frameCount()==2);
+check(flow.getFrame(0,copy));
+check(copy.page()==0);
+check(flow.getFrame(1,copy));
+check(copy.page()==1);
+check(!flow.getFrame(2,copy));
+check(flow.setText("First\\nSecond",style));
+check(flow.layout());
+check(flow.ready()==1);
+check(flow.frameText(0)=="First\\n");
+check(flow.frameText(1)=="Second");
+check(flow.frameText(0)+flow.frameText(1)=="First\\nSecond");
+check(flow.frameText(-1)=="");
+check(frame.height(100)==100);
+check(flow.setFrame(0,frame));
+check(flow.ready()==0);
+check(flow.frameText(0)=="");
+check(flow.layout());
+check(flow.frameText(0)=="First\\nSecond");
+check(flow.frameText(1)=="");
+check(!flow.setFrame(2,frame));
+check(flow.ready()==1);
+check(flow.setText("café",style));
+check(flow.ready()==0);
+check(flow.layout());
+check(flow.frameText(0)=="café");
+check(flow.removeFrame(1));
+check(flow.frameCount()==1);
+check(!flow.removeFrame(1));
+check(flow.ready()==0);
+check(flow.layout());
+flow.clearFrames();
+check(flow.frameCount()==0);
+check(flow.ready()==0);
+check(flow.layout());
+check(flow.ready()==1);
+""",43,p)
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
