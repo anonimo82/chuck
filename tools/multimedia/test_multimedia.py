@@ -3231,3 +3231,49 @@ model.clear();
 check(!model.exportAudioSamples(0,0,exact));
 check(exact[0]==-1.0 && exact[1]==1.0);
 """,28,p)
+
+    run("audio", """
+AudioBuffer audio;
+int pitches[4];
+check(!audio.detectPitches(0,1024,0.02,0.9,pitches));
+float pcm[4096];
+for(0=>int i;i<2048;i++) 0.5*Math.sin(2.0*Math.pi*440.0*i/8000.0)=>pcm[i];
+for(3072=>int i;i<4096;i++) 0.5*Math.sin(2.0*Math.pi*523.251*i/8000.0)=>pcm[i];
+check(audio.importSamples(8000,1,pcm));
+check(audio.detectPitches(0,1024,0.02,0.9,pitches));
+check(pitches[0]==69 && pitches[1]==69 && pitches[2]==-1 && pitches[3]==72);
+check(!audio.detectPitches(1,1024,0.02,0.9,pitches));
+check(!audio.detectPitches(0,128,0.02,0.9,pitches));
+check(!audio.detectPitches(0,1024,0.0,0.9,pitches));
+check(!audio.detectPitches(0,1024,0.02,0.4,pitches));
+int wrong[3];
+check(!audio.detectPitches(0,1024,0.02,0.9,wrong));
+check(pitches[0]==69 && pitches[3]==72);
+0.0=>audio.gain;
+check(audio.detectPitches(0,1024,0.02,0.9,pitches));
+check(pitches[0]==-1 && pitches[1]==-1 && pitches[2]==-1 && pitches[3]==-1);
+audio.reset();
+check(audio.detectPitches(0,1024,0.02,0.9,pitches));
+check(pitches[0]==69 && pitches[3]==72);
+""",14,p)
+
+    run("midi", """
+MidiSequence seq;
+check(seq.importPitches(480,120.0,0.125,0,100,[69,69,-1,72]));
+check(seq.loaded() && seq.ticksPerQuarter()==480);
+check(seq.notes(0)==2);
+check(seq.noteLength(0,0)==240 && seq.noteLength(0,1)==120);
+check(seq.renderFrames(8000)==4000);
+check(!seq.importPitches(480,120.0,0.125,0,100,[69,128]));
+check(!seq.importPitches(480,120.0,0.125,0,100,[-2]));
+check(!seq.importPitches(0,120.0,0.125,0,100,[69]));
+check(!seq.importPitches(480,0.0,0.125,0,100,[69]));
+check(!seq.importPitches(480,120.0,0.0,0,100,[69]));
+check(!seq.importPitches(480,120.0,0.125,16,100,[69]));
+check(!seq.importPitches(480,120.0,0.125,0,0,[69]));
+check(seq.notes(0)==2 && seq.noteLength(0,0)==240);
+check(seq.importPitches(480,120.0,0.125,0,100,[-1,-1]));
+check(seq.notes(0)==0);
+check(seq.importPitches(480,120.0,0.125,0,100,[60,62,60]));
+check(seq.notes(0)==3 && seq.noteLength(0,2)==120);
+""",17,p)

@@ -665,6 +665,56 @@ CK_DLL_MFUN(audio_buffer_envelope) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(audio_buffer_detect_pitches) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API);
+        auto channel=GET_NEXT_INT(ARGS),block=GET_NEXT_INT(ARGS);
+        double gate=GET_NEXT_FLOAT(ARGS),confidence=GET_NEXT_FLOAT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->loaded()||!a||channel<0||channel>=p->channels||
+           block<256||block>16384||p->rate<8000||p->rate>96000||
+           !std::isfinite(gate)||gate<=0||gate>1||
+           !std::isfinite(confidence)||confidence<0.5||confidence>1) return;
+        size_t count=p->frames()/block;
+        if(count<1||count>100000||API->object->array_int_size(a)!=static_cast<t_CKINT>(count)) return;
+        int minLag=std::max(2,static_cast<int>(std::floor(p->rate/2000.0)));
+        int maxLag=std::min<int>(block/3,static_cast<int>(std::ceil(p->rate/65.0)));
+        if(maxLag<=minLag||uint64_t(count)*block*(maxLag-minLag+1)>200000000) return;
+        std::vector<t_CKINT> pitches(count,-1);
+        std::vector<double> signal(block),scores(maxLag+1);
+        for(size_t b=0;b<count;++b) {
+            double mean=0;
+            for(int i=0;i<block;++i) { signal[i]=p->value(b*block+i,channel); mean+=signal[i]; }
+            mean/=block;
+            double power=0;
+            for(auto &v:signal) { v-=mean; power+=v*v; }
+            if(std::sqrt(power/block)<gate) continue;
+            for(int lag=minLag-1;lag<=maxLag;++lag) {
+                double xy=0,xx=0,yy=0;
+                for(int i=0;i<block-lag;++i) {
+                    double x=signal[i],y=signal[i+lag];
+                    xy+=x*y; xx+=x*x; yy+=y*y;
+                }
+                scores[lag]=(xx>0&&yy>0)?xy/std::sqrt(xx*yy):0.0;
+            }
+            int best=-1;
+            for(int lag=minLag;lag<maxLag;++lag)
+                if(scores[lag]>=confidence&&scores[lag]>=scores[lag-1]&&scores[lag]>=scores[lag+1]) {
+                    best=lag; break;
+                }
+            if(best<0) continue;
+            double l=scores[best-1],c=scores[best],r=scores[best+1],den=l-2*c+r;
+            double delta=den<0?std::clamp(0.5*(l-r)/den,-0.5,0.5):0.0;
+            double hz=p->rate/(best+delta);
+            if(hz<65||hz>2000) continue;
+            long note=std::lround(69+12*std::log2(hz/440.0));
+            if(note>=0&&note<=127) pitches[b]=note;
+        }
+        for(size_t i=0;i<count;++i) API->object->array_int_set_idx(a,i,pitches[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(AudioIO) {
     QUERY->setname(QUERY, "AudioIO");
     QUERY->begin_class(QUERY, "AudioIO", "Object");
@@ -683,6 +733,12 @@ CK_DLL_QUERY(AudioIO) {
     if(audioBufferOffset==CK_INVALID_OFFSET) return FALSE;
     QUERY->add_ctor(QUERY,audio_buffer_ctor);
     QUERY->add_dtor(QUERY,audio_buffer_dtor);
+    QUERY->add_mfun(QUERY,audio_buffer_detect_pitches,"int","detectPitches");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","blockFrames");
+    QUERY->add_arg(QUERY,"float","rmsGate");
+    QUERY->add_arg(QUERY,"float","confidence");
+    QUERY->add_arg(QUERY,"int[]","pitches");
     QUERY->add_mfun(QUERY,audio_buffer_load,"int","load");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,audio_buffer_save,"int","save");

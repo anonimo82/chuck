@@ -39,3 +39,7 @@ exportWaveform(channel,width,height,int[] pixels) exports an opaque grayscale mi
 ## Audio-to-vector waveform
 
 exportEnvelope(channel,count,float[] bounds) writes count interleaved minimum/maximum amplitude pairs, using the same time buckets and gain/balance as exportWaveform. Count 1–4096; exact preallocated size 2*count. Repeats samples when count exceeds frames. Failure leaves output unchanged. Pass bounds to VectorImage.importWaveform; no cross-Chugin native dependency.
+
+## Monophonic pitch detection
+
+detectPitches(channel,blockFrames,rmsGate,confidence,int[] pitches) analyzes nonoverlapping complete blocks using current gain/balance, DC removal, RMS gate and normalized autocorrelation. First local peak above confidence is refined by parabolic interpolation and rounded to nearest MIDI pitch. Unvoiced blocks are -1. Exact output length floor(frames/blockFrames), 1–100000 blocks; block size 256–16384, sample rate 8000–96000, gate (0,1], confidence [0.5,1]. Nominal frequency range 65–2000 Hz, constrained by block length; work capped at 200 million sample-lag comparisons (plus one boundary lag). Invalid input preserves output. No polyphonic transcription, onset refinement, trailing partial blocks or guaranteed accuracy on complex sounds. Compatible with MidiSequence.importPitches. Native validation pending.
