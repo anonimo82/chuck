@@ -1,4 +1,6 @@
+#include "MediaLoopback.h"
 #include "chuck_dl.h"
+#include <utility>
 #include "MediaFrame.h"
 
 namespace {
@@ -55,6 +57,53 @@ CK_DLL_SFUN(frame_decode) {
         write(dst,API,data); RETURN->v_int=1;
     } catch(...) {}
 }
+namespace {
+t_CKUINT loopOffset=0;
+mediawire::Loopback *loop(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<mediawire::Loopback*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,loopOffset)));
+}
+}
+CK_DLL_CTOR(loop_ctor) {
+    OBJ_MEMBER_UINT(SELF,loopOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,loopOffset)=reinterpret_cast<uintptr_t>(new mediawire::Loopback); } catch(...) {}
+}
+CK_DLL_DTOR(loop_dtor) {
+    delete loop(SELF,API); OBJ_MEMBER_UINT(SELF,loopOffset)=0;
+}
+CK_DLL_MFUN(loop_listen) {
+    auto *p=loop(SELF,API); auto port=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p&&port>=0&&port<=65535&&p->listenOn(static_cast<unsigned>(port));
+}
+CK_DLL_MFUN(loop_connect) {
+    auto *p=loop(SELF,API); auto port=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p&&port>0&&port<=65535&&p->connectTo(static_cast<unsigned>(port));
+}
+CK_DLL_MFUN(loop_accept) { auto *p=loop(SELF,API); RETURN->v_int=p?p->acceptOne():-1; }
+CK_DLL_MFUN(loop_port) { auto *p=loop(SELF,API); RETURN->v_int=p?p->port():0; }
+CK_DLL_MFUN(loop_connected) { auto *p=loop(SELF,API); RETURN->v_int=p&&p->connected(); }
+CK_DLL_MFUN(loop_busy) { auto *p=loop(SELF,API); RETURN->v_int=p&&p->busy(); }
+CK_DLL_MFUN(loop_size) { auto *p=loop(SELF,API); RETURN->v_int=p?p->packetSize():0; }
+CK_DLL_MFUN(loop_poll) { auto *p=loop(SELF,API); RETURN->v_int=p?p->poll():-1; }
+CK_DLL_MFUN(loop_disconnect) { if(auto *p=loop(SELF,API)) p->disconnect(); }
+CK_DLL_MFUN(loop_stop) { if(auto *p=loop(SELF,API)) p->stop(); }
+CK_DLL_MFUN(loop_send) {
+    RETURN->v_int=0;
+    try {
+        auto *p=loop(SELF,API); auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes b;
+        if(p&&p->connected()&&!p->busy()&&read(a,API,mediawire::headerSize+mediawire::maxPayload,b))
+            RETURN->v_int=p->enqueue(std::move(b));
+    } catch(...) {}
+}
+CK_DLL_MFUN(loop_receive) {
+    RETURN->v_int=0;
+    try {
+        auto *p=loop(SELF,API); auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->packetSize()||!exact(a,API,p->packetSize())) return;
+        mediawire::Bytes b;
+        if(p->take(b)) { write(a,API,b); RETURN->v_int=1; }
+    } catch(...) {}
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -71,5 +120,27 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"int[]","metadata");
     QUERY->add_arg(QUERY,"int[]","payload");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaLoopback","Object");
+    loopOffset=QUERY->add_mvar(QUERY,"int","@loopNative",FALSE);
+    if(loopOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,loop_ctor);
+    QUERY->add_dtor(QUERY,loop_dtor);
+    QUERY->add_mfun(QUERY,loop_listen,"int","listen");
+    QUERY->add_arg(QUERY,"int","port");
+    QUERY->add_mfun(QUERY,loop_connect,"int","connect");
+    QUERY->add_arg(QUERY,"int","port");
+    QUERY->add_mfun(QUERY,loop_accept,"int","accept");
+    QUERY->add_mfun(QUERY,loop_port,"int","port");
+    QUERY->add_mfun(QUERY,loop_connected,"int","connected");
+    QUERY->add_mfun(QUERY,loop_busy,"int","sendPending");
+    QUERY->add_mfun(QUERY,loop_size,"int","packetSize");
+    QUERY->add_mfun(QUERY,loop_poll,"int","poll");
+    QUERY->add_mfun(QUERY,loop_disconnect,"void","disconnect");
+    QUERY->add_mfun(QUERY,loop_stop,"void","close");
+    QUERY->add_mfun(QUERY,loop_send,"int","sendPacket");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,loop_receive,"int","receivePacket");
+    QUERY->add_arg(QUERY,"int[]","packet");
     return QUERY->end_class(QUERY);
 }
