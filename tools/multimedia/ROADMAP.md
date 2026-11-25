@@ -111,3 +111,5 @@ User explicitly excluded vector and 3D capture and chose not to support point cl
 User prioritized vector manipulation before transmission and capture. #165: generated-shape inspection and geometry editing. Proposed next milestones: individual transforms, individual style, grouping/order, and persistence/integration. New checks: 57; global: 4339; local: 57; functional cadence: 1/20. Native validation pending. Vector manipulation remains partial until the supported editable SVG scope and integration are complete. The unmerged transmission experiment is deferred.
 
 #166: individual affine transforms, pivoted rotation/scaling and matrix access; 58 new checks, global 4397, local 115; functional cadence 2/20. Native validation pending.
+
+#167: individual fill, stroke, stroke width and opacity; 57 new checks, global 4454, local 172; functional cadence 3/20. Native validation pending.

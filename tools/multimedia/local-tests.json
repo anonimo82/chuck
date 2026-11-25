@@ -2,6 +2,7 @@
   "version": 1,
   "groups": [
     "vector-shape-edit",
-    "vector-shape-transform"
+    "vector-shape-transform",
+    "vector-shape-style"
   ]
 }
