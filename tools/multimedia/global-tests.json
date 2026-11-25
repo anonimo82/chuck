@@ -52,6 +52,7 @@
     "video-indexed-av",
     "video-graphics-consolidation",
     "transport-framing",
-    "transport-loopback"
+    "transport-loopback",
+    "transport-session"
   ]
 }
