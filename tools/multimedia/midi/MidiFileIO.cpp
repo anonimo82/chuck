@@ -518,7 +518,7 @@ CK_DLL_MFUN(midi_sequence_remove_note) {
 namespace {
 struct RenderNote { size_t begin,end; double hz,gain; int pitch; };
 struct RenderTempo { int tick; double seconds,us; };
-bool prepareRender(MidiState *p,t_CKINT rate,std::vector<RenderNote> &notes,size_t &frames) {
+bool prepareRender(MidiState *p,t_CKINT rate,std::vector<RenderNote> &notes,size_t &frames,bool visual=false) {
     if(!p||!p->file||rate<8000||rate>96000) return false;
     auto &m=*p->file;
     int ppq=m.getTicksPerQuarterNote();
@@ -568,9 +568,9 @@ bool prepareRender(MidiState *p,t_CKINT rate,std::vector<RenderNote> &notes,size
         for(const auto &pair:pairs) {
             auto &on=m[t][pair.on]; auto &off=m[t][pair.off];
             int pitch=int(on[1])+p->transpose;
-            if(pitch<0||pitch>127||(on[0]&15)==9) return false;
+            if(pitch<0||pitch>127||(!visual&&(on[0]&15)==9)) return false;
             double hz=440.0*std::pow(2.0,(pitch-69)/12.0);
-            if(hz>=rate/2.0) return false;
+            if(!visual&&hz>=rate/2.0) return false;
             auto begin=static_cast<size_t>(std::llround(at(on.tick)));
             auto end=static_cast<size_t>(std::llround(at(off.tick)));
             if(end<=begin||end>frames) return false;
@@ -694,6 +694,42 @@ CK_DLL_MFUN(midi_sequence_piano_roll) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(midi_sequence_static_roll) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto rgb=GET_NEXT_INT(ARGS),bg=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!a||w<1||w>4096||h<128||h>4096||w*h>4194304||
+           rgb<0||rgb>0xffffff||bg<0||bg>0xffffff||
+           API->object->array_int_size(a)!=w*h*4) return;
+        std::vector<RenderNote> notes;
+        size_t frames=0;
+        if(!prepareRender(p,96000,notes,frames,true)) return;
+        std::vector<unsigned char> levels(w*h,0);
+        uint64_t work=0;
+        for(const auto &note:notes) {
+            size_t x0=uint64_t(note.begin)*w/frames;
+            size_t x1=(uint64_t(note.end)*w+frames-1)/frames;
+            size_t y0=uint64_t(127-note.pitch)*h/128;
+            size_t y1=uint64_t(128-note.pitch)*h/128;
+            work+=(x1-x0)*(y1-y0);
+            if(work>100000000) return;
+            auto velocity=static_cast<unsigned char>(std::lround(note.gain*127));
+            for(size_t y=y0;y<y1;++y) for(size_t x=x0;x<x1;++x)
+                levels[y*w+x]=std::max(levels[y*w+x],velocity);
+        }
+        for(size_t i=0;i<levels.size();++i) {
+            for(int c=0;c<3;++c) {
+                int from=(bg>>(16-8*c))&255,to=(rgb>>(16-8*c))&255;
+                API->object->array_int_set_idx(a,i*4+c,std::lround(from+(to-from)*levels[i]/127.0));
+            }
+            API->object->array_int_set_idx(a,i*4+3,255);
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(MidiFileIO) {
     QUERY->setname(QUERY, "MidiFileIO");
     QUERY->begin_class(QUERY, "MidiFileIO", "Object");
@@ -811,6 +847,12 @@ CK_DLL_QUERY(MidiFileIO) {
     QUERY->add_mfun(QUERY,midi_sequence_remove_note,"int","removeNote");
     QUERY->add_arg(QUERY,"int","track");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,midi_sequence_static_roll,"int","exportPianoRoll");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","rgb");
+    QUERY->add_arg(QUERY,"int","backgroundRGB");
+    QUERY->add_arg(QUERY,"int[]","pixels");
     QUERY->add_mfun(QUERY,midi_sequence_piano_roll,"int","exportPianoRoll");
     QUERY->add_arg(QUERY,"int","sampleRate");
     QUERY->add_arg(QUERY,"int","cursorFrame");
