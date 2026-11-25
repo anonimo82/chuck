@@ -586,6 +586,114 @@ CK_DLL_MFUN(vector_image_scale_shape) {
         RETURN->v_int=composeTransform(p,i,{{sx,0,0,sy,x-sx*x,y-sy*y}});
     } catch(...) {}
 }
+namespace {
+bool putAttribute(std::string &s,const std::string &name,const std::string &value) {
+    std::string old;
+    if(shapeAttribute(s,name,old)) return replaceAttribute(s,name,value);
+    if(s.size()<2||s.substr(s.size()-2)!="/>") return false;
+    s.insert(s.size()-2," "+name+"=\""+value+"\"");
+    return true;
+}
+std::string numberAttribute(double v) { auto o=svgStream(); o<<v; return o.str(); }
+std::string paintAttribute(t_CKINT rgb) {
+    if(rgb==-1) return "none";
+    auto o=svgStream(); o<<'#'<<std::hex<<std::setw(6)<<std::setfill('0')<<rgb; return o.str();
+}
+bool readNumber(const std::string &s,const std::string &name,double fallback,double &v) {
+    std::string value;
+    if(!shapeAttribute(s,name,value)) { v=fallback; return true; }
+    std::istringstream in(value); in.imbue(std::locale::classic());
+    if(!(in>>v)||!std::isfinite(v)) return false;
+    in>>std::ws; return in.eof();
+}
+bool readPaint(const std::string &s,const std::string &name,t_CKINT fallback,double &v) {
+    std::string value;
+    if(!shapeAttribute(s,name,value)) { v=fallback; return true; }
+    if(value=="none") { v=-1; return true; }
+    if(value.size()!=7||value[0]!='#') return false;
+    unsigned rgb=0;
+    for(size_t k=1;k<7;++k) {
+        char ch=value[k];
+        unsigned n=ch>='0'&&ch<='9'?ch-'0':ch>='a'&&ch<='f'?ch-'a'+10:16;
+        if(n>15) return false;
+        rgb=rgb*16+n;
+    }
+    v=rgb; return true;
+}
+using ShapePaint=std::array<double,6>;
+bool readStyle(const std::string &s,ShapePaint &v) {
+    return readPaint(s,"fill",shapeTag(s)=="line"?-1:0,v[0])&&
+        readNumber(s,"fill-opacity",1,v[1])&&readPaint(s,"stroke",-1,v[2])&&
+        readNumber(s,"stroke-opacity",1,v[3])&&readNumber(s,"stroke-width",1,v[4])&&
+        readNumber(s,"opacity",1,v[5]);
+}
+bool validPaint(double v) { return std::isfinite(v)&&v>=-1&&v<=0xffffff&&std::floor(v)==v; }
+bool validAlpha(double v) { return std::isfinite(v)&&v>=0&&v<=1; }
+bool setStyle(VectorImageState *p,t_CKINT i,const ShapePaint &v) {
+    if(!shapeAt(p,i)||!validPaint(v[0])||!validPaint(v[2])||
+       !validAlpha(v[1])||!validAlpha(v[3])||!validAlpha(v[5])||
+       !coord(v[4])||v[4]<=0) return false;
+    auto next=p->shapes; auto &s=next[i];
+    if(shapeTag(s)=="line"&&v[0]!=-1) return false;
+    if(!putAttribute(s,"fill",paintAttribute(static_cast<t_CKINT>(v[0])))||
+       !putAttribute(s,"fill-opacity",numberAttribute(v[1]))||
+       !putAttribute(s,"stroke",paintAttribute(static_cast<t_CKINT>(v[2])))||
+       !putAttribute(s,"stroke-opacity",numberAttribute(v[3]))||
+       !putAttribute(s,"stroke-width",numberAttribute(v[4]))||
+       !putAttribute(s,"opacity",numberAttribute(v[5]))) return false;
+    return p->replaceShapes(p->canvasW,p->canvasH,std::move(next));
+}
+}
+CK_DLL_MFUN(vector_image_get_style) {
+    RETURN->v_int=0;
+    try {
+        auto *s=shapeAt(vectorState(SELF,API),GET_NEXT_INT(ARGS));
+        auto out=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        ShapePaint v;
+        if(!s||!out||API->object->array_float_size(out)!=6||!readStyle(*s,v)) return;
+        for(size_t k=0;k<6;++k) API->object->array_float_set_idx(out,k,v[k]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_set_style) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+        auto in=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!in||API->object->array_float_size(in)!=6) return;
+        ShapePaint v;
+        for(size_t k=0;k<6;++k) v[k]=API->object->array_float_get_idx(in,k);
+        RETURN->v_int=setStyle(p,i,v);
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_set_fill) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API); auto i=GET_NEXT_INT(ARGS),rgb=GET_NEXT_INT(ARGS);
+        double alpha=GET_NEXT_FLOAT(ARGS); auto *s=shapeAt(p,i); ShapePaint v;
+        if(!s||!readStyle(*s,v)||rgb< -1||rgb>0xffffff) return;
+        v[0]=rgb; v[1]=alpha; RETURN->v_int=setStyle(p,i,v);
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_set_stroke) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API); auto i=GET_NEXT_INT(ARGS),rgb=GET_NEXT_INT(ARGS);
+        double alpha=GET_NEXT_FLOAT(ARGS),width=GET_NEXT_FLOAT(ARGS);
+        auto *s=shapeAt(p,i); ShapePaint v;
+        if(!s||!readStyle(*s,v)||rgb< -1||rgb>0xffffff) return;
+        v[2]=rgb; v[3]=alpha; v[4]=width; RETURN->v_int=setStyle(p,i,v);
+    } catch(...) {}
+}
+CK_DLL_MFUN(vector_image_set_shape_opacity) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+        double alpha=GET_NEXT_FLOAT(ARGS); auto *s=shapeAt(p,i); ShapePaint v;
+        if(!s||!readStyle(*s,v)) return;
+        v[5]=alpha; RETURN->v_int=setStyle(p,i,v);
+    } catch(...) {}
+}
 CK_DLL_MFUN(vector_image_save) {
     RETURN->v_int=0;
     try {
@@ -965,6 +1073,24 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_arg(QUERY,"float","scaleY");
     QUERY->add_arg(QUERY,"float","pivotX");
     QUERY->add_arg(QUERY,"float","pivotY");
+    QUERY->add_mfun(QUERY,vector_image_get_style,"int","getShapeStyle");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"float[]","values");
+    QUERY->add_mfun(QUERY,vector_image_set_style,"int","setShapeStyle");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"float[]","values");
+    QUERY->add_mfun(QUERY,vector_image_set_fill,"int","setShapeFill");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"int","rgb");
+    QUERY->add_arg(QUERY,"float","alpha");
+    QUERY->add_mfun(QUERY,vector_image_set_stroke,"int","setShapeStroke");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"int","rgb");
+    QUERY->add_arg(QUERY,"float","alpha");
+    QUERY->add_arg(QUERY,"float","width");
+    QUERY->add_mfun(QUERY,vector_image_set_shape_opacity,"int","setShapeOpacity");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"float","alpha");
     QUERY->add_mfun(QUERY,vector_image_save,"int","save");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,vector_image_export_pitches,"int","exportPitches");
