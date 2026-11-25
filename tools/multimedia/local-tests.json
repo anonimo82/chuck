@@ -2,6 +2,7 @@
   "version": 1,
   "groups": [
     "transport-text",
-    "transport-text-fragments"
+    "transport-text-fragments",
+    "transport-text-buffer"
   ]
 }
