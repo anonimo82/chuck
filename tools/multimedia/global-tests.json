@@ -63,6 +63,7 @@
     "transport-audio-midi",
     "transport-raster",
     "transport-raster-stream",
-    "transport-vector"
+    "transport-vector",
+    "transport-model"
   ]
 }

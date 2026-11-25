@@ -3,6 +3,7 @@
 #include "MediaAudioMidi.h"
 #include "MediaRasterStream.h"
 #include "MediaVector.h"
+#include "MediaModel.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -690,6 +691,58 @@ CK_DLL_SFUN(vg_decode) {
     } catch(...) {}
     RETURN->v_string=API->object->create_string(VM,result.c_str(),FALSE);
 }
+CK_DLL_SFUN(md_size) {
+    auto v=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS);RETURN->v_int=mediawire::modelPacketSize(v,t);
+}
+CK_DLL_SFUN(md_encode) {
+    RETURN->v_int=0;
+    try {
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto b=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(!a||!b||stream<1||static_cast<uint64_t>(stream)>=0xffffffffu||seq<0||
+           static_cast<uint64_t>(seq)>0xffffffffu||ts<0)return;
+        auto n=API->object->array_float_size(a),m=API->object->array_int_size(b);
+        if(n<9||m<3||n%3||m%3)return;
+        auto bytes=mediawire::modelPacketSize(n/3,m/3);
+        if(!bytes||!exact(dst,API,bytes))return;
+        std::vector<double> xyz(n);std::vector<uint32_t> indices(m);
+        for(t_CKINT i=0;i<n;++i)xyz[i]=API->object->array_float_get_idx(a,i);
+        for(t_CKINT i=0;i<m;++i){auto v=API->object->array_int_get_idx(b,i);if(v<0||v>=n/3)return;indices[i]=static_cast<uint32_t>(v);}
+        mediawire::Bytes wire;
+        if(mediawire::encodeModel({3,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},xyz,indices,wire)){
+            write(dst,API,wire);RETURN->v_int=1;
+        }
+    } catch(...) {}
+}
+CK_DLL_SFUN(md_inspect) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;mediawire::Header h;std::vector<double> xyz;std::vector<uint32_t> indices;
+        if(!exact(dst,API,5)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeModel(wire,h,xyz,indices))return;
+        const uint64_t fields[]={h.stream,h.sequence,h.timestamp,xyz.size()/3,indices.size()/3};
+        for(size_t i=0;i<5;++i)API->object->array_int_set_idx(dst,i,fields[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_SFUN(md_decode) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto b=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;mediawire::Header h;std::vector<double> xyz;std::vector<uint32_t> indices;
+        if(!a||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeModel(wire,h,xyz,indices)||!exact(b,API,indices.size())||
+           API->object->array_float_size(a)!=static_cast<t_CKINT>(xyz.size()))return;
+        for(size_t i=0;i<xyz.size();++i)API->object->array_float_set_idx(a,i,xyz[i]);
+        for(size_t i=0;i<indices.size();++i)API->object->array_int_set_idx(b,i,indices[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -1023,5 +1076,24 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","metadata");
     QUERY->add_sfun(QUERY,vg_decode,"string","decode");
     QUERY->add_arg(QUERY,"int[]","packet");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaModel","Object");
+    QUERY->add_sfun(QUERY,md_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","vertices");
+    QUERY->add_arg(QUERY,"int","triangles");
+    QUERY->add_sfun(QUERY,md_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"float[]","xyz");
+    QUERY->add_arg(QUERY,"int[]","indices");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,md_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,md_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"float[]","xyz");
+    QUERY->add_arg(QUERY,"int[]","indices");
     return QUERY->end_class(QUERY);
 }

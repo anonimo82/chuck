@@ -229,3 +229,5 @@ User-reported Windows Local: expected=466, PASS=466, FAIL=0, missing=0, unreport
 #209: CKRF v1 contiguous raster fragments, bounded 16 MiB image reassembly, strict sequence/image/offset validation, complete-image backpressure and session integration. 71 new checks, global 6667, local 164, cadence 17/20. Native validation pending; caller slices fragments, no compression or automatic display scheduling. No workflow changes.
 
 #210: CKVG v1 UTF-8 SVG source transport, exact source preservation, bounded length and encoding validation, VectorImage interoperability and negotiated session roundtrip. 49 new checks, global 6716, local 213, cadence 18/20. Native validation pending. SVG semantic validation/sanitization, external resource bundling and fragmentation are not implemented in the transport. No workflow changes.
+
+#211: CKMD v1 indexed triangle mesh transport, finite binary32 XYZ and bounded indices, Model3D array interoperability, negotiated session roundtrip. 71 new checks, global 6787, local 284, cadence 19/20. Native validation pending; geometry only, materials, textures, scene graphs, animation and fragmentation not included. No workflow changes.
