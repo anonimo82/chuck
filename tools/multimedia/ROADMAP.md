@@ -129,3 +129,5 @@ User selected all capture before transmission. Proposed three five-functional-PR
 #172: native MidiMsg field bridge and SMF recording export; 42 new checks, global 4682, local 100; functional cadence 7/20. Hardware validation and native compilation pending.
 
 #173: explicit MIDI session start/pause/resume/stop and active elapsed time; 57 new checks, global 4739, local 157; functional cadence 8/20. Native and device validation pending.
+
+#174: bounded UTF-8 text capture buffer with codepoint insertion, cursor and editing; 64 new checks, global 4803, local 221; functional cadence 9/20. Native validation pending. Interactive device adapter and document/flow integration follow.

@@ -33,6 +33,7 @@
     "vector-editable-svg",
     "midi-capture-events",
     "midi-capture-save",
-    "midi-capture-session"
+    "midi-capture-session",
+    "text-capture-unicode"
   ]
 }

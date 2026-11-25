@@ -159,3 +159,7 @@ Overloads insertText(position,value,style), replaceText(start,end,value,style), 
 ## Integrated editing workflow
 
 After layout(), hitTest() supplies source byte offsets for setSelection(). Use replaceSelection(value,style) or applyStyle() to edit or format, then call layout() again before hit testing or rendering. saveNative() preserves text, styles and frames but not the transient selection; saveTXT() exports plain source including overflow. appendFlow() copies inline content into TextDocument. The integrated smoke group checks rendering equality after native reload, PNG/TXT/document export and independent edits. No GUI, undo history or grapheme-aware navigation is provided. Native validation pending.
+
+## Unicode text capture
+
+TextCapture is a bounded UTF-8 input buffer (1 MiB). insert(string) inserts validated UTF-8 at the cursor; insertCodepoint(int) inserts a Unicode scalar other than NUL; newline() inserts LF. backspace() and deleteForward() remove one codepoint, not a grapheme cluster. seek(byteOffset) accepts only UTF-8 boundaries; cursor() and bytes() report byte offsets/length, characters() counts codepoints, lines() counts LF-delimited lines including an empty final line. text() returns a snapshot; clear() resets the buffer. Invalid insertions and seeks preserve state. The buffer accepts caller-provided text, not global keyboard hooks; interactive adapters and TextDocument/TextFlow integration follow. Native validation pending.
