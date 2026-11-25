@@ -2704,6 +2704,35 @@ CK_DLL_MFUN(text_doc_load_txt) {
 }
 
 
+// Hit testing uses the same remaining-source layout and clipping as rendering.
+CK_DLL_MFUN(text_flow_hit_test) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=flowState(SELF,API);
+        auto i=GET_NEXT_INT(ARGS);
+        double x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS);
+        if(!p||!p->planned||i<0||static_cast<uint64_t>(i)>=p->slices.size()||!std::isfinite(x)||!std::isfinite(y)) return;
+        const auto &f=p->frames[i]; const auto &s=p->slices[i]; const auto &b=f.box;
+        double tx=b.paddingLeft+b.borderWidth,ty=b.paddingTop+b.borderWidth;
+        int w=static_cast<int>(std::floor(f.width-tx-b.paddingRight-b.borderWidth));
+        double h=s.bottom/static_cast<double>(PANGO_SCALE);
+        if(s.start==s.end||x<tx||y<ty||x>=tx+w||y>=ty+h) return;
+        SurfacePtr surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1),cairo_surface_destroy);
+        if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return;
+        std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
+        if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return;
+        auto rest=flowRemainder(p->source,s.start);
+        auto layout=makeLayout(cr.get(),rest,w);
+        if(!layout) return;
+        int index=0,trailing=0;
+        pango_layout_xy_to_index(layout.get(),static_cast<int>((x-tx)*PANGO_SCALE),static_cast<int>((y-ty)*PANGO_SCALE),&index,&trailing);
+        if(index<0||static_cast<size_t>(index)>rest.text.size()||trailing<0) return;
+        const char *begin=rest.text.c_str(),*pos=begin+index,*end=begin+rest.text.size();
+        while(trailing--&&pos<end) pos=g_utf8_next_char(pos);
+        size_t offset=s.start+static_cast<size_t>(pos-begin);
+        RETURN->v_int=static_cast<t_CKINT>(std::min(offset,s.end));
+    } catch(...) {}
+}
 CK_DLL_MFUN(text_flow_layout) {
     RETURN->v_int=0;
     try { auto *p=flowState(SELF,API); if(p) { p->planned=false; RETURN->v_int=planFrameFlow(*p); } } catch(...) {}
@@ -2990,6 +3019,10 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_flow_frame_end,"int","frameEndByte");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_flow_hit_test,"int","hitTest");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"float","x");
+    QUERY->add_arg(QUERY,"float","y");
     QUERY->add_mfun(QUERY,text_flow_ready,"int","ready");
     QUERY->add_mfun(QUERY,text_flow_layout,"int","layout");
     QUERY->add_mfun(QUERY,text_flow_load_txt,"int","loadTXT");
