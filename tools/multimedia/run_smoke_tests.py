@@ -102,9 +102,13 @@ def main():
     elif args.mode == "Failed":
         if not state.get("pending"):
             parser.error("No failed or interrupted run recorded")
-        groups = state["pending"] if state.get("attempt") == head and not dirty else list(GROUPS)
-        if not isinstance(groups, list) or any(g not in GROUPS for g in groups):
+        groups = state["pending"]
+        if (not isinstance(groups, list) or any(g not in GROUPS for g in groups)
+                or dirty or state.get("attempt_dirty", True)):
             groups = list(GROUPS)
+        elif state.get("attempt") != head:
+            changed = select(state.get("attempt"), head)
+            groups = [g for g in GROUPS if g in groups or g in changed]
     elif args.mode == "Incremental" and not dirty:
         groups = select(args.since or state.get("validated"), head)
     else:
@@ -119,7 +123,7 @@ def main():
     print("SMOKE SELECTION | mode=" + args.mode + " | groups=" + ",".join(groups), flush=True)
     # Record the entire attempted plan before launching it. Failed retries
     # repeat that plan, including fixture producers and Python assertions.
-    state.update(attempt=head, pending=groups, diagnostic=bool(args.group) or (args.mode == "Failed" and state.get("diagnostic", False)))
+    state.update(attempt=head, attempt_dirty=dirty, pending=groups, diagnostic=bool(args.group) or (args.mode == "Failed" and state.get("diagnostic", False)))
     save_state(args.state, state)
     expected = 0
     reported = passed = failed = missing = extra = completed = 0
