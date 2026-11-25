@@ -25,6 +25,7 @@
     "text-flow-selection",
     "text-flow-edit",
     "text-flow-styled-edit",
-    "text-flow-edit-consolidation"
+    "text-flow-edit-consolidation",
+    "media-packet"
   ]
 }
