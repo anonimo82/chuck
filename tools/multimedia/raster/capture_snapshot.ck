@@ -1,19 +1,19 @@
 // Explicit opt-in manual device check. Run with --silent and the installed chugin path.
-// Arguments: screen OR camera:<device name> (quote the whole argument).
+// Arguments: screen OR camera and device name (quote the whole script argument).
 @import "RasterIO";
 RasterCapture capture;
 RasterImage image;
-if(me.args()!=1) {
-    <<< "Use screen or camera:<device name>; no capture performed." >>>;
+if(me.args()<1 || me.args()>2) {
+    <<< "Use screen or camera plus device name; no capture performed." >>>;
     me.exit();
 }
 me.arg(0) => string source;
 0 => int ok;
-if(source=="screen") {
+if(source=="screen" && me.args()==1) {
     if(capture.screenWidth()>=320 && capture.screenHeight()>=240)
         capture.captureScreen(0,0,320,240) => ok;
-} else if(source.length()>7 && source.substring(0,7)=="camera:") {
-    capture.captureCamera(source.substring(7),640,480) => ok;
+} else if(source=="camera" && me.args()==2) {
+    capture.captureCamera(me.arg(1),640,480) => ok;
 }
 if(!ok) { <<< "Capture unavailable or failed; check backend, device and permissions." >>>; me.exit(); }
 if(!image.importCapture(capture)) { <<< "Import failed" >>>; me.exit(); }
