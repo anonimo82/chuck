@@ -30,7 +30,7 @@ if(!appearance.bind(model,0)) { <<< "Cannot read material" >>>; me.exit(); }
 // Optional caller-selected image; use a trusted local texture with matching UVs.
 if(me.args()>1) appearance.colorTexture(Texture.load(me.arg(1)));
 else appearance.loadExternalTexture(model,0);
-GMesh mesh(bridge.geometry, appearance.material) --> GG.scene();
+GMesh mesh(bridge.geometry, appearance.activeMaterial()) --> GG.scene();
 GG.windowTitle("ModelIO / ChuGL animated mesh");
 now => time start;
 while(true) {

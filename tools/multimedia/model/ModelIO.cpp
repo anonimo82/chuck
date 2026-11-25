@@ -642,6 +642,28 @@ CK_DLL_MFUN(model3d_export_material) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(model3d_export_material_lighting) {
+    RETURN->v_int=0;
+    try {
+        auto index=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto *m=materialByIndex(modelState(SELF,API),index);
+        if(!m||!a||API->object->array_float_size(a)!=8) return;
+        aiColor3D emission(0,0,0),specular(0.2f,0.2f,0.2f);
+        ai_real shine=64;
+        int twoSided=0;
+        if(m->Get(AI_MATKEY_COLOR_EMISSIVE,emission)!=AI_SUCCESS) emission=aiColor3D(0,0,0);
+        if(m->Get(AI_MATKEY_COLOR_SPECULAR,specular)!=AI_SUCCESS) specular=aiColor3D(0.2f,0.2f,0.2f);
+        if(m->Get(AI_MATKEY_SHININESS,shine)!=AI_SUCCESS) shine=64;
+        if(m->Get(AI_MATKEY_TWOSIDED,twoSided)!=AI_SUCCESS) twoSided=0;
+        double values[]={emission.r,emission.g,emission.b,specular.r,specular.g,specular.b,shine,twoSided?1.0:0.0};
+        for(double v:values) if(!std::isfinite(v)) return;
+        for(unsigned i=0;i<6;++i) values[i]=std::clamp(values[i],0.0,1.0);
+        values[6]=std::clamp(values[6],0.0,10000.0);
+        for(unsigned i=0;i<8;++i) API->object->array_float_set_idx(a,i,values[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_MFUN(model3d_base_texture_count) {
     RETURN->v_int=-1;
     auto *m=materialByIndex(modelState(SELF,API),GET_NEXT_INT(ARGS));
@@ -1542,6 +1564,9 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_material_at,"int","materialAt");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_mfun(QUERY,model3d_export_material,"int","exportMaterial");
+    QUERY->add_arg(QUERY,"int","materialIndex");
+    QUERY->add_arg(QUERY,"float[]","properties");
+    QUERY->add_mfun(QUERY,model3d_export_material_lighting,"int","exportMaterialLighting");
     QUERY->add_arg(QUERY,"int","materialIndex");
     QUERY->add_arg(QUERY,"float[]","properties");
     QUERY->add_mfun(QUERY,model3d_base_texture_count,"int","baseColorTextures");
