@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <pango/pangocairo.h>
 #include <cairo-svg.h>
+#include <cairo-pdf.h>
 #include <string>
 #include <vector>
 #include <memory>
@@ -1609,6 +1610,57 @@ CK_DLL_MFUN(text_doc_save_svg) {
     } catch(...) {}
 }
 
+
+CK_DLL_MFUN(text_doc_save_pdf) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        auto *p=pageState(GET_NEXT_OBJECT(ARGS),API);
+        if(!d||!p||path.size()<4||path.substr(path.size()-4)!=".pdf"||path.find('\0')!=std::string::npos) return;
+        std::vector<PageEntry> entries; int count=0;
+        if(!planPages(*d,*p,entries,count)) return;
+        FILE *f=mediaio::openNew(path.c_str()); if(!f) return;
+        bool ok=false;
+        try {
+            // Page geometry is expressed in logical pixels; PDF uses 72 points per inch.
+            constexpr double scale=72.0/96.0;
+            SurfacePtr surface(cairo_pdf_surface_create_for_stream(textWritePng,f,p->width*scale,p->height*scale),cairo_surface_destroy);
+            if(cairo_surface_status(surface.get())==CAIRO_STATUS_SUCCESS) {
+                {
+                    std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
+                    ok=cairo_status(cr.get())==CAIRO_STATUS_SUCCESS;
+                    size_t cursor=0;
+                    for(int page=0;ok&&page<count;++page) {
+                        Document selected;
+                        while(cursor<entries.size()&&entries[cursor].page==page) {
+                            const auto &e=entries[cursor++];
+                            if(e.kind==1) selected.tables.push_back({selected.paragraphs.size(),d->tables[e.index].table,selected.nextOrder++});
+                            else if(e.kind==2) selected.nodes.push_back({selected.paragraphs.size(),d->nodes[e.index].node,selected.nextOrder++});
+                            else selected.paragraphs.push_back(d->paragraphs[e.index]);
+                        }
+                        cairo_save(cr.get());
+                        cairo_scale(cr.get(),scale,scale);
+                        if(p->backgroundColor>=0) { nodeColor(cr.get(),p->backgroundColor); cairo_paint(cr.get()); }
+                        int w=p->width-p->marginLeft-p->marginRight,h=p->height-p->marginTop-p->marginBottom;
+                        cairo_translate(cr.get(),p->marginLeft,p->marginTop);
+                        cairo_rectangle(cr.get(),0,0,w,h); cairo_clip(cr.get());
+                        ok=drawDocument(cr.get(),selected,w,h);
+                        cairo_restore(cr.get());
+                        if(ok) cairo_show_page(cr.get());
+                        ok=ok&&cairo_status(cr.get())==CAIRO_STATUS_SUCCESS;
+                    }
+                    ok=ok&&cursor==entries.size();
+                }
+                cairo_surface_finish(surface.get());
+                ok=ok&&cairo_surface_status(surface.get())==CAIRO_STATUS_SUCCESS;
+            }
+        } catch(...) { ok=false; }
+        if(std::fclose(f)!=0) ok=false;
+        if(!ok) { std::remove(path.c_str()); return; }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+
 CK_DLL_MFUN(text_doc_page_count) {
     RETURN->v_int=-1;
     try {
@@ -2393,6 +2445,9 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"TextPage","page");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,text_doc_save_pdf,"int","savePDF");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_arg(QUERY,"TextPage","page");
     QUERY->add_mfun(QUERY,text_doc_save_page,"int","savePagePNG");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_arg(QUERY,"TextPage","page");
