@@ -5945,8 +5945,65 @@ check(doc.pageCount(page)==-1);
         assert not (p / "bad-table.pdf").exists()
 
 
+
+def text_frame_foundation():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextFrame frame;
+TextFrame other;
+TextContainer box;
+TextContainer copy;
+int dims[2];
+int wrong[1];
+check(frame.x()==0 && frame.y()==0);
+check(frame.width()==320 && frame.height()==240);
+check(frame.page()==0);
+check(frame.contentSize(dims));
+check(dims[0]==320 && dims[1]==240);
+check(frame.setGeometry(10,20,100,80));
+check(frame.x()==10 && frame.y()==20 && frame.width()==100 && frame.height()==80);
+check(!frame.setGeometry(1,2,0,40));
+check(frame.x()==10 && frame.y()==20 && frame.width()==100 && frame.height()==80);
+check(frame.x(-1)==-1);
+check(frame.y(4096)==-1);
+check(frame.width(4097)==-1);
+check(frame.height(0)==-1);
+check(frame.page(-1)==-1);
+check(frame.page(4096)==-1);
+check(frame.page(3)==3);
+check(frame.x(15)==15);
+check(frame.y(25)==25);
+check(frame.width(120)==120);
+check(frame.height(90)==90);
+check(other.width()==320 && other.page()==0);
+5=>box.paddingLeft;
+7=>box.paddingRight;
+3=>box.paddingTop;
+4=>box.paddingBottom;
+2=>box.borderWidth;
+0xff0000=>box.backgroundColor;
+check(frame.setContainer(box));
+check(frame.contentSize(dims));
+check(dims[0]==104 && dims[1]==79);
+20=>box.paddingLeft;
+check(frame.getContainer(copy));
+check(copy.paddingLeft==5 && copy.backgroundColor==0xff0000);
+check(frame.contentSize(dims) && dims[0]==104);
+check(!frame.contentSize(wrong));
+check(frame.width(1)==1);
+check(!frame.contentSize(dims));
+check(dims[0]==104 && dims[1]==79);
+frame.reset();
+check(frame.x()==0 && frame.y()==0 && frame.page()==0);
+check(frame.contentSize(dims) && dims[0]==320 && dims[1]==240);
+check(frame.getContainer(copy));
+check(copy.paddingLeft==0 && copy.borderWidth==0);
+""",35,p)
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
