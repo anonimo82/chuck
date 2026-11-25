@@ -3386,3 +3386,39 @@ model.clear();
 check(!model.exportPitches(0,0,48,60,exact));
 check(exact[0]==48 && exact[1]==60 && exact[2]==48);
 """,29,p)
+
+    run("video", """
+@import "RasterIO";
+VideoClip clip;
+RasterImage image;
+int pixels[64];
+check(!clip.exportPixels(4,4,pixels));
+check(clip.load("generated.mkv"));
+check(clip.exportPixels(4,4,pixels));
+check(pixels[0]==255 && pixels[1]==0 && pixels[2]==0 && pixels[3]==255);
+check(pixels[60]==255 && pixels[63]==255);
+check(clip.frameIndex()==0 && clip.width()==16 && clip.height()==16);
+check(!clip.exportPixels(0,4,pixels));
+check(!clip.exportPixels(8193,4,pixels));
+check(!clip.exportPixels(8192,8192,pixels));
+check(!clip.exportPixels(2,2,pixels));
+check(pixels[0]==255 && pixels[63]==255);
+check(image.importPixels(4,4,pixels));
+check(image.width()==4 && image.height()==4);
+check(image.pixelAt(3,3,0)==255);
+check(clip.next()==1);
+check(clip.exportPixels(4,4,pixels));
+check(pixels[0]==0 && pixels[2]==255 && pixels[3]==255);
+0.5=>clip.blue;
+check(clip.exportPixels(4,4,pixels));
+check(pixels[2]==128 && pixels[62]==128);
+int nativePixels[1024];
+check(clip.exportPixels(nativePixels));
+check(nativePixels[2]==pixels[2]);
+check(clip.exportPixels(16,16,nativePixels));
+check(nativePixels[2]==128 && nativePixels[1023]==255);
+check(clip.frameIndex()==1);
+clip.clear();
+check(!clip.exportPixels(4,4,pixels));
+check(pixels[2]==128);
+""",26,p)
