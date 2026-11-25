@@ -571,6 +571,149 @@ CK_DLL_MFUN(model3d_export_uv) {
     RETURN->v_int=1;
 }
 
+
+namespace {
+bool unit(double v) { return std::isfinite(v)&&v>=0&&v<=1; }
+}
+CK_DLL_MFUN(model3d_material) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=modelState(SELF,API);
+        auto name=GET_NEXT_STRING_SAFE(ARGS);
+        auto r=GET_NEXT_FLOAT(ARGS),g=GET_NEXT_FLOAT(ARGS),b=GET_NEXT_FLOAT(ARGS),a=GET_NEXT_FLOAT(ARGS);
+        if(!p||!p->generated||name.empty()||name.size()>255||!unit(r)||!unit(g)||!unit(b)||!unit(a)) return;
+        auto *scene=p->generated.get(); unsigned n=scene->mNumMaterials;
+        if(n>=256) return;
+        auto material=std::make_unique<aiMaterial>();
+        aiString label(name); aiColor4D color(r,g,b,a); ai_real opacity=a;
+        if(material->AddProperty(&label,AI_MATKEY_NAME)!=AI_SUCCESS||
+           material->AddProperty(&color,1,AI_MATKEY_COLOR_DIFFUSE)!=AI_SUCCESS||
+           material->AddProperty(&opacity,1,AI_MATKEY_OPACITY)!=AI_SUCCESS) return;
+        auto list=std::make_unique<aiMaterial*[]>(n+1);
+        for(unsigned i=0;i<n;++i) list[i]=scene->mMaterials[i];
+        list[n]=material.release();
+        delete[] scene->mMaterials; scene->mMaterials=list.release(); scene->mNumMaterials=n+1;
+        RETURN->v_int=n;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_material_count) {
+    auto *p=modelState(SELF,API);
+    RETURN->v_int=p&&p->scene?static_cast<t_CKINT>(p->scene->mNumMaterials):-1;
+}
+CK_DLL_MFUN(model3d_material_at) {
+    auto *m=meshAt(modelState(SELF,API),GET_NEXT_INT(ARGS));
+    RETURN->v_int=m?static_cast<t_CKINT>(m->mMaterialIndex):-1;
+}
+CK_DLL_MFUN(model3d_assign_material) {
+    RETURN->v_int=0;
+    auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS),material=GET_NEXT_INT(ARGS);
+    auto *m=editableMesh(p,mesh);
+    if(!m||material<0||static_cast<uint64_t>(material)>=p->generated->mNumMaterials) return;
+    m->mMaterialIndex=material; RETURN->v_int=1;
+}
+CK_DLL_MFUN(model3d_set_colors) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto *m=editableMesh(p,mesh);
+        if(!m||!a||API->object->array_float_size(a)!=static_cast<int64_t>(m->mNumVertices)*4) return;
+        auto next=std::make_unique<aiColor4D[]>(m->mNumVertices);
+        for(unsigned i=0;i<m->mNumVertices;++i) {
+            double v[4];
+            for(int j=0;j<4;++j) { v[j]=API->object->array_float_get_idx(a,4*i+j); if(!unit(v[j])) return; }
+            next[i]=aiColor4D(v[0],v[1],v[2],v[3]);
+        }
+        delete[] m->mColors[0]; m->mColors[0]=next.release(); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_export_colors) {
+    RETURN->v_int=0;
+    auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS);
+    auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+    auto *m=meshAt(p,mesh);
+    if(!m||!m->HasVertexColors(0)||!a||API->object->array_float_size(a)!=static_cast<int64_t>(m->mNumVertices)*4) return;
+    for(unsigned i=0;i<m->mNumVertices;++i) {
+        auto c=m->mColors[0][i];
+        API->object->array_float_set_idx(a,4*i,c.r);
+        API->object->array_float_set_idx(a,4*i+1,c.g);
+        API->object->array_float_set_idx(a,4*i+2,c.b);
+        API->object->array_float_set_idx(a,4*i+3,c.a);
+    }
+    RETURN->v_int=1;
+}
+// Minimal flat bind-pose skeleton: identity child nodes, identity inverse bind matrices.
+// One assignment per mesh, dense vertex-major input, at most four nonzero influences.
+CK_DLL_MFUN(model3d_set_skin) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS),count=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto *m=editableMesh(p,mesh);
+        if(!m||m->HasBones()||count<1||count>64||!a||
+           static_cast<uint64_t>(m->mNumVertices)*count>16000000||
+           API->object->array_float_size(a)!=static_cast<int64_t>(m->mNumVertices)*count) return;
+        std::vector<std::vector<aiVertexWeight>> weights(count);
+        for(unsigned i=0;i<m->mNumVertices;++i) {
+            double sum=0,values[64]; int nonzero=0;
+            for(int j=0;j<count;++j) {
+                double v=API->object->array_float_get_idx(a,static_cast<int64_t>(i)*count+j);
+                if(!unit(v)) return;
+                values[j]=v; sum+=v; if(v>0) ++nonzero;
+            }
+            if(sum<=0||nonzero>4) return;
+            for(int j=0;j<count;++j) if(values[j]>0)
+                weights[j].emplace_back(i,static_cast<ai_real>(values[j]/sum));
+        }
+        auto *root=p->generated->mRootNode;
+        std::vector<std::unique_ptr<aiBone>> bones;
+        std::vector<std::unique_ptr<aiNode>> nodes;
+        for(int j=0;j<count;++j) {
+            if(weights[j].empty()) return;
+            aiString name("Skin_"+std::to_string(mesh)+"_"+std::to_string(j));
+            if(root->FindNode(name)) return;
+            auto bone=std::make_unique<aiBone>(); bone->mName=name;
+            bone->mWeights=new aiVertexWeight[weights[j].size()];
+            bone->mNumWeights=static_cast<unsigned>(weights[j].size());
+            std::copy(weights[j].begin(),weights[j].end(),bone->mWeights);
+            auto node=std::make_unique<aiNode>(); node->mName=name; node->mParent=root;
+            bones.push_back(std::move(bone)); nodes.push_back(std::move(node));
+        }
+        auto boneList=std::make_unique<aiBone*[]>(count);
+        auto childList=std::make_unique<aiNode*[]>(root->mNumChildren+count);
+        for(unsigned j=0;j<root->mNumChildren;++j) childList[j]=root->mChildren[j];
+        for(int j=0;j<count;++j) {
+            boneList[j]=bones[j].release(); childList[root->mNumChildren+j]=nodes[j].release();
+        }
+        delete[] root->mChildren; root->mChildren=childList.release(); root->mNumChildren+=count;
+        m->mBones=boneList.release(); m->mNumBones=count;
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_bones) {
+    auto *m=meshAt(modelState(SELF,API),GET_NEXT_INT(ARGS));
+    RETURN->v_int=m?static_cast<t_CKINT>(m->mNumBones):-1;
+}
+CK_DLL_MFUN(model3d_export_weights) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto *m=meshAt(p,mesh);
+        if(!m||!m->HasBones()||!a) return;
+        uint64_t n=static_cast<uint64_t>(m->mNumVertices)*m->mNumBones;
+        if(n>16000000||API->object->array_float_size(a)!=static_cast<t_CKINT>(n)) return;
+        std::vector<double> data(n,0);
+        for(unsigned b=0;b<m->mNumBones;++b) for(unsigned j=0;j<m->mBones[b]->mNumWeights;++j) {
+            auto w=m->mBones[b]->mWeights[j];
+            if(w.mVertexId>=m->mNumVertices||!unit(w.mWeight)) return;
+            data[static_cast<size_t>(w.mVertexId)*m->mNumBones+b]+=w.mWeight;
+        }
+        for(size_t i=0;i<data.size();++i) API->object->array_float_set_idx(a,i,data[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+
 CK_DLL_QUERY(ModelIO) {
     QUERY->setname(QUERY, "ModelIO");
     QUERY->begin_class(QUERY, "ModelIO", "Object");
@@ -683,5 +826,32 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_export_uv,"int","exportUV");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"float[]","uv");
+    QUERY->add_mfun(QUERY,model3d_material,"int","addMaterial");
+    QUERY->add_arg(QUERY,"string","name");
+    QUERY->add_arg(QUERY,"float","red");
+    QUERY->add_arg(QUERY,"float","green");
+    QUERY->add_arg(QUERY,"float","blue");
+    QUERY->add_arg(QUERY,"float","opacity");
+    QUERY->add_mfun(QUERY,model3d_material_count,"int","materials");
+    QUERY->add_mfun(QUERY,model3d_material_at,"int","materialAt");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_mfun(QUERY,model3d_assign_material,"int","assignMaterial");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"int","material");
+    QUERY->add_mfun(QUERY,model3d_set_colors,"int","setColors");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"float[]","rgba");
+    QUERY->add_mfun(QUERY,model3d_export_colors,"int","exportColors");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"float[]","rgba");
+    QUERY->add_mfun(QUERY,model3d_set_skin,"int","setSkin");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"int","boneCount");
+    QUERY->add_arg(QUERY,"float[]","weights");
+    QUERY->add_mfun(QUERY,model3d_bones,"int","bones");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_mfun(QUERY,model3d_export_weights,"int","exportWeights");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"float[]","weights");
     return QUERY->end_class(QUERY);
 }
