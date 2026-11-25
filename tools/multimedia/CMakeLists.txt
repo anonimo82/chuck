@@ -111,8 +111,10 @@ chugin(TextIO text/TextIO.cpp)
 target_link_libraries(TextIO PRIVATE PkgConfig::TEXT PkgConfig::GLIB)
 
 find_package(PNG REQUIRED)
+find_package(JPEG REQUIRED)
+pkg_check_modules(WEBP REQUIRED IMPORTED_TARGET libwebp)
 chugin(MediaTransport transport/MediaTransport.cpp)
-target_link_libraries(MediaTransport PRIVATE PNG::PNG)
+target_link_libraries(MediaTransport PRIVATE PNG::PNG JPEG::JPEG PkgConfig::WEBP)
 
 if(WIN32)
   target_link_libraries(MediaTransport PRIVATE ws2_32)

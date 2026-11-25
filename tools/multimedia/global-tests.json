@@ -76,6 +76,7 @@
     "transport-text-buffer",
     "transport-heterogeneous",
     "transport-raster-lossless",
-    "transport-raster-png"
+    "transport-raster-png",
+    "transport-raster-photo"
   ]
 }

@@ -1,6 +1,7 @@
 {
   "version": 1,
   "groups": [
-    "transport-raster-png"
+    "transport-raster-png",
+    "transport-raster-photo"
   ]
 }

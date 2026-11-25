@@ -13,6 +13,7 @@
 #include "MediaRouter.h"
 #include "MediaRasterCompressed.h"
 #include "MediaRasterPng.h"
+#include "MediaRasterPhoto.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -1301,6 +1302,118 @@ CK_DLL_SFUN(rp_decode){
         }
     }catch(...){}
 }
+CK_DLL_SFUN(rj_size){
+    RETURN->v_int=0;
+    try{
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto quality=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes pixels,wire;
+        if(quality<1||quality>100)return;
+        auto n=mediawire::imagePixels(w,h);
+        if(w>0&&h>0&&n&&exact(src,API,4*n)&&read(src,API,4*n,pixels)&&
+           mediawire::encodeRasterPhoto({1,1,0,0},{static_cast<uint32_t>(w),static_cast<uint32_t>(h)},pixels,static_cast<int>(quality),false,false,wire))
+            RETURN->v_int=wire.size();
+    }catch(...){}
+}
+CK_DLL_SFUN(rj_encode){
+    RETURN->v_int=0;
+    try{
+        auto s=GET_NEXT_INT(ARGS),q=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto quality=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(quality<1||quality>100)return;
+        auto n=mediawire::imagePixels(w,h);mediawire::Bytes pixels,wire;
+        if(s<=0||static_cast<uint64_t>(s)>=0xffffffffu||q<0||static_cast<uint64_t>(q)>0xffffffffu||t<0||w<=0||h<=0||
+           !n||!exact(src,API,4*n)||!read(src,API,4*n,pixels))return;
+        if(mediawire::encodeRasterPhoto({1,static_cast<uint32_t>(s),static_cast<uint32_t>(q),static_cast<uint64_t>(t)},
+             {static_cast<uint32_t>(w),static_cast<uint32_t>(h)},pixels,static_cast<int>(quality),false,false,wire)&&exact(dst,API,wire.size())){
+            write(dst,API,wire);RETURN->v_int=1;
+        }
+    }catch(...){}
+}
+CK_DLL_SFUN(rj_inspect){
+    RETURN->v_int=0;
+    try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Header h;mediawire::RasterInfo info;bool lossless=false;mediawire::Bytes wire,pixels;
+        if(!exact(dst,API,5)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeRasterPhoto(wire,h,info,false,lossless,pixels))return;
+        const uint64_t m[]={h.stream,h.sequence,h.timestamp,info.width,info.height};
+        for(size_t i=0;i<5;++i)API->object->array_int_set_idx(dst,i,m[i]);
+        RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(rj_decode){
+    RETURN->v_int=0;
+    try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Header h;mediawire::RasterInfo info;bool lossless=false;mediawire::Bytes wire,pixels;
+        if(read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)&&
+           mediawire::decodeRasterPhoto(wire,h,info,false,lossless,pixels)&&exact(dst,API,pixels.size())){
+            write(dst,API,pixels);RETURN->v_int=1;
+        }
+    }catch(...){}
+}
+CK_DLL_SFUN(rw_size){
+    RETURN->v_int=0;
+    try{
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto quality=GET_NEXT_INT(ARGS); auto mode=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes pixels,wire;
+        if(quality<1||quality>100||mode<0||mode>1)return;
+        auto n=mediawire::imagePixels(w,h);
+        if(w>0&&h>0&&n&&exact(src,API,4*n)&&read(src,API,4*n,pixels)&&
+           mediawire::encodeRasterPhoto({1,1,0,0},{static_cast<uint32_t>(w),static_cast<uint32_t>(h)},pixels,static_cast<int>(quality),true,mode==1,wire))
+            RETURN->v_int=wire.size();
+    }catch(...){}
+}
+CK_DLL_SFUN(rw_encode){
+    RETURN->v_int=0;
+    try{
+        auto s=GET_NEXT_INT(ARGS),q=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto quality=GET_NEXT_INT(ARGS); auto mode=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(quality<1||quality>100||mode<0||mode>1)return;
+        auto n=mediawire::imagePixels(w,h);mediawire::Bytes pixels,wire;
+        if(s<=0||static_cast<uint64_t>(s)>=0xffffffffu||q<0||static_cast<uint64_t>(q)>0xffffffffu||t<0||w<=0||h<=0||
+           !n||!exact(src,API,4*n)||!read(src,API,4*n,pixels))return;
+        if(mediawire::encodeRasterPhoto({1,static_cast<uint32_t>(s),static_cast<uint32_t>(q),static_cast<uint64_t>(t)},
+             {static_cast<uint32_t>(w),static_cast<uint32_t>(h)},pixels,static_cast<int>(quality),true,mode==1,wire)&&exact(dst,API,wire.size())){
+            write(dst,API,wire);RETURN->v_int=1;
+        }
+    }catch(...){}
+}
+CK_DLL_SFUN(rw_inspect){
+    RETURN->v_int=0;
+    try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Header h;mediawire::RasterInfo info;bool lossless=false;mediawire::Bytes wire,pixels;
+        if(!exact(dst,API,6)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeRasterPhoto(wire,h,info,true,lossless,pixels))return;
+        const uint64_t m[]={h.stream,h.sequence,h.timestamp,info.width,info.height,lossless?1ull:0ull};
+        for(size_t i=0;i<6;++i)API->object->array_int_set_idx(dst,i,m[i]);
+        RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(rw_decode){
+    RETURN->v_int=0;
+    try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Header h;mediawire::RasterInfo info;bool lossless=false;mediawire::Bytes wire,pixels;
+        if(read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)&&
+           mediawire::decodeRasterPhoto(wire,h,info,true,lossless,pixels)&&exact(dst,API,pixels.size())){
+            write(dst,API,pixels);RETURN->v_int=1;
+        }
+    }catch(...){}
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -1936,6 +2049,52 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"int[]","metadata");
     QUERY->add_sfun(QUERY,rp_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaRasterJpeg","Object");
+    QUERY->add_sfun(QUERY,rj_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","quality");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_sfun(QUERY,rj_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","quality");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,rj_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,rj_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaRasterWebp","Object");
+    QUERY->add_sfun(QUERY,rw_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","quality");
+    QUERY->add_arg(QUERY,"int","lossless");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_sfun(QUERY,rw_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","quality");
+    QUERY->add_arg(QUERY,"int","lossless");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,rw_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,rw_decode,"int","decode");
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY))return FALSE;
