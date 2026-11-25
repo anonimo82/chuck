@@ -4052,3 +4052,67 @@ check(pixels[a]==255 && pixels[b+8]==129);
 seq.clear();
 check(!seq.exportPianoRoll(4,128,0xffffff,0,pixels));
 """,28,p)
+
+    run("midi", """
+@import "VectorIO";
+MidiSequence seq;
+VectorImage image;
+float rects[12];
+check(seq.pianoRollRectCount()==-1);
+check(!seq.exportPianoRollRects(8,128,0xff0000,rects));
+check(seq.create(480,120.0));
+check(seq.addNote(0,0,480,0,60,127));
+check(seq.addNote(0,480,480,9,64,64));
+check(seq.pianoRollRectCount()==2);
+check(seq.exportPianoRollRects(8,128,0xff0000,rects));
+check(rects[0]==0.0 && rects[1]==67.0 && rects[2]==4.0 && rects[3]==1.0);
+check(rects[4]==16711680.0 && rects[5]==1.0);
+check(rects[6]==4.0 && rects[7]==63.0 && rects[8]==4.0 && rects[9]==1.0);
+check(Math.fabs(rects[11]-64.0/127.0)<0.000001);
+check(!seq.exportPianoRollRects(0,128,0xff0000,rects));
+check(!seq.exportPianoRollRects(8,127,0xff0000,rects));
+check(!seq.exportPianoRollRects(8,128,-1,rects));
+float bad[6];
+check(!seq.exportPianoRollRects(8,128,0xff0000,bad));
+check(rects[2]==4.0 && rects[4]==16711680.0);
+check(image.importRects(8,128,rects));
+check(image.shapes()==2);
+int pixels[4096];
+check(image.exportPixels(8,128,pixels));
+check(pixels[67*32]==255 && pixels[67*32+3]==255);
+check(pixels[63*32+16]==255 && pixels[63*32+19]>=128 && pixels[63*32+19]<=129);
+check(pixels[3]==0);
+check(image.save("vector-piano-roll.svg"));
+1=>seq.transpose;
+0.5=>seq.velocityGain;
+check(seq.exportPianoRollRects(8,128,0x00ff00,rects));
+check(rects[1]==66.0 && rects[4]==65280.0 && Math.fabs(rects[5]-64.0/127.0)<0.000001);
+check(image.importRects(8,128,rects));
+check(image.shapes()==2);
+check(image.removeShape(0));
+check(image.shapes()==1);
+check(seq.notes(0)==2 && seq.noteLength(0,0)==480);
+""",30,p)
+
+    run("vector", """
+VectorImage image;
+float rects[6];
+check(!image.importRects(8,8,rects));
+check(image.importRects(8,8,[1.0,2.0,3.0,4.0,255.0,1.0]));
+check(image.shapes()==1);
+int pixels[256];
+check(image.exportPixels(8,8,pixels));
+check(pixels[(2*8+1)*4+2]==255 && pixels[(2*8+1)*4+3]==255);
+check(pixels[3]==0);
+2.0=>image.x;
+check(!image.importRects(8,8,[1.0,2.0,0.0,4.0,255.0,1.0]));
+check(!image.importRects(8,8,[1.0,2.0,3.0,4.0,255.5,1.0]));
+check(!image.importRects(8,8,[1.0,2.0,3.0,4.0,255.0,1.1]));
+check(!image.importRects(8,8,[1.0,2.0,3.0]));
+check(!image.importRects(0,8,rects));
+check(image.shapes()==1 && image.x()==2.0);
+check(image.importRects(8,8,[0.0,0.0,2.0,2.0,16711680.0,0.5]));
+check(image.x()==0.0 && image.shapes()==1);
+check(image.exportPixels(8,8,pixels));
+check(pixels[0]==255 && pixels[3]>=127 && pixels[3]<=128);
+""",16,p)

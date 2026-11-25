@@ -573,6 +573,30 @@ CK_DLL_MFUN(vector_image_export_frame) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(vector_image_import_rects) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!a||w<1||w>4096||h<1||h>4096) return;
+        auto n=API->object->array_float_size(a);
+        if(n<0||n>4096*6||n%6) return;
+        std::vector<std::string> shapes;
+        for(t_CKINT i=0;i<n;i+=6) {
+            double v[6];
+            for(int k=0;k<6;++k) v[k]=API->object->array_float_get_idx(a,i+k);
+            for(int k=0;k<4;++k) if(!coord(v[k])) return;
+            if(v[2]<=0||v[3]<=0||!std::isfinite(v[4])||v[4]<0||v[4]>0xffffff||
+               std::floor(v[4])!=v[4]||!std::isfinite(v[5])||v[5]<0||v[5]>1) return;
+            auto o=svgStream();
+            o<<"<rect x=\""<<v[0]<<"\" y=\""<<v[1]<<"\" width=\""<<v[2]
+             <<"\" height=\""<<v[3]<<"\""<<style(static_cast<t_CKINT>(v[4]),v[5],false)<<"/>";
+            shapes.push_back(o.str());
+        }
+        if(p->replaceShapes(w,h,std::move(shapes))) { p->reset(); RETURN->v_int=1; }
+    } catch(...) {}
+}
 CK_DLL_QUERY(VectorIO) {
     QUERY->setname(QUERY, "VectorIO");
     QUERY->begin_class(QUERY, "VectorIO", "Object");
@@ -668,6 +692,10 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_arg(QUERY,"int","alphaThreshold");
     QUERY->add_arg(QUERY,"int","scan");
     QUERY->add_arg(QUERY,"int[]","pitches");
+    QUERY->add_mfun(QUERY,vector_image_import_rects,"int","importRects");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"float[]","rects");
     QUERY->add_mfun(QUERY,vector_image_import_triangles,"int","importTriangles");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
