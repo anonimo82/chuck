@@ -610,6 +610,41 @@ CK_DLL_MFUN(raster_image_export_pitches) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(raster_image_export_blend) {
+    RETURN->v_int=0;
+    try {
+        auto *p=imageState(SELF,API);
+        auto other=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        double t=GET_NEXT_FLOAT(ARGS);
+        auto rgb=GET_NEXT_INT(ARGS);
+        auto out=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->input.loaded()||!other||!out||!std::isfinite(t)||t<0||t>1||
+           rgb<0||rgb>0xffffff) return;
+        size_t n=p->input.rgba.size();
+        if(n>16777216||API->object->array_int_size(other)!=static_cast<t_CKINT>(n)||
+           API->object->array_int_size(out)!=static_cast<t_CKINT>(n)) return;
+        for(size_t i=0;i<n;++i) {
+            auto v=API->object->array_int_get_idx(other,i);
+            if(v<0||v>255) return;
+        }
+        auto component=[&](size_t i,int c) {
+            double v=p->input.rgba[i+c]*p->controls[c]+(c<3?255*p->controls[4]:0);
+            return std::lround(std::clamp(v,0.0,255.0));
+        };
+        for(size_t i=0;i<n;i+=4) {
+            double a=component(i,3)/255.0;
+            double b=API->object->array_int_get_idx(other,i+3)/255.0;
+            for(int c=0;c<3;++c) {
+                double bg=(rgb>>(16-8*c))&255;
+                double left=component(i,c)*a+bg*(1-a);
+                double right=API->object->array_int_get_idx(other,i+c)*b+bg*(1-b);
+                API->object->array_int_set_idx(out,i+c,std::lround(std::clamp(left*(1-t)+right*t,0.0,255.0)));
+            }
+            API->object->array_int_set_idx(out,i+3,255);
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(RasterIO) {
     QUERY->setname(QUERY, "RasterIO");
     QUERY->begin_class(QUERY, "RasterIO", "Object");
@@ -662,6 +697,11 @@ CK_DLL_QUERY(RasterIO) {
     QUERY->add_mfun(QUERY,raster_image_import_pixels,"int","importPixels");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,raster_image_export_blend,"int","exportBlend");
+    QUERY->add_arg(QUERY,"int[]","targetPixels");
+    QUERY->add_arg(QUERY,"float","mix");
+    QUERY->add_arg(QUERY,"int","backgroundRGB");
     QUERY->add_arg(QUERY,"int[]","pixels");
     QUERY->add_mfun(QUERY,raster_image_export_pitches,"int","exportPitches");
     QUERY->add_arg(QUERY,"int","lowPitch");
