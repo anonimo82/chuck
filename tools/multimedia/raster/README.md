@@ -73,3 +73,7 @@ RasterImage.fill(r,g,b,a), fillRect(x,y,w,h,r,g,b,a), line(x,y,x2,y2,r,g,b,a), a
 ## Raster-to-audio sonification
 
 exportAudioSamples(channels,float[] samples) maps each pixel to one PCM frame in row-major order (left to right, top to bottom). Mono uses weighted sRGB components (0.2126 R + 0.7152 G + 0.0722 B); stereo uses (R+G)/2 and (B+G)/2 respectively. Components are normalized to [0,1], mapped to [-1,1] and multiplied by processed alpha, so transparent pixels are silent. Current RGBA controls apply with the same rounding as exportPixels. Exact preallocated size width*height*channels, channels 1 or 2 only. Failure leaves output unchanged; source is not modified. Feed the resulting samples to AudioBuffer.importSamples(rate,channels,samples). Rate is chosen by the caller, with one frame per pixel. This is direct sonification, not recovery of original audio from a waveform or spectrogram. Constant regions can produce DC; use offline highPass and fade for listening. No new dependencies; native validation pending.
+
+## Heightmap export
+
+exportHeightmap(float[] heights) writes width*height normalized heights, in row-major order, using weighted sRGB brightness multiplied by alpha. The current color and opacity controls apply, with the same component rounding as exportPixels. Transparent pixels map to zero height. Exact preallocated array size required; failure preserves the output and the image. Compatible with Model3D.createHeightmap. Native validation pending.

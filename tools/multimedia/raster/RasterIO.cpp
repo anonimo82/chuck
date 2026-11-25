@@ -563,6 +563,25 @@ CK_DLL_MFUN(raster_image_audio_samples) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(raster_image_heightmap) {
+    RETURN->v_int=0;
+    try {
+        auto *p=imageState(SELF,API);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->input.loaded()||!a) return;
+        size_t n=p->input.rgba.size()/4;
+        if(API->object->array_float_size(a)!=static_cast<t_CKINT>(n)) return;
+        for(size_t i=0;i<n;++i) {
+            auto component=[&](int c) {
+                double v=p->input.rgba[4*i+c]*p->controls[c]+(c<3?255*p->controls[4]:0);
+                return std::lround(std::clamp(v,0.0,255.0))/255.0;
+            };
+            double v=0.2126*component(0)+0.7152*component(1)+0.0722*component(2);
+            API->object->array_float_set_idx(a,i,std::clamp(v*component(3),0.0,1.0));
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(RasterIO) {
     QUERY->setname(QUERY, "RasterIO");
     QUERY->begin_class(QUERY, "RasterIO", "Object");
@@ -616,6 +635,8 @@ CK_DLL_QUERY(RasterIO) {
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,raster_image_heightmap,"int","exportHeightmap");
+    QUERY->add_arg(QUERY,"float[]","heights");
     QUERY->add_mfun(QUERY,raster_image_audio_samples,"int","exportAudioSamples");
     QUERY->add_arg(QUERY,"int","channels");
     QUERY->add_arg(QUERY,"float[]","samples");
