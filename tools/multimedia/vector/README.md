@@ -40,3 +40,7 @@ VectorImage.create(width,height) starts an empty editable SVG canvas (1–4096 p
 ## Waveform import
 
 importWaveform(width,height,float[] bounds,rgb,alpha) creates a new editable canvas containing one filled SVG path with a rectangle for each min/max amplitude pair. Bounds are finite, ordered and within [-1,1]; 1–4096 pairs. Canvas dimensions 1–4096. Positive amplitudes are at the top; each bucket has at least one SVG unit of height, including silence. Transparent background. Success replaces the document and resets controls; failure preserves it. Compatible with AudioBuffer.exportEnvelope. Native validation pending.
+
+## Vector-to-3D silhouette
+
+exportAlpha(width,height,int[] alpha) renders the current SVG with all global controls and writes row-major alpha values 0–255 into an exactly sized width*height array. Dimensions 1–4096; failure preserves output. For a 3D extrusion pass the mask (at most 256 per axis) to Model3D.createSilhouette. Works for imported and generated SVG, including holes and disconnected shapes. No new native dependency. This is raster-based approximation, not exact SVG curve tessellation.
