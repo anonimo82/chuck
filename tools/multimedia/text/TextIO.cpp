@@ -2876,9 +2876,117 @@ CK_DLL_MFUN(text_flow_layout) {
     try { auto *p=flowState(SELF,API); if(p) { p->planned=false; RETURN->v_int=planFrameFlow(*p); } } catch(...) {}
 }
 
+namespace {
+constexpr size_t captureLimit=1048576;
+struct TextCaptureState {
+    std::string text;
+    size_t cursor=0;
+};
+t_CKUINT textCaptureOffset=0;
+TextCaptureState *textCapture(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<TextCaptureState *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,textCaptureOffset)));
+}
+bool captureBoundary(const std::string &s,t_CKINT i) {
+    return i>=0&&static_cast<uint64_t>(i)<=s.size()&&
+        (static_cast<size_t>(i)==s.size()||(static_cast<unsigned char>(s[i])&0xc0)!=0x80);
+}
+bool captureInsert(TextCaptureState *p,const std::string &s) {
+    if(!p||!validText(s,captureLimit-p->text.size())) return false;
+    p->text.insert(p->cursor,s);
+    p->cursor+=s.size(); return true;
+}
+}
+CK_DLL_CTOR(text_capture_ctor) {
+    OBJ_MEMBER_UINT(SELF,textCaptureOffset)=reinterpret_cast<uintptr_t>(new(std::nothrow) TextCaptureState);
+}
+CK_DLL_DTOR(text_capture_dtor) {
+    delete textCapture(SELF,API); OBJ_MEMBER_UINT(SELF,textCaptureOffset)=0;
+}
+CK_DLL_MFUN(text_capture_insert) {
+    RETURN->v_int=0;
+    try { auto *p=textCapture(SELF,API); auto s=GET_NEXT_STRING_SAFE(ARGS);
+        RETURN->v_int=captureInsert(p,s);
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_capture_codepoint) {
+    RETURN->v_int=0;
+    try {
+        auto *p=textCapture(SELF,API); auto cp=GET_NEXT_INT(ARGS);
+        if(cp<=0||cp>0x10ffff||(cp>=0xd800&&cp<=0xdfff)) return;
+        char bytes[6];
+        int n=g_unichar_to_utf8(static_cast<gunichar>(cp),bytes);
+        RETURN->v_int=captureInsert(p,std::string(bytes,n));
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_capture_newline) {
+    RETURN->v_int=0;
+    try { RETURN->v_int=captureInsert(textCapture(SELF,API),"\n"); } catch(...) {}
+}
+CK_DLL_MFUN(text_capture_backspace) {
+    RETURN->v_int=0;
+    auto *p=textCapture(SELF,API);
+    if(!p||!p->cursor) return;
+    size_t start=p->cursor-1;
+    while(start&&(static_cast<unsigned char>(p->text[start])&0xc0)==0x80) --start;
+    p->text.erase(start,p->cursor-start); p->cursor=start; RETURN->v_int=1;
+}
+CK_DLL_MFUN(text_capture_delete) {
+    RETURN->v_int=0;
+    auto *p=textCapture(SELF,API);
+    if(!p||p->cursor>=p->text.size()) return;
+    size_t end=p->cursor+1;
+    while(end<p->text.size()&&(static_cast<unsigned char>(p->text[end])&0xc0)==0x80) ++end;
+    p->text.erase(p->cursor,end-p->cursor); RETURN->v_int=1;
+}
+CK_DLL_MFUN(text_capture_seek) {
+    RETURN->v_int=0;
+    auto *p=textCapture(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    if(p&&captureBoundary(p->text,i)) { p->cursor=static_cast<size_t>(i); RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_capture_cursor) {
+    auto *p=textCapture(SELF,API); RETURN->v_int=p?static_cast<t_CKINT>(p->cursor):-1;
+}
+CK_DLL_MFUN(text_capture_bytes) {
+    auto *p=textCapture(SELF,API); RETURN->v_int=p?static_cast<t_CKINT>(p->text.size()):0;
+}
+CK_DLL_MFUN(text_capture_characters) {
+    auto *p=textCapture(SELF,API); RETURN->v_int=p?g_utf8_strlen(p->text.data(),p->text.size()):0;
+}
+CK_DLL_MFUN(text_capture_lines) {
+    auto *p=textCapture(SELF,API);
+    RETURN->v_int=p?1+std::count(p->text.begin(),p->text.end(),'\n'):0;
+}
+CK_DLL_MFUN(text_capture_text) {
+    auto *p=textCapture(SELF,API);
+    RETURN->v_string=API->object->create_string(VM,p?p->text.c_str():"",FALSE);
+}
+CK_DLL_MFUN(text_capture_clear) {
+    if(auto *p=textCapture(SELF,API)) { p->text.clear(); p->cursor=0; }
+}
 CK_DLL_QUERY(TextIO) {
     QUERY->setname(QUERY,"TextIO");
     QUERY->begin_class(QUERY,"TextIO","Object");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"TextCapture","Object");
+    textCaptureOffset=QUERY->add_mvar(QUERY,"int","@textCaptureNative",FALSE);
+    if(textCaptureOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,text_capture_ctor);
+    QUERY->add_dtor(QUERY,text_capture_dtor);
+    QUERY->add_mfun(QUERY,text_capture_insert,"int","insert");
+    QUERY->add_arg(QUERY,"string","value");
+    QUERY->add_mfun(QUERY,text_capture_codepoint,"int","insertCodepoint");
+    QUERY->add_arg(QUERY,"int","codepoint");
+    QUERY->add_mfun(QUERY,text_capture_newline,"int","newline");
+    QUERY->add_mfun(QUERY,text_capture_backspace,"int","backspace");
+    QUERY->add_mfun(QUERY,text_capture_delete,"int","deleteForward");
+    QUERY->add_mfun(QUERY,text_capture_seek,"int","seek");
+    QUERY->add_arg(QUERY,"int","byteOffset");
+    QUERY->add_mfun(QUERY,text_capture_cursor,"int","cursor");
+    QUERY->add_mfun(QUERY,text_capture_bytes,"int","bytes");
+    QUERY->add_mfun(QUERY,text_capture_characters,"int","characters");
+    QUERY->add_mfun(QUERY,text_capture_lines,"int","lines");
+    QUERY->add_mfun(QUERY,text_capture_text,"string","text");
+    QUERY->add_mfun(QUERY,text_capture_clear,"void","clear");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextStyle","Object");
     styleOffset=QUERY->add_mvar(QUERY,"int","@textStyleNative",FALSE);
