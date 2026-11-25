@@ -74,6 +74,7 @@
     "transport-text",
     "transport-text-fragments",
     "transport-text-buffer",
-    "transport-heterogeneous"
+    "transport-heterogeneous",
+    "transport-raster-lossless"
   ]
 }
