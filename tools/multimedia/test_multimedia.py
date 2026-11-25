@@ -7227,8 +7227,91 @@ check(image.exportPixels(16,16,pixels));
         assert root[1].get("fill") == "none"
         assert float(root[1].get("stroke-width")) == 4
 
+
+def vector_shape_group():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("vector", """
+VectorImage image;
+check(image.duplicateShape(0)==-1);
+check(image.groupShapes(0,2)==-1);
+check(image.create(16,16));
+check(image.addRect(0,0,8,8,16711680,1));
+check(image.addRect(0,0,8,8,255,1));
+check(image.addCircle(12,12,2,65280,1));
+int pixels[1024];
+check(image.exportPixels(16,16,pixels));
+check(pixels[2]==255 && pixels[0]==0);
+check(image.moveShape(0,1));
+check(image.exportPixels(16,16,pixels));
+check(pixels[0]==255 && pixels[2]==0);
+check(image.moveShape(1,1));
+check(!image.moveShape(0,3));
+check(!image.moveShape(-1,0));
+check(image.duplicateShape(1)==2);
+check(image.shapes()==4);
+check(image.shapeType(2)=="rect");
+check(image.translateShape(2,4,0));
+float matrix[6];
+check(image.getShapeTransform(1,matrix));
+check(matrix[4]==0);
+check(image.getShapeTransform(2,matrix));
+check(matrix[4]==4);
+check(image.setShapeFill(2,65280,1));
+check(image.groupShapes(0,1)==-1);
+check(image.groupShapes(2,3)==-1);
+check(image.groupShapes(0,2)==0);
+check(image.shapes()==3);
+check(image.shapeType(0)=="g");
+check(image.groupSize(0)==2);
+check(image.groupSize(1)==-1);
+check(image.shapeGeometrySize(0)==-1);
+check(!image.getShapeTransform(0,matrix));
+check(!image.translateShape(0,1,1));
+float paint[6];
+check(!image.getShapeStyle(0,paint));
+check(!image.setShapeFill(0,0,1));
+check(image.ungroupShape(1)==-1);
+check(image.groupShapes(0,2)==0);
+check(image.shapes()==2);
+check(image.groupSize(0)==2);
+check(image.duplicateShape(0)==1);
+check(image.shapes()==3);
+check(image.groupSize(1)==2);
+check(image.removeShape(1));
+check(image.shapes()==2);
+check(image.save("grouped.svg"));
+check(image.ungroupShape(0)==2);
+check(image.shapes()==3);
+check(image.shapeType(0)=="g");
+check(image.ungroupShape(0)==2);
+check(image.shapes()==4);
+check(image.shapeType(0)=="rect");
+check(image.shapeType(3)=="circle");
+check(image.getShapeStyle(2,paint));
+check(paint[0]==65280);
+check(image.getShapeTransform(2,matrix));
+check(matrix[4]==4);
+check(image.exportPixels(16,16,pixels));
+check(pixels[0]==255 && pixels[2]==0);
+check(pixels[4*5+1]==255);
+check(image.load("grouped.svg"));
+check(image.shapes()==-1);
+check(image.ungroupShape(0)==-1);
+check(image.exportPixels(16,16,pixels));
+check(pixels[0]==255 && pixels[2]==0);
+check(pixels[4*5+1]==255);
+""",65,p)
+        import xml.etree.ElementTree as ET
+        root = ET.parse(p / "grouped.svg").getroot()
+        assert [e.tag.split("}")[-1] for e in root] == ["g", "circle"]
+        assert [e.tag.split("}")[-1] for e in root[0]] == ["g", "rect"]
+        assert len(root[0][0]) == 2
+        assert root[0][1].get("transform") == "matrix(1 0 0 1 4 0)"
+        assert root[0][1].get("fill") == "#00ff00"
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
