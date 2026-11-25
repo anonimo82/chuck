@@ -51,6 +51,7 @@
     "video-offscreen-render",
     "video-indexed-av",
     "video-graphics-consolidation",
-    "transport-framing"
+    "transport-framing",
+    "transport-loopback"
   ]
 }
