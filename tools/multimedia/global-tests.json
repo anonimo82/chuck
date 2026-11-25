@@ -15,6 +15,7 @@
     "text-frame-flow",
     "text-frame-mixed",
     "text-frame-render",
-    "text-frame-native"
+    "text-frame-native",
+    "text-accessibility"
   ]
 }
