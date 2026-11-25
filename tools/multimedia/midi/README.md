@@ -59,3 +59,24 @@ exportNoteBoxes(timeSpan,pitchStep,heightScale,float[] boxes) exports six floats
 ## Timestamped MIDI capture
 
 MidiCapture.create(ticksPerQuarter,bpm) initializes a fixed-tempo event buffer (TPQ 1–32767, BPM 4–1000). append(seconds,status,data1,data2) accepts explicit nonnegative nondecreasing elapsed seconds and MIDI channel voice statuses 0x80–0xef, with 7-bit data. Program change and channel pressure require data2=0 and store two bytes; all other channel voice messages store three bytes. Equal timestamps retain arrival order. tickAt rounds elapsed seconds * TPQ * BPM / 60 to the nearest tick (half upward), bounded to 0x0fffffff. count(), secondsAt(index), tickAt(index), sizeAt(index), byteAt(index,byteIndex) inspect the recording; invalid index returns -1. clear() empties events while preserving configuration. Invalid create/append preserve state. Maximum one million messages; no system/SysEx or running status. This buffer accepts caller-provided timestamps and does not open a device, save SMF or manage sessions yet. Native validation pending.
+
+## MIDI capture persistence and device bridge
+
+appendMessage(seconds,data1,data2,data3) accepts the three fields of native MidiMsg; for program change and channel pressure the unused third field is ignored. The caller opens MidiIn and drains it using recv(msg); elapsed time can be computed from ChucK now relative to a start time. This is receive-time stamping, not a hardware timestamp guarantee. save(path) exports a single-track Standard MIDI File at the configured TPQ and fixed tempo, preserving arrival order at equal ticks. Existing files are not overwritten. The in-memory recording is unchanged. Example (requires an actual MIDI input):
+
+```chuck
+@import "MidiFileIO";
+MidiIn input;
+MidiMsg msg;
+MidiCapture recorder;
+if(!input.open(0)) me.exit();
+recorder.create(480,120);
+now => time started;
+while(now-started < 10::second) {
+    while(input.recv(msg)) recorder.appendMessage((now-started)/second,msg.data1,msg.data2,msg.data3);
+    1::ms => now;
+}
+recorder.save("recording.mid");
+```
+
+Native validation pending; automated tests use constructed MidiMsg objects, not physical devices.
