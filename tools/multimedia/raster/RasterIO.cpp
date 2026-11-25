@@ -2,6 +2,7 @@
 #include "chuck_dl.h"
 #include "../file_compat.h"
 #include "../capture/CaptureFrame.h"
+#include "../capture/CameraCapture.h"
 #include "../keyframe/keyframe.h"
 #include <array>
 #include <vector>
@@ -666,12 +667,36 @@ CK_DLL_MFUN(raster_capture_platform) {
 }
 CK_DLL_MFUN(raster_capture_supported) {
     auto source=GET_NEXT_INT(ARGS);
-    RETURN->v_int=0; // No native backend registered yet.
-    (void)source;
+    RETURN->v_int=source==1&&media_capture::cameraSupported();
 }
 CK_DLL_MFUN(raster_capture_devices) {
     auto source=GET_NEXT_INT(ARGS);
-    RETURN->v_int=(source==1||source==2)?0:-1;
+    RETURN->v_int=-1;
+    try {
+        if(source==2) { RETURN->v_int=0; return; }
+        if(source==1) { std::vector<std::string> names; RETURN->v_int=media_capture::cameraDevices(names); }
+    } catch(...) {}
+}
+CK_DLL_MFUN(raster_capture_device_name) {
+    std::string name;
+    try {
+        auto source=GET_NEXT_INT(ARGS),index=GET_NEXT_INT(ARGS);
+        std::vector<std::string> names;
+        if(source==1&&index>=0&&media_capture::cameraDevices(names)>=0&&
+           static_cast<uint64_t>(index)<names.size()) name=names[index];
+    } catch(...) {}
+    RETURN->v_string=API->object->create_string(VM,name.c_str(),FALSE);
+}
+CK_DLL_MFUN(raster_capture_camera) {
+    RETURN->v_int=0;
+    try {
+        auto *p=captureState(SELF,API); auto name=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        if(!p||!media_capture::Frame::dimensions(w,h)) return;
+        media_capture::Frame next;
+        if(!media_capture::cameraSnapshot(name,static_cast<int>(w),static_cast<int>(h),next)||!next.valid()) return;
+        p->frame=std::move(next); RETURN->v_int=1;
+    } catch(...) {}
 }
 CK_DLL_MFUN(raster_capture_ingest) {
     RETURN->v_int=0;
@@ -742,6 +767,13 @@ CK_DLL_QUERY(RasterIO) {
     QUERY->add_arg(QUERY,"int","source");
     QUERY->add_mfun(QUERY,raster_capture_devices,"int","deviceCount");
     QUERY->add_arg(QUERY,"int","source");
+    QUERY->add_mfun(QUERY,raster_capture_device_name,"string","deviceName");
+    QUERY->add_arg(QUERY,"int","source");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,raster_capture_camera,"int","captureCamera");
+    QUERY->add_arg(QUERY,"string","name");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
     QUERY->add_mfun(QUERY,raster_capture_ingest,"int","ingestFrame");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
