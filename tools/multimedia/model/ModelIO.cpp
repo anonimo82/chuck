@@ -1839,6 +1839,41 @@ CK_DLL_MFUN(model3d_project_triangles) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(model3d_export_audio) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto index=GET_NEXT_INT(ARGS),axis=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto *m=meshAt(p,index);
+        if(!m||!a||axis<0||axis>2||m->mNumVertices<1||m->mNumVertices>1000000) return;
+        auto count=API->object->array_float_size(a);
+        if(count<1||count>33554432) return;
+        std::vector<double> values;
+        values.reserve(m->mNumVertices);
+        double lo=std::numeric_limits<double>::infinity(),hi=-lo;
+        for(unsigned i=0;i<m->mNumVertices;++i) {
+            const auto &v=m->mVertices[i];
+            double sample=axis==0?v.x:axis==1?v.y:v.z;
+            if(!std::isfinite(sample)) return;
+            lo=std::min(lo,sample); hi=std::max(hi,sample);
+            values.push_back(sample);
+        }
+        // Normalize coordinate range to bipolar PCM; constant axes are silent.
+        double mid=lo*0.5+hi*0.5,half=hi*0.5-lo*0.5;
+        for(auto &v:values) v=half>0?std::clamp((v-mid)/half,-1.0,1.0):0.0;
+        // Uniformly sample the vertex sequence, preserving both endpoints.
+        for(t_CKINT i=0;i<count;++i) {
+            double position=count==1?0.0:double(i)*(values.size()-1)/(count-1);
+            size_t left=std::min(static_cast<size_t>(position),values.size()-1);
+            size_t right=std::min(left+1,values.size()-1);
+            double mix=position-left;
+            double sample=values[left]*(1.0-mix)+values[right]*mix;
+            API->object->array_float_set_idx(a,i,std::clamp(sample,-1.0,1.0));
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(ModelIO) {
     QUERY->setname(QUERY, "ModelIO");
     QUERY->begin_class(QUERY, "ModelIO", "Object");
@@ -1893,6 +1928,10 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_get_scaleZ,"float","scaleZ");
     QUERY->add_mfun(QUERY,model3d_set_scaleZ,"float","scaleZ");
     QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,model3d_export_audio,"int","exportAudioSamples");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"int","axis");
+    QUERY->add_arg(QUERY,"float[]","samples");
     QUERY->add_mfun(QUERY,model3d_project_triangles,"int","projectTriangles");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"int","width");
