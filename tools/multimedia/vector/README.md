@@ -52,3 +52,7 @@ importPixels(width,height,int[] pixels) converts straight row-major RGBA8 pixels
 ## Projected triangle import
 
 importTriangles(width,height,float[] triangles) replaces the current document with editable filled polygons in supplied order. Seven floats per triangle: three XY pairs and integral packed RGB 0–0xffffff. Dimensions 1–4096, 1–4096 input triangles; finite coordinates within existing SVG limits. Zero-area triangles are omitted, and canvas clips out-of-bounds geometry. Success resets controls; failure preserves document and controls. Compatible with Model3D.projectTriangles; no new native dependency. Native validation pending.
+
+## SVG-to-MIDI sonification
+
+exportPitches(width,height,lowPitch,highPitch,alphaThreshold,scan,int[] pitches) renders the current SVG, including transforms and opacity, at the requested sampling resolution in memory. Straight RGBA8 is recovered using the same unpremultiplication as exportPixels. Weighted sRGB brightness maps to the inclusive MIDI pitch range 0–127; alpha below threshold 1–255 yields -1 (rest). Scan 0 row-major, 1 column-major, 2 serpentine. Dimensions 1–4096, at most 100000 samples, exact output array length width*height. Failure preserves output; SVG is unchanged. Compatible with MidiSequence.importPitches and RasterImage.exportPitches conventions. Sampling resolution and antialiasing affect results; this is creative sonification, not optical music recognition or direct path traversal. No new dependency. Native validation pending.
