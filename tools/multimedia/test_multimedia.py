@@ -7742,10 +7742,10 @@ def raster_capture_foundation():
 RasterCapture cap;
 check(cap.platform()>=0 && cap.platform()<=3);
 check(cap.supported(1)==0 || cap.supported(1)==1);
-check(!cap.supported(2));
+check(cap.supported(2)==0 || cap.supported(2)==1);
 check(!cap.supported(-1));
 check(cap.deviceName(1,-1)=="");
-check(cap.deviceCount(2)==0);
+check(cap.deviceName(2,-1)=="");
 check(cap.deviceCount(0)==-1);
 check(!cap.ready());
 check(cap.width()==-1);
@@ -7801,7 +7801,7 @@ RasterCapture cap;
 check(cap.supported(1)==0 || cap.supported(1)==1);
 check(cap.deviceName(0,0)=="");
 check(cap.deviceName(1,-1)=="");
-check(cap.deviceName(2,0)=="");
+check(cap.deviceName(2,1)=="");
 check(!cap.captureCamera("",2,2));
 check(!cap.captureCamera("invalid",0,2));
 check(!cap.captureCamera("invalid",8192,8192));
@@ -7820,8 +7820,41 @@ cap.clear();
 check(!cap.ready());
 """,17,p)
 
+
+def raster_screen_capture():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("raster", """
+RasterCapture cap;
+check(cap.supported(2)==0 || cap.supported(2)==1);
+check(cap.deviceName(2,-1)=="");
+check(cap.deviceName(2,1)=="");
+check(cap.screenWidth()==-1 || cap.screenWidth()>0);
+check(cap.screenHeight()==-1 || cap.screenHeight()>0);
+check(!cap.captureScreen(-1,0,1,1));
+check(!cap.captureScreen(0,-1,1,1));
+check(!cap.captureScreen(0,0,0,1));
+check(!cap.captureScreen(0,0,1,0));
+check(!cap.captureScreen(0,0,8192,8192));
+check(!cap.ready());
+[12,34,56,78] @=> int data[];
+int pixels[4];
+check(cap.ingestFrame(1,1,0.25,data));
+check(!cap.captureScreen(2147483647,0,1,1));
+check(!cap.captureScreen(0,2147483647,1,1));
+check(!cap.captureScreen(0,0,-1,1));
+check(cap.ready());
+check(cap.width()==1);
+check(cap.height()==1);
+check(cap.timestamp()==0.25);
+check(cap.exportPixels(pixels));
+check(pixels[0]==12 && pixels[1]==34 && pixels[2]==56 && pixels[3]==78);
+cap.clear();
+check(!cap.ready());
+""",22,p)
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
