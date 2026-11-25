@@ -925,6 +925,65 @@ bool flowByteBoundary(const std::string &text,t_CKINT offset) {
     return offset>=0&&static_cast<uint64_t>(offset)<=text.size()&&
         (static_cast<size_t>(offset)==text.size()||(static_cast<unsigned char>(text[static_cast<size_t>(offset)])&0xc0)!=0x80);
 }
+// Plain edits preserve existing styled fragments; inserted text uses the base style.
+bool editFlow(FrameFlow &flow,t_CKINT first,t_CKINT last,const std::string &value) {
+    const auto &src=flow.source;
+    if(first>last||!flowByteBoundary(src.text,first)||!flowByteBoundary(src.text,last)||!validText(value,65536)) return false;
+    size_t a=static_cast<size_t>(first),b=static_cast<size_t>(last);
+    if(value.size()>65536-(src.text.size()-(b-a))) return false;
+    if(a==b&&value.empty()) { flow.selectionAnchor=flow.selectionFocus=a; return true; }
+    Paragraph next;
+    next.style=src.style; next.layout=src.layout; next.box=src.box; next.list=src.list;
+    bool baseOpen=true;
+    auto append=[&](const std::string &part,const Style &style,bool base) {
+        if(part.empty()) return;
+        next.text+=part;
+        if(base&&baseOpen) next.baseBytes+=part.size();
+        else { baseOpen=false; next.runs.push_back(Run{part,style}); }
+    };
+    auto copyRange=[&](size_t lo,size_t hi) {
+        size_t start=0;
+        auto copy=[&](size_t end,const Style &style,bool base) {
+            size_t l=std::max(start,lo),h=std::min(end,hi);
+            if(l<h) append(src.text.substr(l,h-l),style,base);
+            start=end;
+        };
+        copy(src.baseBytes,src.style,true);
+        for(const auto &run:src.runs) copy(start+run.text.size(),run.style,false);
+    };
+    copyRange(0,a);
+    append(value,src.style,true);
+    copyRange(b,src.text.size());
+    if(next.runs.size()>1024) return false;
+    flow.source=std::move(next);
+    flow.selectionAnchor=flow.selectionFocus=a+value.size();
+    flow.planned=false;
+    return true;
+}
+CK_DLL_MFUN(text_flow_insert_text) {
+    RETURN->v_int=0;
+    try { auto *p=flowState(SELF,API); auto pos=GET_NEXT_INT(ARGS); auto value=GET_NEXT_STRING_SAFE(ARGS);
+        if(p&&editFlow(*p,pos,pos,value)) RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_flow_delete_text) {
+    RETURN->v_int=0;
+    try { auto *p=flowState(SELF,API); auto a=GET_NEXT_INT(ARGS),b=GET_NEXT_INT(ARGS);
+        if(p&&editFlow(*p,a,b,"")) RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_flow_replace_text) {
+    RETURN->v_int=0;
+    try { auto *p=flowState(SELF,API); auto a=GET_NEXT_INT(ARGS),b=GET_NEXT_INT(ARGS); auto value=GET_NEXT_STRING_SAFE(ARGS);
+        if(p&&editFlow(*p,a,b,value)) RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_flow_replace_selection) {
+    RETURN->v_int=0;
+    try { auto *p=flowState(SELF,API); auto value=GET_NEXT_STRING_SAFE(ARGS);
+        if(p&&editFlow(*p,static_cast<t_CKINT>(std::min(p->selectionAnchor,p->selectionFocus)),static_cast<t_CKINT>(std::max(p->selectionAnchor,p->selectionFocus)),value)) RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_MFUN(text_flow_set_selection) {
     RETURN->v_int=0;
     auto *p=flowState(SELF,API); auto a=GET_NEXT_INT(ARGS),b=GET_NEXT_INT(ARGS);
@@ -3046,6 +3105,18 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_flow_clear_frames,"void","clearFrames");
     QUERY->add_mfun(QUERY,text_flow_frame_text,"string","frameText");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_flow_insert_text,"int","insertText");
+    QUERY->add_arg(QUERY,"int","position");
+    QUERY->add_arg(QUERY,"string","value");
+    QUERY->add_mfun(QUERY,text_flow_delete_text,"int","deleteText");
+    QUERY->add_arg(QUERY,"int","start");
+    QUERY->add_arg(QUERY,"int","end");
+    QUERY->add_mfun(QUERY,text_flow_replace_text,"int","replaceText");
+    QUERY->add_arg(QUERY,"int","start");
+    QUERY->add_arg(QUERY,"int","end");
+    QUERY->add_arg(QUERY,"string","value");
+    QUERY->add_mfun(QUERY,text_flow_replace_selection,"int","replaceSelection");
+    QUERY->add_arg(QUERY,"string","value");
     QUERY->add_mfun(QUERY,text_flow_set_selection,"int","setSelection");
     QUERY->add_arg(QUERY,"int","anchor");
     QUERY->add_arg(QUERY,"int","focus");

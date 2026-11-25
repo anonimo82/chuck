@@ -6743,8 +6743,81 @@ check(!flow.loadTXT("missing.txt",style));
 check(flow.selectedText()=="é");
 """,57,p)
 
+
+def text_flow_edit():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        (p / "limit.txt").write_bytes(b"a" * 65536)
+        run("text", """
+TextFlow flow;
+TextFlow restored;
+TextStyle style;
+TextRun run;
+TextFrame frame;
+check(flow.insertText(0,"abc"));
+check(flow.sourceText()=="abc");
+check(flow.selectionFocus()==3);
+check(flow.insertText(0,"é"));
+check(flow.sourceText()=="éabc");
+check(flow.selectionStart()==2);
+check(!flow.insertText(1,"x"));
+check(!flow.insertText(-1,"x"));
+check(!flow.insertText(6,"x"));
+check(flow.sourceText()=="éabc");
+check(flow.deleteText(2,3));
+check(flow.sourceText()=="ébc");
+check(flow.selectionFocus()==2);
+check(!flow.deleteText(3,2));
+check(!flow.deleteText(1,2));
+check(flow.replaceText(0,2,"猫"));
+check(flow.sourceText()=="猫bc");
+check(flow.selectionFocus()==3);
+check(flow.setSelection(5,3));
+check(flow.replaceSelection("é"));
+check(flow.sourceText()=="猫é");
+check(flow.selectionAnchor()==5 && flow.selectionFocus()==5);
+check(flow.replaceSelection("!"));
+check(flow.sourceText()=="猫é!");
+check(flow.setSelection(0,6));
+check(flow.replaceSelection(""));
+check(flow.sourceText()=="");
+check(flow.selectionFocus()==0);
+check(flow.setText("base",style));
+check(style.fontSize(22)==22);
+check(run.set(" café",style));
+check(flow.appendRun(run));
+check(frame.setGeometry(0,0,200,80));
+check(flow.appendFrame(frame));
+check(flow.layout());
+check(flow.setSelection(4,10));
+check(!flow.replaceText(9,10,"x"));
+check(flow.ready()==1);
+check(flow.selectedText()==" café");
+check(flow.insertText(4,"!"));
+check(flow.ready()==0);
+check(flow.sourceText()=="base! café");
+check(flow.frameCount()==1);
+check(flow.replaceText(3,6,"X"));
+check(flow.sourceText()=="basXcafé");
+check(flow.selectionFocus()==4);
+check(flow.layout());
+check(flow.deleteText(4,4));
+check(flow.ready()==1);
+check(flow.saveNative("edited.ckflow"));
+check(restored.loadNative("edited.ckflow"));
+check(restored.sourceText()==flow.sourceText());
+check(restored.frameCount()==1);
+check(restored.loadTXT("limit.txt",style));
+check(!restored.insertText(0,"x"));
+check(restored.sourceText().length()==65536);
+check(restored.replaceText(0,1,"z"));
+check(restored.sourceText().length()==65536);
+check(restored.deleteText(0,65536));
+check(restored.sourceText()=="");
+""",60,p)
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")

@@ -47,3 +47,5 @@ Update this checkpoint at each validated cycle, with the last full baseline, fun
 #157 frame-local hit testing and insertion offsets; #158 selection and ranges; #159 text insertion/deletion/replacement; #160 style preservation during edits; #161 integration and documentation. PR numbering is indicative; corrective PRs do not count. Full validation at the end (20 functional PRs since the last baseline). First functional group: 35 new checks, global 4034, local 35; native validation pending.
 
 #158: directional UTF-8 source selection implemented; 57 new checks, global 4091, local 92; cadence 17/20, native validation pending.
+
+#159: transactional insertion/deletion/replacement; 60 new checks, global 4151, local 152; cadence 18/20, native validation pending.
