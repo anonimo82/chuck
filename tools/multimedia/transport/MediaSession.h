@@ -44,6 +44,16 @@ public:
     unsigned port() const { return link_.port(); }
     bool busy() const { return state_==2&&link_.busy(); }
     size_t packetSize() const { return state_==2?link_.packetSize():0; }
+    bool allowRemote(bool enabled) { return link_.allowRemote(enabled); }
+    bool remoteEnabled() const { return link_.remoteEnabled(); }
+    const std::string &peerAddress() const { return link_.peerAddress(); }
+    bool listenAt(const std::string &ip,unsigned port,const std::string &peer) {
+        if(!link_.listenAt(ip,port,peer)) return false;
+        reset(); return true;
+    }
+    bool connectAt(const std::string &ip,unsigned port,unsigned timeoutMs) {
+        return link_.connectAt(ip,port,timeoutMs)&&begin();
+    }
     bool listenOn(unsigned port) { if(!link_.listenOn(port)) return false; reset(); return true; }
     bool connectTo(unsigned port) { return link_.connectTo(port)&&begin(); }
     int acceptOne() { int r=link_.acceptOne(); return r==1?(begin()?1:-1):r; }
@@ -72,7 +82,7 @@ public:
                     if(!common_) return fail(3);
                     hello_=true;
                 }
-                if(hello_&&!link_.busy()) { state_=2; return 1; }
+                if(hello_&&!link_.busy()) { state_=2; r=1; }
             }
             if(state_==2&&link_.packetSize()) {
                 // Validate before exposing the queued packet; no extra packet buffer.
