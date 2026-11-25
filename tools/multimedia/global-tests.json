@@ -83,6 +83,7 @@
     "transport-video-auto-fragments",
     "transport-video-high-resolution",
     "transport-video-intraframe",
-    "transport-video-interframe"
+    "transport-video-interframe",
+    "transport-video-consolidation"
   ]
 }

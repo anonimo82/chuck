@@ -59,6 +59,7 @@ public:
         while(lo<hi) { size_t mid=lo+(hi-lo)/2; if(at(consumed+mid)>=target) hi=mid; else lo=mid+1; }
         return lo;
     }
+    bool adaptive(uint64_t budget){return video_.adaptive(budget);}
     bool push(const Bytes &wire) {
         if(!configured()) return reject(1);
         Header h; Bytes data;

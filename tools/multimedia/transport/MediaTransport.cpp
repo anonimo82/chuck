@@ -846,6 +846,7 @@ CK_DLL_MFUN(vs_configure) {
     auto *p=vsState(SELF,API);uint64_t a[4];for(auto &v:a)v=GET_NEXT_INT(ARGS);
     RETURN->v_int=p&&p->configure(a[0],a[1],a[2],a[3]);
 }
+CK_DLL_MFUN(vs_adaptive){auto *p=vsState(SELF,API);auto n=GET_NEXT_INT(ARGS);RETURN->v_int=p&&n>=0&&p->adaptive(n);}
 CK_DLL_MFUN(vs_clear) { if(auto *p=vsState(SELF,API))p->clear(); }
 CK_DLL_MFUN(vs_push) {
     RETURN->v_int=0;auto *p=vsState(SELF,API);if(!p)return;
@@ -891,6 +892,7 @@ CK_DLL_MFUN(vb_configure) {
         if(p)RETURN->v_int=p->configure(a[0],a[1],a[2],a[3],a[4],a[5],a[6]);
     } catch(...) {}
 }
+CK_DLL_MFUN(vb_adaptive){auto *p=vbState(SELF,API);auto n=GET_NEXT_INT(ARGS);RETURN->v_int=p&&n>=0&&p->adaptive(n);}
 CK_DLL_MFUN(vb_clear) { if(auto *p=vbState(SELF,API))p->clear(); }
 CK_DLL_MFUN(vb_push) {
     RETURN->v_int=0;auto *p=vbState(SELF,API);if(!p)return;
@@ -944,6 +946,7 @@ CK_DLL_MFUN(sav_configure) {
         if(p)RETURN->v_int=p->configure(a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12]);
     } catch(...) {}
 }
+CK_DLL_MFUN(sav_adaptive){auto *p=syncAVState(SELF,API);auto n=GET_NEXT_INT(ARGS);RETURN->v_int=p&&n>=0&&p->adaptive(n);}
 CK_DLL_MFUN(sav_clear) { if(auto *p=syncAVState(SELF,API))p->clear(); }
 CK_DLL_MFUN(sav_push) {
     RETURN->v_int=0;auto *p=syncAVState(SELF,API);if(!p)return;
@@ -1589,6 +1592,7 @@ CK_DLL_MFUN(vsend_configure){
     auto *p=videoSender(SELF,API);
     if(p&&s>0&&q>=0&&f>=0&&t>=0&&l>0)RETURN->v_int=p->configure(s,q,f,t,l);
 }
+CK_DLL_MFUN(vsend_adaptive){auto *p=videoSender(SELF,API);auto n=GET_NEXT_INT(ARGS);RETURN->v_int=p&&n>=0&&p->adaptive(n);}
 CK_DLL_MFUN(vsend_begin){
     RETURN->v_int=0;try{
         auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS);
@@ -2000,6 +2004,8 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_ctor(QUERY,vsend_ctor);
     QUERY->add_dtor(QUERY,vsend_dtor);
     QUERY->add_mfun(QUERY,vsend_clear,"void","clear");
+    QUERY->add_mfun(QUERY,vsend_adaptive,"int","adaptive");
+    QUERY->add_arg(QUERY,"int","referenceBudget");
     QUERY->add_mfun(QUERY,vsend_configure,"int","configure");
     QUERY->add_arg(QUERY,"int","stream");
     QUERY->add_arg(QUERY,"int","firstSequence");
@@ -2029,6 +2035,8 @@ CK_DLL_QUERY(MediaTransport) {
     if(vsOffset==CK_INVALID_OFFSET) return FALSE;
     QUERY->add_ctor(QUERY,vs_ctor);
     QUERY->add_dtor(QUERY,vs_dtor);
+    QUERY->add_mfun(QUERY,vs_adaptive,"int","adaptive");
+    QUERY->add_arg(QUERY,"int","referenceBudget");
     QUERY->add_mfun(QUERY,vs_configure,"int","configure");
     QUERY->add_arg(QUERY,"int","stream");
     QUERY->add_arg(QUERY,"int","firstSequence");
@@ -2056,6 +2064,8 @@ CK_DLL_QUERY(MediaTransport) {
     if(vbOffset==CK_INVALID_OFFSET) return FALSE;
     QUERY->add_ctor(QUERY,vb_ctor);
     QUERY->add_dtor(QUERY,vb_dtor);
+    QUERY->add_mfun(QUERY,vb_adaptive,"int","adaptive");
+    QUERY->add_arg(QUERY,"int","referenceBudget");
     QUERY->add_mfun(QUERY,vb_configure,"int","configure");
     QUERY->add_arg(QUERY,"int","stream");
     QUERY->add_arg(QUERY,"int","firstSequence");
@@ -2096,6 +2106,8 @@ CK_DLL_QUERY(MediaTransport) {
     if(syncAVOffset==CK_INVALID_OFFSET) return FALSE;
     QUERY->add_ctor(QUERY,sav_ctor);
     QUERY->add_dtor(QUERY,sav_dtor);
+    QUERY->add_mfun(QUERY,sav_adaptive,"int","adaptive");
+    QUERY->add_arg(QUERY,"int","referenceBudget");
     QUERY->add_mfun(QUERY,sav_configure,"int","configure");
     QUERY->add_arg(QUERY,"int","audioStream");
     QUERY->add_arg(QUERY,"int","videoStream");

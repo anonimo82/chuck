@@ -81,11 +81,60 @@ inline bool decodeVideoFragment(const Bytes &wire,Header &h,VideoFragment &f,Byt
     Bytes data(p.begin()+videoFragmentHeader,p.end());
     h=candidate;f=v;pixels.swap(data);return true;
 }
+// CKVD v1: XOR residual against the immediately previous decoded frame.
+// Explicit reference slices keep the existing receiver memory budget unchanged.
+constexpr size_t videoDeltaHeader=36;
+struct VideoDelta {VideoFragment f;uint32_t reference=0;};
+inline uint32_t videoReferenceCRC(const Bytes &b){
+    uint32_t c=0xffffffffu;
+    for(auto v:b){c^=v;for(int j=0;j<8;++j)c=(c>>1)^(0xedb88320u&(0u-(c&1u)));}
+    return c^0xffffffffu;
+}
+inline bool validVideoDelta(const VideoDelta &d){
+    return validVideoFragment(d.f)&&d.f.frame>0&&d.reference==d.f.frame-1;
+}
+inline bool encodeVideoDelta(const Header &h,const VideoDelta &d,const Bytes &base,const Bytes &current,Bytes &out){
+    if(h.type!=6||!valid(h)||h.stream==0xffffffffu||!validVideoDelta(d)||
+       base.size()!=4ull*d.f.count||current.size()!=base.size())return false;
+    Bytes residual(base.size());
+    for(size_t i=0;i<base.size();++i)residual[i]=base[i]^current[i];
+    Header raster=h;raster.type=1;Bytes inner;
+    if(!encodeRasterCompressed(raster,{d.f.count,1},residual,inner)||
+       inner.size()-headerSize>maxPayload-videoDeltaHeader)return false;
+    Bytes p(videoDeltaHeader+inner.size()-headerSize);
+    p[0]='C';p[1]='K';p[2]='V';p[3]='D';p[4]=1;p[5]=1;
+    put(p,8,d.f.width,4);put(p,12,d.f.height,4);put(p,16,d.f.frame,4);
+    put(p,20,d.f.offset,4);put(p,24,d.f.count,4);put(p,28,d.reference,4);
+    put(p,32,videoReferenceCRC(base),4);
+    std::copy(inner.begin()+headerSize,inner.end(),p.begin()+videoDeltaHeader);
+    return encode(h,p,out);
+}
+inline bool decodeVideoDelta(const Bytes &wire,Header &h,VideoDelta &d,uint32_t &crc,Bytes &residual){
+    Header c;Bytes p;
+    if(!decode(wire,c,p)||c.type!=6||c.stream==0xffffffffu||p.size()<=videoDeltaHeader+16||
+       p[0]!='C'||p[1]!='K'||p[2]!='V'||p[3]!='D'||p[4]!=1||p[5]!=1||p[6]||p[7])return false;
+    VideoDelta v{{static_cast<uint32_t>(get(p,8,4)),static_cast<uint32_t>(get(p,12,4)),
+        static_cast<uint32_t>(get(p,16,4)),static_cast<uint32_t>(get(p,20,4)),static_cast<uint32_t>(get(p,24,4))},
+        static_cast<uint32_t>(get(p,28,4))};
+    if(!validVideoDelta(v))return false;
+    Bytes payload(p.begin()+videoDeltaHeader,p.end()),inner,data;Header raster=c;raster.type=1;RasterInfo info;
+    if(get(payload,8,4)!=v.f.count||get(payload,12,4)!=1||!encode(raster,payload,inner)||
+       !decodeRasterCompressed(inner,raster,info,data)||data.size()!=4ull*v.f.count)return false;
+    h=c;d=v;crc=static_cast<uint32_t>(get(p,32,4));residual.swap(data);return true;
+}
+inline bool reconstructVideoDelta(const Bytes &wire,uint64_t reference,const Bytes &base,Bytes &out){
+    Header h;VideoDelta d;uint32_t crc;Bytes data;
+    if(!decodeVideoDelta(wire,h,d,crc,data)||reference!=d.reference||base.size()!=data.size()||videoReferenceCRC(base)!=crc)return false;
+    for(size_t i=0;i<data.size();++i)data[i]^=base[i];
+    return encodeVideoFragment(h,d.f,data,out);
+}
 class VideoStream {
     uint32_t stream_=0,w_=0,h_=0;
     uint64_t seq_=0,frame_=0,offset_=0,timestamp_=0,completed_=0;
     bool ready_=false;
-    Bytes pixels_;
+    Bytes pixels_, reference_;
+    size_t referenceBudget_=0;
+    uint32_t referenceW_=0,referenceH_=0;
     int error_=0;
 public:
     bool reject(int e) { error_=e;return false; }
@@ -105,12 +154,28 @@ public:
     uint32_t height() const { return h_; }
     size_t pixelBytes() const { return ready_?pixels_.size():0; }
     int error() const { return error_; }
+    bool adaptive(uint64_t budget) {
+        if(!configured()||completed_||offset_||budget>maxVideoPixels*4)return false;
+        referenceBudget_=static_cast<size_t>(budget);return true;
+    }
+    bool normalize(const Bytes &wire,Bytes &raw) const {
+        Header h;VideoDelta d;uint32_t crc;Bytes residual;
+        if(!referenceBudget_||reference_.empty()||!decodeVideoDelta(wire,h,d,crc,residual)||
+           d.f.width!=referenceW_||d.f.height!=referenceH_||d.f.frame!=frame_||
+           h.stream!=stream_||h.sequence!=seq_||d.f.offset!=offset_)return false;
+        auto start=reference_.begin()+4ull*d.f.offset;
+        Bytes slice(start,start+4ull*d.f.count);
+        return reconstructVideoDelta(wire,d.reference,slice,raw);
+    }
     bool push(const Bytes &wire) {
         if(!configured()) return reject(1);
         if(ready_) return reject(5);
         if(seq_>0xffffffffu||frame_>0xffffffffu) return reject(6);
         Header h;VideoFragment f;Bytes data;
-        if(!decodeVideoFragment(wire,h,f,data)) return reject(2);
+        if(!decodeVideoFragment(wire,h,f,data)) {
+            Bytes raw;
+            if(!normalize(wire,raw)||!decodeVideoFragment(raw,h,f,data))return reject(2);
+        }
         if(h.stream!=stream_||h.sequence!=seq_||f.frame!=frame_||f.offset!=offset_) return reject(3);
         if(h.timestamp<timestamp_||(!offset_&&completed_&&h.timestamp<=timestamp_)||(offset_&&(h.timestamp!=timestamp_||f.width!=w_||f.height!=h_))) return reject(4);
         auto total=videoPixels(f.width,f.height);
@@ -130,6 +195,8 @@ public:
     bool take(size_t size,Bytes &out) {
         if(!configured()) return reject(1);
         if(!ready_||size!=pixels_.size()) return reject(5);
+        if(pixels_.size()<=referenceBudget_){Bytes copy=pixels_;reference_.swap(copy);referenceW_=w_;referenceH_=h_;}
+        else {Bytes().swap(reference_);referenceW_=referenceH_=0;}
         out.swap(pixels_);pixels_.clear();ready_=false;offset_=0;++frame_;error_=0;return true;
     }
 };
