@@ -13,7 +13,7 @@ inline int inspectMedia(const Bytes &wire,std::array<uint64_t,6> &out) {
     Header h;Bytes payload;
     if(!decode(wire,h,payload)||h.stream==0xffffffffu)return 0;
     int kind=0;
-    if(h.type<=3){uint64_t a=0,b=0;kind=graphicsKind(wire,h,a,b);if(kind==5)kind=11;else if(kind==6)kind=12;else if(kind==7)kind=13;else if(kind==8)kind=14;}
+    if(h.type<=3){uint64_t a=0,b=0;kind=graphicsKind(wire,h,a,b);if(kind==5)kind=11;else if(kind==6)kind=12;else if(kind==7)kind=13;else if(kind==8)kind=14;else if(kind==9)kind=15;}
     else if(h.type==4||h.type==6){
         std::array<uint64_t,9> m{};
         int av=inspectAV(wire,m);

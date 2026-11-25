@@ -1414,6 +1414,56 @@ CK_DLL_SFUN(rw_decode){
         }
     }catch(...){}
 }
+CK_DLL_SFUN(rj_flatten){
+    RETURN->v_int=0;
+    try{
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),r=GET_NEXT_INT(ARGS),g=GET_NEXT_INT(ARGS),b=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto n=mediawire::imagePixels(w,h);mediawire::Bytes a,z;
+        if(w>0&&h>0&&n&&r>=0&&g>=0&&b>=0&&exact(src,API,4*n)&&exact(dst,API,4*n)&&read(src,API,4*n,a)&&
+           mediawire::flattenRaster(w,h,r,g,b,a,z)){write(dst,API,z);RETURN->v_int=1;}
+    }catch(...){}
+}
+static bool cf_make(CK_DL_API API, t_CKINT s,t_CKINT q,t_CKINT t,t_CKINT w,t_CKINT h,t_CKINT image,t_CKINT row,t_CKINT rows,t_CKINT codec,t_CKINT quality,Arr src,mediawire::Bytes &wire){
+    if(s<=0||s>=0xffffffffull||q<0||q>0xffffffffull||t<0||w<=0||h<=0||!mediawire::imagePixels(w,h)||
+       image<0||image>0xffffffffull||row<0||row>=h||rows<=0||rows>h-row||codec<1||codec>5||quality<1||quality>100)return false;
+    mediawire::Bytes pixels;auto n=4ull*w*rows;
+    if(!exact(src,API,n)||!read(src,API,n,pixels))return false;
+    return mediawire::encodeCompressedFragment({1,static_cast<uint32_t>(s),static_cast<uint32_t>(q),static_cast<uint64_t>(t)},
+        {static_cast<uint32_t>(w),static_cast<uint32_t>(h),static_cast<uint32_t>(image),static_cast<uint32_t>(row),static_cast<uint32_t>(rows),static_cast<uint32_t>(codec)},pixels,static_cast<int>(quality),wire);
+}
+CK_DLL_SFUN(cf_size){
+    RETURN->v_int=0;try{
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),row=GET_NEXT_INT(ARGS),rows=GET_NEXT_INT(ARGS),codec=GET_NEXT_INT(ARGS),quality=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire;
+        if(cf_make(API,1,0,0,w,h,0,row,rows,codec,quality,src,wire))RETURN->v_int=wire.size();
+    }catch(...){}
+}
+CK_DLL_SFUN(cf_encode){
+    RETURN->v_int=0;try{
+        auto s=GET_NEXT_INT(ARGS),q=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),image=GET_NEXT_INT(ARGS),row=GET_NEXT_INT(ARGS),rows=GET_NEXT_INT(ARGS),codec=GET_NEXT_INT(ARGS),quality=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire;
+        if(cf_make(API,s,q,t,w,h,image,row,rows,codec,quality,src,wire)&&exact(dst,API,wire.size())){write(dst,API,wire);RETURN->v_int=1;}
+    }catch(...){}
+}
+CK_DLL_SFUN(cf_inspect){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire,pixels;mediawire::Header h;mediawire::CompressedFragment f;
+        if(!exact(dst,API,9)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||!mediawire::decodeCompressedFragment(wire,h,f,pixels))return;
+        const uint64_t m[]={h.stream,h.sequence,h.timestamp,f.width,f.height,f.image,f.row,f.rows,f.codec};
+        for(size_t i=0;i<9;++i)API->object->array_int_set_idx(dst,i,m[i]);RETURN->v_int=1;
+    }catch(...){}
+}
+namespace {t_CKUINT caOffset=0;
+mediawire::CompressedRasterAssembler *ca(Chuck_Object *self,CK_DL_API API){return reinterpret_cast<mediawire::CompressedRasterAssembler*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,caOffset)));}}
+CK_DLL_CTOR(ca_ctor){OBJ_MEMBER_UINT(SELF,caOffset)=0;try{OBJ_MEMBER_UINT(SELF,caOffset)=reinterpret_cast<uintptr_t>(new mediawire::CompressedRasterAssembler);}catch(...){}}
+CK_DLL_DTOR(ca_dtor){delete ca(SELF,API);OBJ_MEMBER_UINT(SELF,caOffset)=0;}
+CK_DLL_MFUN(ca_reset){if(auto *p=ca(SELF,API))p->reset();}
+CK_DLL_MFUN(ca_rows){auto *p=ca(SELF,API);RETURN->v_int=p?p->rows():0;}
+CK_DLL_MFUN(ca_size){auto *p=ca(SELF,API);RETURN->v_int=p?p->size():0;}
+CK_DLL_MFUN(ca_ready){auto *p=ca(SELF,API);RETURN->v_int=p&&p->ready();}
+CK_DLL_MFUN(ca_push){RETURN->v_int=0;try{auto *p=ca(SELF,API);auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire;if(p&&read(a,API,mediawire::headerSize+mediawire::maxPayload,wire))RETURN->v_int=p->push(wire);}catch(...){}}
+CK_DLL_MFUN(ca_pixels){RETURN->v_int=0;auto *p=ca(SELF,API);auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));if(p&&p->ready()&&exact(a,API,p->size())){write(a,API,p->pixels());RETURN->v_int=1;}}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -2053,6 +2103,15 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaRasterJpeg","Object");
+    QUERY->add_sfun(QUERY,rj_flatten,"int","flatten");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","red");
+    QUERY->add_arg(QUERY,"int","green");
+    QUERY->add_arg(QUERY,"int","blue");
+    QUERY->add_arg(QUERY,"int[]","source");
+    QUERY->add_arg(QUERY,"int[]","destination");
+
     QUERY->add_sfun(QUERY,rj_size,"int","packetSize");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
@@ -2096,6 +2155,46 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","metadata");
     QUERY->add_sfun(QUERY,rw_decode,"int","decode");
     QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaRasterCompressedFragment","Object");
+    QUERY->add_sfun(QUERY,cf_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","row");
+    QUERY->add_arg(QUERY,"int","rows");
+    QUERY->add_arg(QUERY,"int","codec");
+    QUERY->add_arg(QUERY,"int","quality");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_sfun(QUERY,cf_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","image");
+    QUERY->add_arg(QUERY,"int","row");
+    QUERY->add_arg(QUERY,"int","rows");
+    QUERY->add_arg(QUERY,"int","codec");
+    QUERY->add_arg(QUERY,"int","quality");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,cf_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaRasterCompressedAssembler","Object");
+    caOffset=QUERY->add_mvar(QUERY,"int","@compressedAssemblerNative",FALSE);
+    if(caOffset==CK_INVALID_OFFSET)return FALSE;
+    QUERY->add_ctor(QUERY,ca_ctor);
+    QUERY->add_dtor(QUERY,ca_dtor);
+    QUERY->add_mfun(QUERY,ca_reset,"void","reset");
+    QUERY->add_mfun(QUERY,ca_rows,"int","rows");
+    QUERY->add_mfun(QUERY,ca_size,"int","size");
+    QUERY->add_mfun(QUERY,ca_ready,"int","ready");
+    QUERY->add_mfun(QUERY,ca_push,"int","push");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,ca_pixels,"int","pixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaGraphics","Object");
