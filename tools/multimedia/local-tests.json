@@ -3,6 +3,7 @@
   "groups": [
     "text-page-breaks",
     "text-recent",
-    "text-page-furniture"
+    "text-page-furniture",
+    "text-page-numbers"
   ]
 }
