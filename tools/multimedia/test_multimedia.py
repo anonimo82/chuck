@@ -2063,3 +2063,62 @@ check(!seq.loaded() && copy.loaded());
         return sorted((e[0],e[2][0],e[2][1]) for e in events if e[1]==144 and e[2][1]>0)
     assert note_ons(original[1])==[(0,60,80),(480,72,100),(960,60,90),(960,64,90),(960,67,90)]
     assert note_ons(adjusted[1])==[(0,62,40),(480,74,50),(960,62,45),(960,66,45),(960,69,45)]
+
+    run("audio", """
+AudioBuffer audio;
+float input[8];
+float tail[4];
+float block[4];
+float bad[3];
+check(!audio.reverse());
+check(!audio.normalize(1.0));
+0.25 => input[0]; -0.5 => input[1];
+0.5 => input[2]; -0.25 => input[3];
+0.75 => input[4]; -1.0 => input[5];
+0.125 => input[6]; -0.125 => input[7];
+check(audio.importSamples(8000,2,input));
+check(audio.peak()==1.0);
+0.5 => audio.gain;
+check(audio.crop(1,2));
+check(audio.frames()==2 && audio.gain()==0.5);
+check(audio.sampleAt(0,0)==0.5 && audio.sampleAt(1,1)==-1.0);
+check(!audio.crop(1,2));
+check(audio.reverse());
+check(audio.sampleAt(0,0)==0.75 && audio.sampleAt(0,1)==-1.0);
+check(audio.sampleAt(1,0)==0.5 && audio.sampleAt(1,1)==-0.25);
+check(audio.normalize(0.5));
+check(audio.peak()==0.5 && audio.sampleAt(0,0)==0.375);
+check(!audio.normalize(2.0));
+check(audio.fade(0,2,0.0,1.0));
+check(audio.sampleAt(0,0)==0.0 && audio.sampleAt(1,0)==0.25);
+check(!audio.fade(0,1,0.0,1.0));
+check(!audio.fade(0,2,-1.0,1.0));
+0.5 => tail[0]; -0.5 => tail[1];
+0.25 => tail[2]; -0.25 => tail[3];
+check(audio.appendSamples(tail));
+check(audio.frames()==4);
+check(!audio.appendSamples(bad));
+2.0 => tail[0];
+check(!audio.appendSamples(tail));
+check(audio.frames()==4);
+0.5 => tail[0];
+check(audio.mixSamples(1,tail,2.0));
+check(audio.sampleAt(1,0)==1.0 && audio.sampleAt(1,1)==-1.0);
+check(audio.sampleAt(2,0)==1.0 && audio.sampleAt(2,1)==-1.0);
+check(!audio.mixSamples(3,tail,1.0));
+check(!audio.mixSamples(0,tail,-1.0));
+check(audio.readSamples(1,block));
+check(block[0]==0.5 && block[1]==-0.5 && block[2]==0.5 && block[3]==-0.5);
+check(!audio.readSamples(3,block));
+check(block[0]==0.5);
+check(audio.remove(1,1));
+check(audio.frames()==3 && audio.sampleAt(1,0)==1.0);
+check(!audio.remove(0,3));
+check(audio.save("audio-edited.wav"));
+check(audio.create(2,8000,1));
+check(audio.normalize(1.0) && audio.peak()==0.0);
+check(audio.fade(0,2,1.0,0.0));
+check(audio.reverse());
+check(audio.peak()==0.0);
+""",41,p)
+    check_buffer("audio-edited.wav",[0,0,16384,-16384,4096,-4096])
