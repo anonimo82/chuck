@@ -9,7 +9,7 @@ CHUCK = HERE.parents[1] / "src/chuck"
 def run(module, script, expected, directory):
     path = directory / "test.ck"
     name = {"audio": "AudioIO", "vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO", "raster": "RasterIO", "text": "TextIO"}[module]
-    path.write_text(f'@import "{name}";\n' + 'fun void check(int ok) { if(ok) <<< "PASS" >>>; else <<< "FAIL" >>>; }\n' + script, encoding="utf-8")
+    path.write_text(f'@import "{name}";\n' + '0 => int smokeCheckIndex;\nfun void check(int ok) { smokeCheckIndex++; if(ok) <<< "PASS", smokeCheckIndex >>>; else <<< "FAIL", smokeCheckIndex >>>; }\n' + script, encoding="utf-8")
     print(f"SMOKE_EXPECTED {expected}", flush=True)
     r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
     log = r.stdout + r.stderr
@@ -5823,9 +5823,12 @@ check(page.setHeader("{pages}",style,1));
 check(doc.pageCount(page)==-1);
 check(!doc.savePDF("invalid-numbered.pdf",page));
 page.clearHeader();
+// The unexpanded escape template can be wider than its rendered text.
+// Restore a short template before checking the disabled numbering mode.
+check(page.setFooter("Page {page}",style,30));
 check(page.numbering(0)==0);
 check(doc.pageCount(page)==2);
-""",41,p)
+""",42,p)
         assert (p / "numbered.pdf").read_bytes().startswith(b"%PDF-")
         assert (p / "numbered.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
         assert not (p / "invalid-numbered.pdf").exists()
