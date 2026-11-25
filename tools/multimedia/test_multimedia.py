@@ -6620,8 +6620,59 @@ check(restored.saveTXT("overflow.txt"));
         assert (p / "integrated.cktxt").read_bytes().startswith(b"CKTXTDOC")
         assert (p / "integrated.txt").read_bytes() == (p / "integrated-copy.txt").read_bytes() == (p / "overflow.txt").read_bytes()
 
+
+def text_flow_hit_test():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextFlow flow;
+TextFrame frame;
+TextStyle style;
+TextContainer box;
+check(flow.hitTest(0,0.0,0.0)==-1);
+check(style.fontSize(16)==16);
+check(flow.setText("abc\\ncafé",style));
+check(frame.setGeometry(10,20,200,30));
+check(box.paddingLeft(5)==5);
+check(box.paddingTop(3)==3);
+check(frame.setContainer(box));
+check(flow.appendFrame(frame));
+check(frame.height(80)==80);
+check(flow.appendFrame(frame));
+check(flow.layout());
+check(flow.frameText(0)=="abc\\n");
+check(flow.frameText(1)=="café");
+check(flow.hitTest(-1,5.0,4.0)==-1);
+check(flow.hitTest(2,5.0,4.0)==-1);
+check(flow.hitTest(0,-1.0,4.0)==-1);
+check(flow.hitTest(0,4.0,4.0)==-1);
+check(flow.hitTest(0,5.0,2.0)==-1);
+check(flow.hitTest(0,200.0,4.0)==-1);
+check(flow.hitTest(0,5.0,30.0)==-1);
+check(flow.hitTest(0,5.0,4.0)==0);
+check(flow.hitTest(1,5.0,4.0)==4);
+check(flow.hitTest(0,190.0,4.0)>=3);
+check(flow.hitTest(0,190.0,4.0)<=4);
+check(flow.hitTest(1,190.0,4.0)==9);
+0=>int invalidOffset;
+for(5=>int x;x<195;x++) {
+    flow.hitTest(1,x$float,4.0)=>int offset;
+    if(offset<4 || offset>9 || offset==8) 1=>invalidOffset;
+}
+check(!invalidOffset);
+check(flow.hitTest(1,5.0,70.0)==-1);
+check(flow.setText("changed",style));
+check(flow.hitTest(0,5.0,4.0)==-1);
+check(flow.layout());
+check(flow.hitTest(1,5.0,4.0)==-1);
+check(flow.hitTest(0,5.0,4.0)==0);
+check(flow.setText("",style));
+check(flow.layout());
+check(flow.hitTest(0,5.0,4.0)==-1);
+""",35,p)
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")

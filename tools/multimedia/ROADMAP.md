@@ -41,3 +41,7 @@ Recovered themes, not a claim that every item is entirely absent: advanced cross
 ### Maintenance protocol
 
 Update this checkpoint at each validated cycle, with the last full baseline, functional PR count, local/global check totals, exact scope and validation limitations. Use Local after five functional PRs and Full after twenty instead of Local, or after shared structural changes as appropriate. Corrective PRs do not advance the cadence. Keep pending groups until successful validation. Preserve API and native-format compatibility. Future milestones must be marked proposed until agreed; do not invent an original roadmap or a completion percentage.
+
+### Eighth text cycle — proposed implementation sequence
+
+#157 frame-local hit testing and insertion offsets; #158 selection and ranges; #159 text insertion/deletion/replacement; #160 style preservation during edits; #161 integration and documentation. PR numbering is indicative; corrective PRs do not count. Full validation at the end (20 functional PRs since the last baseline). First functional group: 35 new checks, global 4034, local 35; native validation pending.
