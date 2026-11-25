@@ -121,3 +121,7 @@ User prioritized vector manipulation before transmission and capture. #165: gene
 ## Validation checkpoint after #169
 
 Developer-reported Windows Local: expected=300, PASS=300, FAIL=0, missing=0, unreported=0, extra=0, suites=1/1, status=PASS. All five vector groups validated. Cumulative validated checks 4582; last Full baseline remains 4282 after #161; cadence 5/20, next local cycle 0/5. Clear the validated local groups, retain global manifest. Promote vector manipulation to O under foundational coverage rubric (not full SVG editor parity). Remaining 11 applicable gaps: raster and video capture missing; MIDI and text capture partial; raster, vector, 3D, waveform and video transmission missing; MIDI and text transmission partial. Next priority to be selected by user; no new implementation choice committed. No workflow changes.
+
+## Capture cycle 1 — MIDI and text
+
+User selected all capture before transmission. Proposed three five-functional-PR cycles: MIDI/text, raster, video/audio synchronization; device backend feasibility must be verified. #171: timestamped MIDI channel message capture buffer, fixed-tempo tick conversion and inspection. 58 new checks, global 4640, local 58; functional cadence 6/20. Native validation pending. MIDI capture remains partial until device bridge, persistence and session integration. Vector/3D capture and point clouds remain excluded.

@@ -781,6 +781,82 @@ CK_DLL_MFUN(midi_sequence_boxes) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+namespace {
+struct CapturedMidiEvent {
+    double seconds;
+    int status,data1,data2,length,tick;
+};
+struct MidiCaptureState {
+    int tpq=0;
+    double bpm=0;
+    std::vector<CapturedMidiEvent> events;
+};
+t_CKUINT midiCaptureOffset=0;
+MidiCaptureState *captureState(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<MidiCaptureState *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,midiCaptureOffset)));
+}
+}
+CK_DLL_CTOR(midi_capture_ctor) {
+    OBJ_MEMBER_UINT(SELF,midiCaptureOffset)=reinterpret_cast<uintptr_t>(new(std::nothrow) MidiCaptureState);
+}
+CK_DLL_DTOR(midi_capture_dtor) {
+    delete captureState(SELF,API);
+    OBJ_MEMBER_UINT(SELF,midiCaptureOffset)=0;
+}
+CK_DLL_MFUN(midi_capture_create) {
+    RETURN->v_int=0;
+    auto *p=captureState(SELF,API);
+    auto tpq=GET_NEXT_INT(ARGS); double bpm=GET_NEXT_FLOAT(ARGS);
+    if(!p||tpq<1||tpq>32767||!std::isfinite(bpm)||bpm<4||bpm>1000) return;
+    p->events.clear(); p->tpq=static_cast<int>(tpq); p->bpm=bpm;
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(midi_capture_append) {
+    RETURN->v_int=0;
+    try {
+        auto *p=captureState(SELF,API);
+        double seconds=GET_NEXT_FLOAT(ARGS);
+        auto status=GET_NEXT_INT(ARGS),d1=GET_NEXT_INT(ARGS),d2=GET_NEXT_INT(ARGS);
+        if(!p||!p->tpq||!std::isfinite(seconds)||seconds<0||
+           status<0x80||status>0xef||!midiByte(d1)||!midiByte(d2)||
+           p->events.size()>=1000000||
+           (!p->events.empty()&&seconds<p->events.back().seconds)) return;
+        int type=static_cast<int>(status)&0xf0;
+        int length=(type==0xc0||type==0xd0)?2:3;
+        if(length==2&&d2!=0) return;
+        double ticks=seconds*p->tpq*p->bpm/60.0;
+        if(!std::isfinite(ticks)||ticks>0x0fffffff) return;
+        p->events.push_back({seconds,static_cast<int>(status),static_cast<int>(d1),
+            static_cast<int>(d2),length,static_cast<int>(std::llround(ticks))});
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_capture_count) {
+    auto *p=captureState(SELF,API);
+    RETURN->v_int=p?static_cast<t_CKINT>(p->events.size()):0;
+}
+CK_DLL_MFUN(midi_capture_seconds) {
+    auto *p=captureState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    RETURN->v_float=p&&i>=0&&static_cast<uint64_t>(i)<p->events.size()?p->events[i].seconds:-1.0;
+}
+CK_DLL_MFUN(midi_capture_tick) {
+    auto *p=captureState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p&&i>=0&&static_cast<uint64_t>(i)<p->events.size()?p->events[i].tick:-1;
+}
+CK_DLL_MFUN(midi_capture_size) {
+    auto *p=captureState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p&&i>=0&&static_cast<uint64_t>(i)<p->events.size()?p->events[i].length:-1;
+}
+CK_DLL_MFUN(midi_capture_byte) {
+    auto *p=captureState(SELF,API); auto i=GET_NEXT_INT(ARGS),k=GET_NEXT_INT(ARGS);
+    RETURN->v_int=-1;
+    if(!p||i<0||static_cast<uint64_t>(i)>=p->events.size()) return;
+    const auto &e=p->events[i];
+    if(k>=0&&k<e.length) RETURN->v_int=k==0?e.status:k==1?e.data1:e.data2;
+}
+CK_DLL_MFUN(midi_capture_clear) {
+    if(auto *p=captureState(SELF,API)) p->events.clear();
+}
 CK_DLL_QUERY(MidiFileIO) {
     QUERY->setname(QUERY, "MidiFileIO");
     QUERY->begin_class(QUERY, "MidiFileIO", "Object");
@@ -926,5 +1002,30 @@ CK_DLL_QUERY(MidiFileIO) {
     QUERY->add_mfun(QUERY,midi_sequence_render_samples,"int","renderSamples");
     QUERY->add_arg(QUERY,"int","sampleRate");
     QUERY->add_arg(QUERY,"float[]","samples");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MidiCapture","Object");
+    midiCaptureOffset=QUERY->add_mvar(QUERY,"int","@midiCaptureNative",FALSE);
+    if(midiCaptureOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,midi_capture_ctor);
+    QUERY->add_dtor(QUERY,midi_capture_dtor);
+    QUERY->add_mfun(QUERY,midi_capture_create,"int","create");
+    QUERY->add_arg(QUERY,"int","ticksPerQuarter");
+    QUERY->add_arg(QUERY,"float","bpm");
+    QUERY->add_mfun(QUERY,midi_capture_append,"int","append");
+    QUERY->add_arg(QUERY,"float","seconds");
+    QUERY->add_arg(QUERY,"int","status");
+    QUERY->add_arg(QUERY,"int","data1");
+    QUERY->add_arg(QUERY,"int","data2");
+    QUERY->add_mfun(QUERY,midi_capture_count,"int","count");
+    QUERY->add_mfun(QUERY,midi_capture_seconds,"float","secondsAt");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,midi_capture_tick,"int","tickAt");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,midi_capture_size,"int","sizeAt");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,midi_capture_byte,"int","byteAt");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"int","byteIndex");
+    QUERY->add_mfun(QUERY,midi_capture_clear,"void","clear");
     return QUERY->end_class(QUERY);
 }

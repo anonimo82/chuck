@@ -7397,8 +7397,76 @@ check(restored.shapes()==0);
         assert root[0].get("fill") == "#00ff00"
         assert root[0].get("transform") == "matrix(1 0 0 1 4 2)"
 
+
+def midi_capture_events():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("midi", """
+MidiCapture capture;
+check(capture.count()==0);
+check(!capture.append(0,144,60,100));
+check(!capture.create(0,120));
+check(!capture.create(480,0));
+check(capture.create(480,120));
+check(capture.append(0,144,60,100));
+check(capture.append(0.125,176,64,127));
+check(capture.append(0.25,192,5,0));
+check(capture.append(0.25,208,70,0));
+check(capture.append(0.5,128,60,0));
+check(capture.count()==5);
+check(capture.tickAt(0)==0);
+check(capture.tickAt(1)==120);
+check(capture.tickAt(2)==240);
+check(capture.tickAt(3)==240);
+check(capture.tickAt(4)==480);
+check(capture.secondsAt(1)==0.125);
+check(capture.secondsAt(4)==0.5);
+check(capture.sizeAt(0)==3);
+check(capture.sizeAt(2)==2);
+check(capture.sizeAt(3)==2);
+check(capture.byteAt(0,0)==144);
+check(capture.byteAt(0,1)==60);
+check(capture.byteAt(0,2)==100);
+check(capture.byteAt(2,0)==192);
+check(capture.byteAt(2,1)==5);
+check(capture.byteAt(2,2)==-1);
+check(!capture.append(0.4,144,60,100));
+check(!capture.append(0.5,240,0,0));
+check(!capture.append(0.5,127,0,0));
+check(!capture.append(0.5,144,128,0));
+check(!capture.append(0.5,144,60,-1));
+check(!capture.append(0.5,192,5,1));
+check(!capture.append(1000000000.0,144,60,100));
+check(capture.count()==5);
+check(capture.tickAt(-1)==-1);
+check(capture.secondsAt(5)==-1);
+check(capture.sizeAt(5)==-1);
+check(capture.byteAt(0,-1)==-1);
+check(capture.byteAt(5,0)==-1);
+check(!capture.create(32768,120));
+check(capture.count()==5);
+MidiCapture other;
+check(other.create(960,60));
+check(other.append(0.5,239,0,127));
+check(other.tickAt(0)==480);
+check(other.sizeAt(0)==3);
+check(other.byteAt(0,0)==239);
+check(capture.count()==5);
+capture.clear();
+check(capture.count()==0);
+check(capture.append(0.001,160,60,20));
+check(capture.tickAt(0)==1);
+check(capture.create(100,60));
+check(capture.count()==0);
+check(capture.append(0.125,144,64,0));
+check(capture.tickAt(0)==13);
+check(capture.byteAt(0,2)==0);
+check(capture.append(0.125,128,64,12));
+check(capture.tickAt(1)==13);
+""",58,p)
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
