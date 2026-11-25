@@ -5988,7 +5988,7 @@ check(frame.contentSize(dims));
 check(dims[0]==104 && dims[1]==79);
 20=>box.paddingLeft;
 check(frame.getContainer(copy));
-check(copy.paddingLeft==5 && copy.backgroundColor==0xff0000);
+check(copy.paddingLeft()==5 && copy.backgroundColor()==0xff0000);
 check(frame.contentSize(dims) && dims[0]==104);
 check(!frame.contentSize(wrong));
 check(frame.width(1)==1);
@@ -5998,7 +5998,7 @@ frame.reset();
 check(frame.x()==0 && frame.y()==0 && frame.page()==0);
 check(frame.contentSize(dims) && dims[0]==320 && dims[1]==240);
 check(frame.getContainer(copy));
-check(copy.paddingLeft==0 && copy.borderWidth==0);
+check(copy.paddingLeft()==0 && copy.borderWidth()==0);
 """,35,p)
 
 
@@ -6222,7 +6222,7 @@ check(restored.getFrame(0,copy));
 check(copy.x()==10 && copy.y()==20 && copy.width()==200 && copy.height()==25);
 check(copy.page()==0);
 check(copy.getContainer(decoration));
-check(decoration.backgroundColor==0xff0000 && decoration.paddingLeft==2);
+check(decoration.backgroundColor()==0xff0000 && decoration.paddingLeft()==2);
 check(restored.getFrame(1,copy));
 check(copy.page()==2 && copy.width()==300 && copy.height()==150);
 check(restored.layout());
