@@ -11132,8 +11132,100 @@ check(rx.pull()==msg);
 """,65,p)
 
 
+def transport_heterogeneous():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("transport", """
+int raster[52]; int rasterFrag[68]; int model[96];
+"<svg xmlns='http://www.w3.org/2000/svg'/>" => string markup;
+int vector[MediaVector.packetSize(markup.length())];
+int pcm[56]; int midi[40]; int video[52]; int videoFrag[68];
+"Hi😀" => string msg;
+int textPacket[MediaText.packetSize(msg.length())];
+int textA[MediaTextFragment.packetSize(3)];
+int textB[MediaTextFragment.packetSize(msg.length()-3)];
+int meta[6];
+check(MediaRaster.encode(1,0,100,1,1,[1,2,3,4],raster));
+check(MediaRasterFragment.encode(1,1,101,1,1,0,0,[5,6,7,8],rasterFrag));
+check(MediaVector.encode(2,0,90,markup,vector));
+check(MediaModel.encode(3,0,80,[0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0],[0,1,2],model));
+check(MediaPCM.encode(4,0,70,48000,2,[0.0,1.0,-1.0,0.0],pcm));
+check(MediaMIDI.encode(5,0,60,144,60,100,midi));
+check(MediaVideoFrame.encode(6,0,50,1,1,[1,2,3,4],video));
+check(MediaVideoFragment.encode(6,1,51,1,1,0,0,[5,6,7,8],videoFrag));
+check(MediaText.encode(7,0,40,msg,textPacket));
+check(MediaTextFragment.encode(7,1,41,1,0,3,msg,textA));
+check(MediaTextFragment.encode(7,2,41,1,3,msg.length()-3,msg,textB));
+[raster,rasterFrag,vector,model,pcm,midi,video,videoFrag,textPacket,textA,textB] @=> int packets[][];
+[1,2,3,4,5,6,7,8,9,10,10] @=> int kinds[];
+[1,1,2,3,4,5,6,6,7,7,7] @=> int types[];
+for(0=>int j;j<11;j++){
+    check(MediaPacket.inspect(packets[j],meta)==kinds[j]);
+    check(meta[0]==kinds[j] && meta[1]==types[j] && meta[2]==types[j]);
+    check(meta[5]==packets[j].size()-32);
+}
+check(!MediaPacket.inspect(raster,[0]));
+raster[51]^1=>raster[51];
+check(!MediaPacket.inspect(raster,meta));
+raster[51]^1=>raster[51];
+int malformed[36];
+check(MediaTransport.encode(7,7,0,40,[1,2,3,4],malformed));
+check(!MediaPacket.inspect(malformed,meta));
+MediaRouter rx;
+check(!rx.addStream(1,1,0,0));
+check(!rx.configure(0));
+check(rx.configure(64));
+check(!rx.addStream(1,1,0,0));
+check(rx.configure(127));
+for(1=>int j;j<=7;j++) check(rx.addStream(j,j,0,0));
+check(rx.streams()==7);
+check(!rx.addStream(1,2,0,0));
+check(!rx.route(textB,meta));
+check(!rx.route(raster,[0]));
+check(rx.nextSequence(1)==0);
+MediaSession server; MediaSession client;
+check(server.configure(127,256));
+check(client.configure(127,512));
+check(server.listen(0));
+check(client.connect(server.port()));
+0=>int accepted;
+for(0=>int i;i<100000 && !accepted;i++) server.accept()=>accepted;
+check(accepted==1);
+for(0=>int i;i<100000 && (!server.connected()||!client.connected());i++){server.poll();client.poll();}
+check(server.connected() && client.connected());
+check(server.mediaMask()==127 && client.mediaMask()==127);
+[0,9,2,4,5,6,3,1,7,8,10] @=> int order[];
+// Preserve text stream order while interleaving unrelated streams.
+8=>order[1];9=>order[9];
+MediaTextBuffer tb;
+check(tb.configure(7,0,0,4,64));
+for(0=>int j;j<11;j++){
+    order[j]=>int k;
+    for(0=>int i;i<100000 && client.busy();i++){client.poll();server.poll();}
+    check(client.sendPacket(packets[k]));
+    for(0=>int i;i<100000 && !server.packetSize();i++){client.poll();server.poll();}
+    int got[packets[k].size()];
+    check(server.receivePacket(got));
+    check(rx.route(got,meta)==kinds[k]);
+    check(meta[2]==types[k] && meta[0]==kinds[k]);
+    if(types[k]==7) check(tb.push(got));
+}
+check(rx.packets(1)==2 && rx.packets(7)==3);
+check(rx.nextSequence(7)==3 && rx.nextSequence(4)==1);
+check(!rx.route(textB,meta));
+check(tb.available()==2);
+check(tb.advance(40));
+check(tb.pull()==msg && !tb.ready());
+check(tb.advance(41));
+check(tb.pull()==msg && tb.available()==0);
+rx.clear();
+check(rx.streams()==0 && !rx.route(raster,meta));
+server.close();client.close();
+""",129,p)
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing, "transport-loopback": transport_loopback, "transport-session": transport_session, "transport-endpoints": transport_endpoints, "transport-consolidation": transport_consolidation, "transport-pcm": transport_pcm, "transport-pcm-stream": transport_pcm_stream, "transport-pcm-buffer": transport_pcm_buffer, "transport-midi": transport_midi, "transport-audio-midi": transport_audio_midi, "transport-raster": transport_raster, "transport-raster-stream": transport_raster_stream, "transport-vector": transport_vector, "transport-model": transport_model, "transport-graphics": transport_graphics, "transport-video-frame": transport_video_frame, "transport-video-stream": transport_video_stream, "transport-video-buffer": transport_video_buffer, "transport-audio-video": transport_audio_video, "transport-av-consolidation": transport_av_consolidation, "transport-text": transport_text, "transport-text-fragments": transport_text_fragments, "transport-text-buffer": transport_text_buffer}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing, "transport-loopback": transport_loopback, "transport-session": transport_session, "transport-endpoints": transport_endpoints, "transport-consolidation": transport_consolidation, "transport-pcm": transport_pcm, "transport-pcm-stream": transport_pcm_stream, "transport-pcm-buffer": transport_pcm_buffer, "transport-midi": transport_midi, "transport-audio-midi": transport_audio_midi, "transport-raster": transport_raster, "transport-raster-stream": transport_raster_stream, "transport-vector": transport_vector, "transport-model": transport_model, "transport-graphics": transport_graphics, "transport-video-frame": transport_video_frame, "transport-video-stream": transport_video_stream, "transport-video-buffer": transport_video_buffer, "transport-audio-video": transport_audio_video, "transport-av-consolidation": transport_av_consolidation, "transport-text": transport_text, "transport-text-fragments": transport_text_fragments, "transport-text-buffer": transport_text_buffer, "transport-heterogeneous": transport_heterogeneous}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
