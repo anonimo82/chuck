@@ -69,25 +69,25 @@ Synthesis: create media programmatically. Manipulation: modify existing media. I
 
 ### Matrix
 
-O = usable foundational capability; P = partial capability; M = specific capability not identified in inspected code. File input/output qualifies without every codec or device; conversion qualifies with useful existing format or cross-type routes, not every possible pairing; automation includes ordinary ChucK scheduling and numerical control. Generic OSC/blob or byte exchange alone is not a complete media transport. Capture does not mean reloading an existing file or generating synthetic media. Text capture means direct text entry/collection, not OCR or speech recognition. Vector/3D capture require a defined practical source before implementation; do not invent sensors or reintroduce excluded tracing. O does not imply full professional feature parity or hard-realtime safety.
+O = usable foundational capability; P = partial capability; M = specific capability not identified in inspected code. File input/output qualifies without every codec or device; conversion qualifies with useful existing format or cross-type routes, not every possible pairing; automation includes ordinary ChucK scheduling and numerical control. Generic OSC/blob or byte exchange alone is not a complete media transport. Capture does not mean reloading an existing file or generating synthetic media. Text capture means direct text entry/collection, not OCR or speech recognition. Vector and 3D capture are explicitly out of scope (N/A), including point clouds and scanning; existing geometry input, synthesis, editing, conversion and transmission remain in scope. O does not imply full professional feature parity or hard-realtime safety.
 
 | Type | Synthesis | Manipulation | Input | Output | Capture | Conversion | Transmission | Automation |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Raster | O | O | O | O | M | O | M | O |
-| Vector | O | P | O | O | M | O | M | O |
-| 3D | O | O | O | O | M | O | M | O |
+| Vector | O | P | O | O | N/A | O | M | O |
+| 3D | O | O | O | O | N/A | O | M | O |
 | Audio Wave | O | O | O | O | O | O | M | O |
 | Audio MIDI | O | O | O | O | P | O | P | O |
 | Video | O | O | O | O | M | O | M | O |
 | Text | O | O | O | O | P | O | P | O |
 
-42 O, 5 P, 9 M = 56. Weighted coverage (O=1, P=0.5) = 79.46%; this is a new static rubric, not a comparable measured increase over the earlier historical estimate, nor a percentage of engineering effort.
+42 O, 5 P, 7 M, 2 N/A = 56. Weighted coverage over 54 applicable cells (O=1, P=0.5) = 82.41%; this is a new static rubric, not a comparable measured increase over the earlier historical estimate, nor a percentage of engineering effort.
 
 ### Evidence and gaps by type
 
 - Raster: RasterImage create/fill/line/composite/crop/resize, load/save, RasterIO.convert, typed pixel/audio/pitch/heightmap export and numeric controls/keyframe animation. No dedicated live screen/camera acquisition or media transport identified.
-- Vector: VectorImage.create/addRect/addCircle/addLine/addPolygon/removeShape/load/save/render/exportPixels and cross-type exports; global transforms and numeric automation. Partial manipulation: imported arbitrary SVG is not fully editable as independent shapes; provide bounded editable shape operations without tracing. Live vector capture source and transport not yet defined.
-- 3D: Model3D.createMesh/createBoxes/setVertex/transformMesh, materials, skinning and animation controller, load/save, orthographic rendering/projection and sonification. Optional ChuGL geometry/scene bridge documented, graphical runtime not certified by headless baseline. No dedicated live geometry acquisition or network scene transport identified.
+- Vector: VectorImage.create/addRect/addCircle/addLine/addPolygon/removeShape/load/save/render/exportPixels and cross-type exports; global transforms and numeric automation. Partial manipulation: imported arbitrary SVG is not fully editable as independent shapes; provide bounded editable shape operations without tracing. Vector capture excluded; transport remains missing.
+- 3D: Model3D.createMesh/createBoxes/setVertex/transformMesh, materials, skinning and animation controller, load/save, orthographic rendering/projection and sonification. Optional ChuGL geometry/scene bridge documented, graphical runtime not certified by headless baseline. Live geometry capture excluded; no dedicated network scene transport identified.
 - Wave: AudioBuffer.create/importSamples, crop/mix/resample/filters, load/save, format conversion and visualization/pitch analysis. Native ChucK adc/dac, SndBuf and WvOut cover foundational local device acquisition/playback/recording and scheduling. No dedicated network waveform streaming/transport identified.
 - MIDI: MidiSequence.create/addNote/addCC/addTempo, edit/quantize, load/save, renderSamples and visual/geometry export. Native MidiIn/MidiOut provide live event I/O; partial capture because no direct timestamped MidiSequence recording bridge was identified; partial transmission because MIDI device protocol is supported but network transport is not established.
 - Video: VideoWriter.open/appendFrame/openAV/appendAV, VideoClip.load/next/exportPixels, transcode/trim/concat/transition/composite/subtitles, VideoAudio and synchronized frame/PCM writing. No camera/screen video acquisition or explicit network video transport identified. Offline operations do not guarantee realtime.
@@ -96,8 +96,12 @@ O = usable foundational capability; P = partial capability; M = specific capabil
 ### Proposed priority order (not an approved PR schedule)
 
 1. Define a bounded shared media exchange protocol and transport requirements (framing, sizes, timestamps, validation, explicit local/trusted endpoints; separate offline transfer from realtime streaming). Reuse native interfaces where appropriate. Start with one small end-to-end media type before extending it.
-2. Complete practical capture pathways: camera/screen for raster and video; timestamped MIDI recording; text entry/collection. Clarify feasible vector/3D live sources (e.g. stylus paths, externally supplied geometry/pose streams) before claiming coverage. Avoid OCR/tracing.
+2. Complete practical capture pathways: camera/screen for raster and video; timestamped MIDI recording; text entry/collection. Vector and 3D capture are excluded, including point-cloud support. Avoid OCR/tracing.
 3. Complete vector shape manipulation within a documented supported subset; preserve imported SVG and existing APIs.
 4. Extend transmission across types and add integration/validation; do not assume offline transfer equals live streaming.
 
 The next functional PR is proposed to address a matrix gap rather than additional text layout/editor specialization. No implementation or dependency choice is committed by this audit. Preserve global tests and five/twenty functional PR cadence; no GitHub Actions changes.
+
+### Scope decision after #163
+
+User explicitly excluded vector and 3D capture and chose not to support point clouds. Both cells are N/A and excluded from the coverage denominator; the other six processes for these types remain unchanged, as does transmission. The matrix retains 56 positions, 54 applicable. This supersedes any earlier suggestion to implement live vector/3D capture. Documentation only; baseline 4282, local empty, cadence 0/20.
