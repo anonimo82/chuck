@@ -2,6 +2,7 @@
   "version": 1,
   "groups": [
     "transport-raster",
-    "transport-raster-stream"
+    "transport-raster-stream",
+    "transport-vector"
   ]
 }
