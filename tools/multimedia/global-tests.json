@@ -64,6 +64,7 @@
     "transport-raster",
     "transport-raster-stream",
     "transport-vector",
-    "transport-model"
+    "transport-model",
+    "transport-graphics"
   ]
 }
