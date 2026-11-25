@@ -107,6 +107,7 @@ struct PageStyle {
     t_CKINT marginTop=0;
     t_CKINT marginBottom=0;
     t_CKINT backgroundColor=16777215;
+    std::vector<t_CKINT> breaks;
 };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; std::vector<NodeBlock> nodes; size_t nextOrder=0; };
 t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0;
@@ -801,6 +802,35 @@ CK_DLL_MFUN(text_page_backgroundColor_set) {
     auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-2;
     if(p&&v>=-1&&v<=16777215) RETURN->v_int=p->backgroundColor=v;
 }
+
+CK_DLL_MFUN(text_page_add_break) {
+    RETURN->v_int=0;
+    try {
+        auto *p=pageState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+        if(!p||i<1||i>=4608) return;
+        auto at=std::lower_bound(p->breaks.begin(),p->breaks.end(),i);
+        if(at!=p->breaks.end()&&*at==i) return;
+        p->breaks.insert(at,i); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_page_remove_break) {
+    RETURN->v_int=0;
+    auto *p=pageState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    if(!p) return;
+    auto at=std::lower_bound(p->breaks.begin(),p->breaks.end(),i);
+    if(at!=p->breaks.end()&&*at==i) { p->breaks.erase(at); RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_page_break_count) {
+    auto *p=pageState(SELF,API); RETURN->v_int=p?static_cast<t_CKINT>(p->breaks.size()):0;
+}
+CK_DLL_MFUN(text_page_break_at) {
+    auto *p=pageState(SELF,API); auto i=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&i>=0&&static_cast<uint64_t>(i)<p->breaks.size()) RETURN->v_int=p->breaks[i];
+}
+CK_DLL_MFUN(text_page_clear_breaks) {
+    auto *p=pageState(SELF,API); if(p) p->breaks.clear();
+}
+
 CK_DLL_CTOR(text_node_ctor) {
     OBJ_MEMBER_UINT(SELF,nodeOffset)=0;
     try { OBJ_MEMBER_UINT(SELF,nodeOffset)=reinterpret_cast<uintptr_t>(new Node); } catch(...) {}
@@ -1480,10 +1510,14 @@ bool planPages(const Document &d,const PageStyle &p,std::vector<PageEntry> &entr
     std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
     if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return false;
     int width=p.width-p.marginLeft-p.marginRight, height=p.height-p.marginTop-p.marginBottom;
-    count=1; int used=0;
+    const size_t blocks=d.paragraphs.size()+d.tables.size()+d.nodes.size();
+    if(!p.breaks.empty()&&static_cast<size_t>(p.breaks.back())>=blocks) return false;
+    count=1; int used=0; size_t nextBreak=0;
     auto place=[&](int kind,size_t index,int h) {
         if(h<0||h>height) return false;
-        if(h>height-used) { if(count>=4096) return false; ++count; used=0; }
+        bool force=nextBreak<p.breaks.size()&&static_cast<size_t>(p.breaks[nextBreak])==entries.size();
+        if(force) ++nextBreak;
+        if(force||h>height-used) { if(count>=4096) return false; ++count; used=0; }
         entries.push_back({kind,index,count-1}); used+=h; return true;
     };
     size_t block=0,node=0;
@@ -2276,6 +2310,14 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_page_marginBottom_get,"int","marginBottom");
     QUERY->add_mfun(QUERY,text_page_marginBottom_set,"int","marginBottom");
     QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_page_add_break,"int","addBreak");
+    QUERY->add_arg(QUERY,"int","blockIndex");
+    QUERY->add_mfun(QUERY,text_page_remove_break,"int","removeBreak");
+    QUERY->add_arg(QUERY,"int","blockIndex");
+    QUERY->add_mfun(QUERY,text_page_break_count,"int","breakCount");
+    QUERY->add_mfun(QUERY,text_page_break_at,"int","breakAt");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_page_clear_breaks,"void","clearBreaks");
     QUERY->add_mfun(QUERY,text_page_backgroundColor_get,"int","backgroundColor");
     QUERY->add_mfun(QUERY,text_page_backgroundColor_set,"int","backgroundColor");
     QUERY->add_arg(QUERY,"int","value");
