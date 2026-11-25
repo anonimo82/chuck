@@ -8,7 +8,7 @@ CHUCK = HERE.parents[1] / "src/chuck"
 
 def run(module, script, expected, directory):
     path = directory / "test.ck"
-    name = {"audio": "AudioIO", "vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO", "raster": "RasterIO", "text": "TextIO"}[module]
+    name = {"audio": "AudioIO", "vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO", "raster": "RasterIO", "text": "TextIO", "transport": "MediaTransport"}[module]
     path.write_text(f'@import "{name}";\n' + '0 => int smokeCheckIndex;\nfun void check(int ok) { smokeCheckIndex++; if(ok) <<< "PASS", smokeCheckIndex >>>; else <<< "FAIL", smokeCheckIndex >>>; }\n' + script, encoding="utf-8")
     print(f"SMOKE_EXPECTED {expected}", flush=True)
     r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
@@ -6984,8 +6984,69 @@ check(flow.sourceText()=="café\\nWorld!");
         assert (p / "edit.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
         assert (p / "edit.cktxt").read_bytes().startswith(b"CKTXTDOC")
 
+
+def media_packet():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("transport", """
+[0,1,127,128,255] @=> int payload[];
+int packet[29];
+int decoded[5];
+int shortOut[4];
+check(MediaPacket.encodedSize(0)==24);
+check(MediaPacket.encodedSize(5)==29);
+check(MediaPacket.encodedSize(1048576)==1048600);
+check(MediaPacket.encodedSize(1048577)==-1);
+check(MediaPacket.encodedSize(-1)==-1);
+check(MediaPacket.encode(1,123456,payload,packet));
+check(packet[0]==67 && packet[1]==75 && packet[2]==77 && packet[3]==49);
+check(packet[4]==1 && packet[5]==0 && packet[6]==0 && packet[7]==0);
+check(packet[13]==1 && packet[14]==226 && packet[15]==64);
+check(packet[16]==0 && packet[17]==0 && packet[18]==0 && packet[19]==5);
+check(MediaPacket.kind(packet)==1);
+check(MediaPacket.timestamp(packet)==123456);
+check(MediaPacket.payloadSize(packet)==5);
+check(MediaPacket.decode(packet,decoded));
+check(decoded[0]==0 && decoded[1]==1 && decoded[2]==127 && decoded[3]==128 && decoded[4]==255);
+check(!MediaPacket.decode(packet,shortOut));
+check(!MediaPacket.encode(0,123456,payload,packet));
+check(!MediaPacket.encode(8,123456,payload,packet));
+check(!MediaPacket.encode(1,-1,payload,packet));
+check(MediaPacket.timestamp(packet)==123456);
+256=>payload[0];
+check(!MediaPacket.encode(1,0,payload,packet));
+check(MediaPacket.timestamp(packet)==123456);
+0=>payload[0];
+for(1=>int k;k<=7;k++) {
+    check(MediaPacket.encode(k,k,payload,packet));
+    check(MediaPacket.kind(packet)==k);
+}
+0=>packet[0];
+check(MediaPacket.kind(packet)==-1);
+check(!MediaPacket.decode(packet,decoded));
+check(decoded[4]==255);
+67=>packet[0];
+1=>packet[5];
+check(MediaPacket.payloadSize(packet)==-1);
+0=>packet[5];
+6=>packet[19];
+check(MediaPacket.timestamp(packet)==-1);
+5=>packet[19];
+1=>packet[23];
+check(!MediaPacket.decode(packet,decoded));
+0=>packet[23];
+128=>packet[8];
+check(MediaPacket.kind(packet)==-1);
+int empty[0];
+int emptyPacket[24];
+check(MediaPacket.encode(7,0,empty,emptyPacket));
+check(MediaPacket.payloadSize(emptyPacket)==0);
+check(MediaPacket.decode(emptyPacket,empty));
+check(MediaPacket.kind(shortOut)==-1);
+""",47,p)
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "media-packet": media_packet}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
