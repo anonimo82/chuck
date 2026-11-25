@@ -5518,3 +5518,54 @@ check(doc.runCount(0)==0);
     assert (p / "plain-empty-out.txt").read_bytes() == b""
     assert (p / "plain-complex.txt").read_bytes() == b"first mixed\nleft\tright\nA\tB\n1. nested\nlast"
     assert not (p / "plain-wrong.cktxt").exists()
+
+    # SVG uses the shared text renderer rather than embedding a PNG.
+    run("text", """
+TextDocument doc;
+TextStyle style;
+TextContainer box;
+TextParagraphStyle flow;
+TextNode root;
+TextNode leaf;
+TextTable table;
+check(doc.saveSVG("text-svg-empty.svg",120,80,-1));
+check(doc.saveSVG("text-svg-white.svg",120,80,0xffffff));
+check(!doc.saveSVG("text-svg-empty.svg",120,80,0));
+check(!doc.saveSVG("text-svg-wrong.png",120,80,0));
+check(!doc.saveSVG("text-svg-zero.svg",0,80,0));
+check(!doc.saveSVG("text-svg-large.svg",4096,4096,0));
+check(!doc.saveSVG("text-svg-bg.svg",120,80,-2));
+check(!doc.saveSVG("text-svg-color.svg",120,80,0x1000000));
+check(style.color(0xff0000)==0xff0000);
+check(doc.addParagraph("Vector café",style));
+check(box.backgroundColor(0x00ff00)==0x00ff00);
+check(doc.setParagraphContainer(0,box));
+check(table.create(1,2));
+check(table.setCell(0,0,"Left",style));
+check(table.setCell(0,1,"Right",style));
+check(doc.appendTable(table));
+check(leaf.setParagraph("Nested",style));
+check(root.appendChild(leaf));
+check(doc.appendNode(root));
+check(doc.saveSVG("text-svg-rich.svg",240,160,-1));
+check(doc.savePNG("text-svg-reference.png",240,160,-1));
+check(doc.paragraphCount()==1 && doc.tableCount()==1 && doc.nodeCount()==1);
+check(flow.marginLeft(200)==200);
+check(doc.setParagraphLayout(0,flow));
+check(!doc.saveSVG("text-svg-invalid.svg",120,80,-1));
+check(flow.marginLeft(0)==0);
+check(doc.setParagraphLayout(0,flow));
+check(doc.saveSVG("text-svg-invalid.svg",240,160,-1));
+""",28,p)
+    import xml.etree.ElementTree as ET
+    svg_ns = "{http://www.w3.org/2000/svg}"
+    for name, w, h in (("text-svg-empty.svg",120,80), ("text-svg-white.svg",120,80), ("text-svg-rich.svg",240,160), ("text-svg-invalid.svg",240,160)):
+        svg = ET.parse(p / name).getroot()
+        assert svg.tag == svg_ns + "svg"
+        assert tuple(map(float, svg.attrib["viewBox"].split())) == (0,0,w,h)
+        assert not list(svg.iter(svg_ns + "image")), name
+    rich = ET.parse(p / "text-svg-rich.svg").getroot()
+    assert list(rich.iter(svg_ns + "path"))
+    assert not list(ET.parse(p / "text-svg-empty.svg").getroot().iter(svg_ns + "path"))
+    for name in ("text-svg-wrong.png","text-svg-zero.svg","text-svg-large.svg","text-svg-bg.svg","text-svg-color.svg"):
+        assert not (p / name).exists(), name
