@@ -2413,3 +2413,54 @@ check(model.save("hierarchical/model.gltf"));
     child=next(i for i,n in enumerate(nodes) if n.get("name")=="Skin_0_1")
     assert child in nodes[parent]["children"]
     assert {parent,child}==set(hierarchy["skins"][0]["joints"])
+
+
+    run("model", """
+Model3D model;
+[0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0] @=> float xyz[];
+[0,1,2] @=> int tris[];
+[1.0,0.0,0.5,0.5,0.0,1.0] @=> float weights[];
+[0.0,2.0] @=> float times[];
+[0.0,0.0] @=> float badTimes[];
+[0.0,0.0,0.0,0.0,0.0,0.0, 0.0,0.0,0.0,0.0,0.0,0.0,
+ 2.0,0.0,0.0,0.0,0.0,90.0, 0.0,0.0,0.0,0.0,0.0,0.0] @=> float poses[];
+float out[9];
+check(model.animations()==-1);
+check(model.createMesh(xyz,tris));
+check(model.animations()==0);
+check(model.addAnimation(0,"walk",times,poses)==-1);
+check(model.setSkin(0,2,weights));
+check(model.setBoneParent(0,1,0));
+check(model.addAnimation(0,"walk",badTimes,poses)==-1);
+check(model.addAnimation(0,"walk",times,xyz)==-1);
+check(model.addAnimation(0,"walk",times,poses)==0);
+check(model.addAnimation(0,"walk",times,poses)==-1);
+check(model.animations()==1);
+check(model.animationDuration(0)==2.0);
+check(model.animationDuration(1)==-1.0);
+check(!model.sampleAnimation(1,1.0,0));
+check(!model.sampleAnimation(0,1.0,2));
+check(model.sampleAnimation(0,1.0,0));
+check(model.exportPosedVertices(0,out));
+check(Math.fabs(out[0]-1.0)<0.00001);
+check(Math.fabs(out[3]-1.70710678)<0.00001 && Math.fabs(out[4]-0.70710678)<0.00001);
+check(model.sampleAnimation(0,3.0,0));
+check(model.exportPosedVertices(0,out) && Math.fabs(out[3]-2.0)<0.00001 && Math.fabs(out[4]-1.0)<0.00001);
+check(model.sampleAnimation(0,-1.0,1));
+check(model.exportPosedVertices(0,out) && Math.fabs(out[0]-1.0)<0.00001);
+check(model.sampleAnimation(0,2.0,1));
+check(model.exportPosedVertices(0,out) && out[0]==0.0 && out[3]==1.0);
+check(model.sampleAnimation(0,-1.0,0));
+check(model.exportPosedVertices(0,out) && out[3]==1.0);
+check(model.vertexAt(0,1,0)==1.0);
+check(model.resetPose(0));
+check(model.save("animated/model.gltf"));
+check(model.createMesh(xyz,tris));
+check(model.animations()==0);
+""",32,p)
+    animated=json.loads((p/"animated/model.gltf").read_text(encoding="utf-8"))
+    assert len(animated["animations"])==1
+    clip=animated["animations"][0]
+    assert clip["name"]=="walk"
+    assert {c["target"]["path"] for c in clip["channels"]}>={"translation","rotation"}
+    assert len({c["target"]["node"] for c in clip["channels"]})==2
