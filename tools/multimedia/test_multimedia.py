@@ -2464,3 +2464,27 @@ check(model.animations()==0);
     assert clip["name"]=="walk"
     assert {c["target"]["path"] for c in clip["channels"]}>={"translation","rotation"}
     assert len({c["target"]["node"] for c in clip["channels"]})==2
+
+
+    run("model", """
+Model3D model;
+float posed[9];
+check(model.load("animated/model.gltf"));
+check(model.animations()==1);
+check(Math.fabs(model.animationDuration(0)-2.0)<0.00001);
+check(model.exportPosedVertices(0,posed));
+check(Math.fabs(posed[3]-1.0)<0.00001);
+check(model.sampleAnimation(0,1.0,0));
+check(model.exportPosedVertices(0,posed));
+check(Math.fabs(posed[0]-1.0)<0.00001);
+check(Math.fabs(posed[3]-1.70710678)<0.00001 && Math.fabs(posed[4]-0.70710678)<0.00001);
+check(!model.sampleAnimation(1,0.0,0));
+check(model.exportPosedVertices(0,posed) && Math.fabs(posed[0]-1.0)<0.00001);
+check(model.sampleAnimation(0,-1.0,1));
+check(model.exportPosedVertices(0,posed) && Math.fabs(posed[0]-1.0)<0.00001);
+check(model.resetAnimation());
+check(model.exportPosedVertices(0,posed) && Math.fabs(posed[3]-1.0)<0.00001);
+check(model.load("triangle.obj"));
+check(model.animations()==0);
+check(!model.sampleAnimation(0,0.0,0));
+""",18,p)

@@ -17,6 +17,7 @@
 #include <new>
 #include <vector>
 #include <utility>
+#include <unordered_map>
 #include <assimp/material.h>
 
 namespace {
@@ -112,12 +113,14 @@ struct ModelState {
     std::unique_ptr<Assimp::Importer> importer;
     std::unique_ptr<aiScene> generated;
     const aiScene *scene=nullptr;
+    std::unordered_map<const aiNode*,aiMatrix4x4> importedPose;
     std::array<double,9> controls{{0,0,0,0,0,0,1,1,1}};
     void reset() { controls={{0,0,0,0,0,0,1,1,1}}; }
     bool read(const std::string &path) {
         auto candidate=std::make_unique<Assimp::Importer>();
         const auto *next=load(*candidate,path);
         if(!next) return false;
+        importedPose.clear();
         generated.reset();
         importer=std::move(candidate);
         scene=next;
@@ -225,7 +228,7 @@ CK_DLL_MFUN(model3d_reset) {
     if(auto *p=modelState(SELF,API)) p->reset();
 }
 CK_DLL_MFUN(model3d_clear) {
-    if(auto *p=modelState(SELF,API)) { p->scene=nullptr; p->importer.reset(); p->generated.reset(); p->reset(); }
+    if(auto *p=modelState(SELF,API)) { p->importedPose.clear(); p->scene=nullptr; p->importer.reset(); p->generated.reset(); p->reset(); }
 }
 CK_DLL_MFUN(model3d_get_x) { RETURN->v_float=modelGet(modelState(SELF,API),0); }
 CK_DLL_MFUN(model3d_set_x) { RETURN->v_float=modelSet(modelState(SELF,API),0,GET_NEXT_FLOAT(ARGS)); }
@@ -282,6 +285,7 @@ bool makeMesh(ModelState *p,const std::vector<aiVector3D> &vertices,
     mesh->mMaterialIndex=0;
     scene->mRootNode->mMeshes=new unsigned[1]{0};
     scene->mRootNode->mNumMeshes=1;
+    p->importedPose.clear();
     p->importer.reset();
     p->generated=std::move(scene);
     p->scene=p->generated.get(); p->reset();
@@ -724,10 +728,46 @@ aiNode *skinNode(ModelState *p,t_CKINT mesh,t_CKINT bone) {
     if(!m||bone<0||static_cast<uint64_t>(bone)>=m->mNumBones) return nullptr;
     return p->generated->mRootNode->FindNode(m->mBones[bone]->mName);
 }
+// Imported scenes remain immutable; sampled local transforms live in an overlay.
+const aiNode *uniqueNode(const aiNode *root,const aiString &name) {
+    const aiNode *found=nullptr;
+    std::vector<const aiNode*> pending{root};
+    while(!pending.empty()) {
+        auto *n=pending.back(); pending.pop_back();
+        if(n->mName==name) { if(found) return nullptr; found=n; }
+        for(unsigned i=0;i<n->mNumChildren;++i) pending.push_back(n->mChildren[i]);
+    }
+    return found;
+}
+const aiNode *uniqueMeshNode(const aiNode *root,unsigned mesh) {
+    const aiNode *found=nullptr;
+    std::vector<const aiNode*> pending{root};
+    while(!pending.empty()) {
+        auto *n=pending.back(); pending.pop_back();
+        for(unsigned i=0;i<n->mNumMeshes;++i) if(n->mMeshes[i]==mesh) {
+            if(found) return nullptr; found=n;
+        }
+        for(unsigned i=0;i<n->mNumChildren;++i) pending.push_back(n->mChildren[i]);
+    }
+    return found;
+}
 bool finiteMatrix(const aiMatrix4x4 &m) {
     for(unsigned i=0;i<4;++i) for(unsigned j=0;j<4;++j)
         if(!coordinate(m[i][j])) return false;
     return true;
+}
+bool importedWorld(ModelState *p,const aiNode *node,aiMatrix4x4 &world) {
+    if(!node) return false;
+    world=aiMatrix4x4(); unsigned depth=0;
+    while(node) {
+        if(++depth>1024) return false;
+        auto it=p->importedPose.find(node);
+        world=(it==p->importedPose.end()?node->mTransformation:it->second)*world;
+        if(!finiteMatrix(world)) return false;
+        if(node==p->scene->mRootNode) return true;
+        node=node->mParent;
+    }
+    return false;
 }
 bool skinWorld(ModelState *p,aiNode *node,aiMatrix4x4 &world) {
     auto *root=p->generated->mRootNode;
@@ -815,13 +855,26 @@ CK_DLL_MFUN(model3d_export_posed) {
     try {
         auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS);
         auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
-        auto *m=editableMesh(p,mesh);
+        auto *m=meshAt(p,mesh);
         if(!m||!m->HasBones()||!a||API->object->array_float_size(a)!=static_cast<int64_t>(m->mNumVertices)*3) return;
+        aiMatrix4x4 inverseMesh;
+        if(!p->generated) {
+            if(!importedWorld(p,uniqueMeshNode(p->scene->mRootNode,static_cast<unsigned>(mesh)),inverseMesh)) return;
+            auto det=inverseMesh.Determinant();
+            if(!std::isfinite(det)||det==0) return;
+            inverseMesh.Inverse();
+            if(!finiteMatrix(inverseMesh)) return;
+        }
         struct Sum { double x=0,y=0,z=0,w=0; };
         std::vector<Sum> next(m->mNumVertices);
         for(unsigned b=0;b<m->mNumBones;++b) {
             aiMatrix4x4 world;
-            if(!skinWorld(p,skinNode(p,mesh,b),world)) return;
+            if(p->generated) {
+                if(!skinWorld(p,skinNode(p,mesh,b),world)) return;
+            } else {
+                if(!importedWorld(p,uniqueNode(p->scene->mRootNode,m->mBones[b]->mName),world)) return;
+                world=inverseMesh*world;
+            }
             world=world*m->mBones[b]->mOffsetMatrix;
             if(!finiteMatrix(world)) return;
             for(unsigned j=0;j<m->mBones[b]->mNumWeights;++j) {
@@ -833,7 +886,9 @@ CK_DLL_MFUN(model3d_export_posed) {
                 q.z+=double(v.z)*weight.mWeight; q.w+=weight.mWeight;
             }
         }
-        for(auto &q:next) {
+        for(unsigned i=0;i<next.size();++i) {
+            auto &q=next[i];
+            if(q.w==0&&!p->generated) { auto v=m->mVertices[i]; q={v.x,v.y,v.z,1}; }
             if(q.w<=0||!coordinate(q.x/q.w)||!coordinate(q.y/q.w)||!coordinate(q.z/q.w)) return;
         }
         for(unsigned i=0;i<m->mNumVertices;++i) {
@@ -930,6 +985,26 @@ CK_DLL_MFUN(model3d_animation_duration) {
     auto *a=animationAt(p,GET_NEXT_INT(ARGS));
     RETURN->v_float=a&&a->mTicksPerSecond>0?a->mDuration/a->mTicksPerSecond:-1;
 }
+namespace {
+template<class Key,class Value,class Interpolate>
+bool sampleKeys(const Key *keys,unsigned n,double t,Value &out,Interpolate interpolate) {
+    if(!n||!keys) return false;
+    for(unsigned i=0;i<n;++i)
+        if(!std::isfinite(keys[i].mTime)||(i&&keys[i].mTime<=keys[i-1].mTime)) return false;
+    if(t<=keys[0].mTime) out=keys[0].mValue;
+    else if(t>=keys[n-1].mTime) out=keys[n-1].mValue;
+    else {
+        auto hi=std::upper_bound(keys,keys+n,t,[](double v,const Key &k){return v<k.mTime;});
+        auto lo=hi-1;
+        out=interpolate(lo->mValue,hi->mValue,static_cast<ai_real>((t-lo->mTime)/(hi->mTime-lo->mTime)));
+    }
+    return true;
+}
+bool validQuaternion(const aiQuaternion &q) {
+    double n=double(q.w)*q.w+double(q.x)*q.x+double(q.y)*q.y+double(q.z)*q.z;
+    return std::isfinite(n)&&n>0;
+}
+}
 CK_DLL_MFUN(model3d_sample_animation) {
     RETURN->v_int=0;
     try {
@@ -938,35 +1013,50 @@ CK_DLL_MFUN(model3d_sample_animation) {
         double seconds=GET_NEXT_FLOAT(ARGS);
         auto loop=GET_NEXT_INT(ARGS);
         auto *a=animationAt(p,index);
-        if(!p||!p->generated||!a||!std::isfinite(seconds)||
-           (loop!=0&&loop!=1)||a->mDuration<=0) return;
+        if(!a||!std::isfinite(seconds)||(loop!=0&&loop!=1)||
+           !std::isfinite(a->mDuration)||a->mDuration<=0||
+           !std::isfinite(a->mTicksPerSecond)||a->mTicksPerSecond<=0||
+           !a->mNumChannels||a->mNumMeshChannels||a->mNumMorphMeshChannels) return;
+        double duration=a->mDuration/a->mTicksPerSecond;
+        if(!std::isfinite(duration)||duration<=0) return;
         double t=seconds;
-        if(loop) { t=std::fmod(t,a->mDuration); if(t<0) t+=a->mDuration; }
-        else t=std::clamp(t,0.0,a->mDuration);
-        std::vector<std::pair<aiNode*,aiMatrix4x4>> next;
+        if(loop) { t=std::fmod(t,duration); if(t<0) t+=duration; }
+        else t=std::clamp(t,0.0,duration);
+        t*=a->mTicksPerSecond;
+        std::unordered_map<const aiNode*,aiMatrix4x4> next;
+        auto linear=[](const aiVector3D &x,const aiVector3D &y,ai_real u){return x+(y-x)*u;};
+        auto spherical=[](const aiQuaternion &x,const aiQuaternion &y,ai_real u){
+            aiQuaternion q; aiQuaternion::Interpolate(q,x,y,u); return q;
+        };
         for(unsigned i=0;i<a->mNumChannels;++i) {
             auto *c=a->mChannels[i];
-            auto *node=p->generated->mRootNode->FindNode(c->mNodeName);
-            if(!node||c->mNumPositionKeys<2||c->mNumPositionKeys!=c->mNumRotationKeys) return;
-            auto *keys=c->mPositionKeys;
-            auto upper=std::upper_bound(keys,keys+c->mNumPositionKeys,t,
-                [](double value,const aiVectorKey &key){return value<key.mTime;});
-            unsigned hi=std::min<unsigned>(upper-keys,c->mNumPositionKeys-1);
-            if(!hi) hi=1;
-            unsigned lo=hi-1;
-            ai_real u=static_cast<ai_real>((t-keys[lo].mTime)/(keys[hi].mTime-keys[lo].mTime));
-            auto v=keys[lo].mValue+(keys[hi].mValue-keys[lo].mValue)*u;
+            if(!c) return;
+            auto *node=uniqueNode(p->scene->mRootNode,c->mNodeName);
+            if(!node) return;
+            aiVector3D v,scale;
             aiQuaternion q;
-            aiQuaternion::Interpolate(q,c->mRotationKeys[lo].mValue,c->mRotationKeys[hi].mValue,u);
+            if(!sampleKeys(c->mPositionKeys,c->mNumPositionKeys,t,v,linear)||
+               !sampleKeys(c->mRotationKeys,c->mNumRotationKeys,t,q,spherical)||
+               !sampleKeys(c->mScalingKeys,c->mNumScalingKeys,t,scale,linear)||
+               !validQuaternion(q)) return;
             q.Normalize();
-            aiMatrix4x4 matrix(q.GetMatrix());
+            aiMatrix4x4 matrix(q.GetMatrix()),s;
+            aiMatrix4x4::Scaling(scale,s);
+            matrix=matrix*s;
             matrix.a4=v.x; matrix.b4=v.y; matrix.c4=v.z;
-            if(!finiteMatrix(matrix)) return;
-            next.emplace_back(node,matrix);
+            if(!finiteMatrix(matrix)||!next.emplace(node,matrix).second) return;
         }
-        for(const auto &item:next) item.first->mTransformation=item.second;
+        if(p->generated) {
+            for(const auto &item:next) const_cast<aiNode*>(item.first)->mTransformation=item.second;
+        } else p->importedPose.swap(next);
         RETURN->v_int=1;
     } catch(...) {}
+}
+CK_DLL_MFUN(model3d_reset_animation) {
+    RETURN->v_int=0;
+    auto *p=modelState(SELF,API);
+    if(!p||!p->scene||p->generated) return;
+    p->importedPose.clear(); RETURN->v_int=1;
 }
 
 CK_DLL_QUERY(ModelIO) {
@@ -1137,6 +1227,7 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_animations,"int","animations");
     QUERY->add_mfun(QUERY,model3d_animation_duration,"float","animationDuration");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,model3d_reset_animation,"int","resetAnimation");
     QUERY->add_mfun(QUERY,model3d_sample_animation,"int","sampleAnimation");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"float","seconds");
