@@ -2657,3 +2657,30 @@ check(imported.exportNodeWorldMatrix(0,worldMat));
 imported.clear();
 check(imported.nodes()==-1);
 """,33,p)
+
+
+    run("model", """
+Model3D model;
+float props[6];
+float small[3];
+check(!model.exportMaterial(0,props));
+check(model.baseColorTextures(0)==-1);
+check(model.createMesh([0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0],[0,1,2]));
+check(model.addMaterial("surface",0.2,0.4,0.6,0.75)==1);
+check(model.assignMaterial(0,1));
+check(model.exportMaterial(model.materialAt(0),props));
+check(Math.fabs(props[0]-0.2)<0.00001 && Math.fabs(props[1]-0.4)<0.00001 && Math.fabs(props[2]-0.6)<0.00001);
+check(Math.fabs(props[3]-0.75)<0.00001);
+check(props[4]==0.0 && props[5]==1.0);
+check(model.baseColorTextures(1)==0);
+check(!model.exportMaterial(1,small));
+check(!model.exportMaterial(999,props));
+check(Math.fabs(props[0]-0.2)<0.00001);
+check(model.baseColorTextures(-1)==-1);
+check(model.save("materialprops/model.gltf"));
+Model3D imported;
+check(imported.load("materialprops/model.gltf"));
+check(imported.exportMaterial(imported.materialAt(0),props));
+check(Math.fabs(props[0]-0.2)<0.00001 && Math.fabs(props[2]-0.6)<0.00001);
+check(imported.baseColorTextures(imported.materialAt(0))==0);
+""",19,p)
