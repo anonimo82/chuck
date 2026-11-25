@@ -3,6 +3,7 @@
   "groups": [
     "transport-video-frame",
     "transport-video-stream",
-    "transport-video-buffer"
+    "transport-video-buffer",
+    "transport-audio-video"
   ]
 }
