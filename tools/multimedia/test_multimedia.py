@@ -18,8 +18,9 @@ def run(module, script, expected, directory):
     if r.returncode or "FAIL" in log or log.count("PASS") != expected:
         raise RuntimeError(module + " smoke test failed")
 
-with tempfile.TemporaryDirectory() as d:
-    p = pathlib.Path(d)
+def legacy():
+    directory = tempfile.TemporaryDirectory()
+    p = pathlib.Path(directory.name)
     run("vector", """
 check(VectorIO.save("<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'><rect width='4' height='4' fill='red'/></svg>", "test.svg"));
 check(VectorIO.valid("test.svg"));
@@ -4236,6 +4237,9 @@ check(!image.exportAudioSamples(2,2,1,mono));
 check(mono[1]==-1.0);
 """,37,p)
 
+def text_core():
+    directory = tempfile.TemporaryDirectory()
+    p = pathlib.Path(directory.name)
     run("text", """
 TextStyle base;
 TextStyle title;
@@ -5338,6 +5342,9 @@ check(doc.nodeCount()==0 && doc.tableCount()==0);
 """,74,p)
     assert (p / "recursive-page.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
+def text_recent():
+    directory = tempfile.TemporaryDirectory()
+    p = pathlib.Path(directory.name)
     run("text", """
 TextDocument doc;
 TextStyle style;
@@ -5637,3 +5644,12 @@ check(doc.savePDF("text-pdf-rich.pdf",page));
         assert len(re.findall(rb"/MediaBox\s*\[\s*0\s+0\s+180\s+90\s*\]",objects)) == pages, name
     assert not (p / "text-pdf-wrong.svg").exists()
     assert not (p / "text-pdf-oversize.pdf").exists()
+
+if __name__ == "__main__":
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent}
+    selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
+    if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
+        raise SystemExit("Invalid multimedia test groups")
+    for group in selected:
+        print("SMOKE_GROUP " + group, flush=True)
+        groups[group]()
