@@ -4,6 +4,7 @@
     "video-opengl-framebuffer",
     "video-chugl-texture",
     "video-offscreen-render",
-    "video-indexed-av"
+    "video-indexed-av",
+    "video-graphics-consolidation"
   ]
 }
