@@ -113,8 +113,12 @@ struct PageStyle {
     t_CKINT numbering=0,firstNumber=1,splitParagraphs=0,splitTables=0;
 };
 struct FrameStyle { t_CKINT x=0,y=0,width=320,height=240,page=0; Container box; };
+struct FrameFlow { std::vector<FrameStyle> frames; Paragraph source; std::vector<std::string> fragments; size_t consumed=0; bool planned=false; };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; std::vector<NodeBlock> nodes; size_t nextOrder=0; };
-t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0,frameOffset=0;
+t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0,frameOffset=0,flowOffset=0;
+FrameFlow *flowState(Chuck_Object *self,CK_DL_API API) {
+    return self?reinterpret_cast<FrameFlow *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,flowOffset))):nullptr;
+}
 FrameStyle *frameState(Chuck_Object *self,CK_DL_API API) {
     return self?reinterpret_cast<FrameStyle *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,frameOffset))):nullptr;
 }
@@ -814,6 +818,62 @@ CK_DLL_MFUN(text_frame_reset) {
     auto *p=frameState(SELF,API); if(p) *p=FrameStyle{};
 }
 
+
+CK_DLL_CTOR(text_flow_ctor) {
+    OBJ_MEMBER_UINT(SELF,flowOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,flowOffset)=reinterpret_cast<uintptr_t>(new FrameFlow); } catch(...) {}
+}
+CK_DLL_DTOR(text_flow_dtor) { delete flowState(SELF,API); OBJ_MEMBER_UINT(SELF,flowOffset)=0; }
+CK_DLL_MFUN(text_flow_set_text) {
+    RETURN->v_int=0;
+    try {
+        auto *p=flowState(SELF,API); auto value=GET_NEXT_STRING_SAFE(ARGS);
+        auto *style=styleState(GET_NEXT_OBJECT(ARGS),API);
+        if(!p||!style||!validText(value,65536)) return;
+        Paragraph next; next.text=value; next.baseBytes=value.size(); next.style=*style;
+        p->source=std::move(next); p->planned=false; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_flow_append_frame) {
+    RETURN->v_int=0;
+    try {
+        auto *p=flowState(SELF,API); auto *f=frameState(GET_NEXT_OBJECT(ARGS),API);
+        if(!p||!f||p->frames.size()>=256) return;
+        p->frames.push_back(*f); p->planned=false; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_flow_frame_count) {
+    auto *p=flowState(SELF,API); RETURN->v_int=p?static_cast<t_CKINT>(p->frames.size()):0;
+}
+CK_DLL_MFUN(text_flow_set_frame) {
+    RETURN->v_int=0;
+    auto *p=flowState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *f=frameState(GET_NEXT_OBJECT(ARGS),API);
+    if(!p||!f||i<0||static_cast<uint64_t>(i)>=p->frames.size()) return;
+    p->frames[i]=*f; p->planned=false; RETURN->v_int=1;
+}
+CK_DLL_MFUN(text_flow_get_frame) {
+    RETURN->v_int=0;
+    auto *p=flowState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *f=frameState(GET_NEXT_OBJECT(ARGS),API);
+    if(!p||!f||i<0||static_cast<uint64_t>(i)>=p->frames.size()) return;
+    *f=p->frames[i]; RETURN->v_int=1;
+}
+CK_DLL_MFUN(text_flow_remove_frame) {
+    RETURN->v_int=0;
+    auto *p=flowState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    if(!p||i<0||static_cast<uint64_t>(i)>=p->frames.size()) return;
+    p->frames.erase(p->frames.begin()+i); p->planned=false; RETURN->v_int=1;
+}
+CK_DLL_MFUN(text_flow_clear_frames) {
+    auto *p=flowState(SELF,API); if(p) { p->frames.clear(); p->planned=false; }
+}
+CK_DLL_MFUN(text_flow_frame_text) {
+    auto *p=flowState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    RETURN->v_string=API->object->create_string(VM,p&&p->planned&&i>=0&&static_cast<uint64_t>(i)<p->fragments.size()?p->fragments[i].c_str():"",FALSE);
+}
+CK_DLL_MFUN(text_flow_ready) {
+    auto *p=flowState(SELF,API); RETURN->v_int=p&&p->planned;
+}
+
 CK_DLL_CTOR(text_page_ctor) {
     OBJ_MEMBER_UINT(SELF,pageOffset)=0;
     try { OBJ_MEMBER_UINT(SELF,pageOffset)=reinterpret_cast<uintptr_t>(new PageStyle); } catch(...) {}
@@ -1318,6 +1378,39 @@ bool paragraphDimensions(cairo_t *cr,const Paragraph &p,int width,int &w,int &h)
     if(totalW<0||totalH<0||totalW>100000000||totalH>100000000) return false;
     w=static_cast<int>(std::ceil(totalW)); h=static_cast<int>(std::ceil(totalH)); return true;
 }
+
+bool planFrameFlow(FrameFlow &flow) {
+    std::vector<std::string> fragments;
+    size_t consumed=0;
+    std::unique_ptr<cairo_surface_t,decltype(&cairo_surface_destroy)> surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1),cairo_surface_destroy);
+    if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return false;
+    std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
+    if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return false;
+    for(const auto &f:flow.frames) {
+        double dw=f.width-f.box.paddingLeft-f.box.paddingRight-2*f.box.borderWidth;
+        double dh=f.height-f.box.paddingTop-f.box.paddingBottom-2*f.box.borderWidth;
+        if(dw<1||dh<1) return false;
+        int w=static_cast<int>(std::floor(dw)),h=static_cast<int>(std::floor(dh));
+        if(consumed==flow.source.text.size()) { fragments.emplace_back(); continue; }
+        Paragraph rest=flow.source; rest.text=flow.source.text.substr(consumed); rest.baseBytes=rest.text.size();
+        auto layout=makeLayout(cr.get(),rest,w);
+        if(!layout) return false;
+        std::unique_ptr<PangoLayoutIter,decltype(&pango_layout_iter_free)> it(pango_layout_get_iter(layout.get()),pango_layout_iter_free);
+        if(!it) return false;
+        size_t end=0;
+        for(;;) {
+            int y0=0,y1=0; pango_layout_iter_get_line_yrange(it.get(),&y0,&y1);
+            if(y1>h*PANGO_SCALE) break;
+            if(!pango_layout_iter_next_line(it.get())) { end=rest.text.size(); break; }
+            auto *line=pango_layout_iter_get_line_readonly(it.get());
+            if(!line||line->start_index<0||static_cast<size_t>(line->start_index)>rest.text.size()) return false;
+            end=static_cast<size_t>(line->start_index);
+        }
+        fragments.push_back(rest.text.substr(0,end)); consumed+=end;
+    }
+    flow.fragments.swap(fragments); flow.consumed=consumed; flow.planned=true; return true;
+}
+
 bool tableGeometry(cairo_t *cr,const Table &t,int width,std::vector<int> &xs,std::vector<int> &heights,int &height) {
     xs.assign(t.cols+1,0); heights.assign(t.rows,0); height=0;
     int available=width-(t.cols-1)*t.columnGap;
@@ -2300,6 +2393,12 @@ CK_DLL_MFUN(text_doc_load_txt) {
     } catch(...) {}
 }
 
+
+CK_DLL_MFUN(text_flow_layout) {
+    RETURN->v_int=0;
+    try { auto *p=flowState(SELF,API); if(p) { p->planned=false; RETURN->v_int=planFrameFlow(*p); } } catch(...) {}
+}
+
 CK_DLL_QUERY(TextIO) {
     QUERY->setname(QUERY,"TextIO");
     QUERY->begin_class(QUERY,"TextIO","Object");
@@ -2550,6 +2649,30 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_frame_content_size,"int","contentSize");
     QUERY->add_arg(QUERY,"int[]","dimensions");
     QUERY->add_mfun(QUERY,text_frame_reset,"void","reset");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"TextFlow","Object");
+    flowOffset=QUERY->add_mvar(QUERY,"int","@textFlowNative",FALSE);
+    if(flowOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,text_flow_ctor); QUERY->add_dtor(QUERY,text_flow_dtor);
+    QUERY->add_mfun(QUERY,text_flow_set_text,"int","setText");
+    QUERY->add_arg(QUERY,"string","text");
+    QUERY->add_arg(QUERY,"TextStyle","style");
+    QUERY->add_mfun(QUERY,text_flow_append_frame,"int","appendFrame");
+    QUERY->add_arg(QUERY,"TextFrame","frame");
+    QUERY->add_mfun(QUERY,text_flow_frame_count,"int","frameCount");
+    QUERY->add_mfun(QUERY,text_flow_set_frame,"int","setFrame");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextFrame","frame");
+    QUERY->add_mfun(QUERY,text_flow_get_frame,"int","getFrame");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextFrame","destination");
+    QUERY->add_mfun(QUERY,text_flow_remove_frame,"int","removeFrame");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_flow_clear_frames,"void","clearFrames");
+    QUERY->add_mfun(QUERY,text_flow_frame_text,"string","frameText");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_flow_ready,"int","ready");
+    QUERY->add_mfun(QUERY,text_flow_layout,"int","layout");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextPage","Object");
     pageOffset=QUERY->add_mvar(QUERY,"int","@textPageNative",FALSE);
