@@ -7465,8 +7465,65 @@ check(capture.append(0.125,128,64,12));
 check(capture.tickAt(1)==13);
 """,58,p)
 
+
+def midi_capture_save():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("midi", """
+MidiCapture capture;
+check(!capture.save("unconfigured.mid"));
+check(capture.create(480,120));
+MidiMsg msg;
+144=>msg.data1; 60=>msg.data2; 100=>msg.data3;
+check(capture.appendMessage(0,msg.data1,msg.data2,msg.data3));
+192=>msg.data1; 7=>msg.data2; 99=>msg.data3;
+check(capture.appendMessage(0.25,msg.data1,msg.data2,msg.data3));
+check(capture.sizeAt(1)==2);
+check(capture.byteAt(1,2)==-1);
+check(capture.appendMessage(0.5,128,60,40));
+check(capture.appendMessage(0.5,144,60,80));
+check(capture.appendMessage(0.75,176,64,127));
+check(capture.appendMessage(1,144,60,0));
+check(!capture.appendMessage(1,248,0,0));
+check(capture.count()==6);
+check(capture.save("captured.mid"));
+check(!capture.save("captured.mid"));
+check(capture.count()==6);
+MidiSequence seq;
+check(seq.load("captured.mid"));
+check(seq.ticksPerQuarter()==480);
+check(seq.tracks()==1);
+check(seq.events(0)>=7);
+check(seq.byteAt(0,0,0)==255);
+check(seq.tickAt(0,1)==0);
+check(seq.byteAt(0,1,0)==144);
+check(seq.byteAt(0,1,1)==60);
+check(seq.byteAt(0,1,2)==100);
+check(seq.tickAt(0,2)==240);
+check(seq.sizeAt(0,2)==2);
+check(seq.byteAt(0,2,0)==192);
+check(seq.byteAt(0,2,1)==7);
+check(seq.tickAt(0,3)==480);
+check(seq.tickAt(0,4)==480);
+check(seq.byteAt(0,3,0)==128);
+check(seq.byteAt(0,3,2)==40);
+check(seq.byteAt(0,4,0)==144);
+check(seq.byteAt(0,4,2)==80);
+check(seq.tickAt(0,5)==720);
+check(seq.byteAt(0,5,0)==176);
+check(seq.tickAt(0,6)==960);
+check(seq.byteAt(0,6,2)==0);
+capture.clear();
+check(capture.save("empty.mid"));
+check(seq.load("empty.mid"));
+check(seq.ticksPerQuarter()==480);
+check(seq.events(0)>=1);
+""",42,p)
+        assert not (p / "unconfigured.mid").exists()
+        assert (p / "captured.mid").read_bytes().startswith(b"MThd")
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
