@@ -10,7 +10,7 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 SUITES = ("raster/test_raster.py", "audio/test_audio.py", "test_multimedia.py")
-GROUPS = ("raster", "audio", "legacy", "text-core", "text-recent", "text-page-breaks", "text-page-furniture", "text-page-numbers", "text-split-paragraphs", "text-split-tables", "text-frame-foundation", "text-frame-flow", "text-frame-mixed", "text-frame-render", "text-frame-native", "text-accessibility", "text-flow-txt", "text-flow-interop", "text-flow-performance", "text-flow-consolidation", "text-flow-hit-test", "text-flow-selection", "text-flow-edit", "text-flow-styled-edit", "text-flow-edit-consolidation", "vector-shape-edit", "vector-shape-transform", "vector-shape-style")
+GROUPS = ("raster", "audio", "legacy", "text-core", "text-recent", "text-page-breaks", "text-page-furniture", "text-page-numbers", "text-split-paragraphs", "text-split-tables", "text-frame-foundation", "text-frame-flow", "text-frame-mixed", "text-frame-render", "text-frame-native", "text-accessibility", "text-flow-txt", "text-flow-interop", "text-flow-performance", "text-flow-consolidation", "text-flow-hit-test", "text-flow-selection", "text-flow-edit", "text-flow-styled-edit", "text-flow-edit-consolidation", "vector-shape-edit", "vector-shape-transform", "vector-shape-style", "vector-shape-group")
 MARKER = re.compile(r"SMOKE_COUNTS (\d+) (\d+) (\d+)")
 START = re.compile(r"SMOKE_EXPECTED (\d+)")
 
