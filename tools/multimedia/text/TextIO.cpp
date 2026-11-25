@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdio>
 #include <pango/pangocairo.h>
+#include <cairo-svg.h>
 #include <string>
 #include <vector>
 #include <memory>
@@ -1573,6 +1574,41 @@ CK_DLL_MFUN(text_doc_save_png) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+
+CK_DLL_MFUN(text_doc_save_svg) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),bg=GET_NEXT_INT(ARGS);
+        if(!d||!validCanvas(w,h,bg)||path.size()<4||path.substr(path.size()-4)!=".svg"||path.find('\0')!=std::string::npos) return;
+        FILE *f=mediaio::openNew(path.c_str());
+        if(!f) return;
+        bool ok=false;
+        try {
+            SurfacePtr surface(cairo_svg_surface_create_for_stream(textWritePng,f,w,h),cairo_surface_destroy);
+            if(cairo_surface_status(surface.get())==CAIRO_STATUS_SUCCESS) {
+                cairo_svg_surface_restrict_to_version(surface.get(),CAIRO_SVG_VERSION_1_1);
+#if CAIRO_VERSION >= CAIRO_VERSION_ENCODE(1,16,0)
+                cairo_svg_surface_set_document_unit(surface.get(),CAIRO_SVG_UNIT_PX);
+#endif
+                {
+                    std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
+                    if(cairo_status(cr.get())==CAIRO_STATUS_SUCCESS) {
+                        cairo_rectangle(cr.get(),0,0,w,h); cairo_clip(cr.get());
+                        if(bg>=0) { nodeColor(cr.get(),bg); cairo_paint(cr.get()); }
+                        ok=drawDocument(cr.get(),*d,w,h)&&cairo_status(cr.get())==CAIRO_STATUS_SUCCESS;
+                    }
+                }
+                cairo_surface_finish(surface.get());
+                ok=ok&&cairo_surface_status(surface.get())==CAIRO_STATUS_SUCCESS;
+            }
+        } catch(...) { ok=false; }
+        if(std::fclose(f)!=0) ok=false;
+        if(!ok) { std::remove(path.c_str()); return; }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+
 CK_DLL_MFUN(text_doc_page_count) {
     RETURN->v_int=-1;
     try {
@@ -2388,6 +2424,11 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_arg(QUERY,"int","backgroundRGB");
     QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,text_doc_save_svg,"int","saveSVG");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","backgroundRGB");
     QUERY->add_mfun(QUERY,text_doc_save_png,"int","savePNG");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_arg(QUERY,"int","width");
