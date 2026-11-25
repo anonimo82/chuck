@@ -62,8 +62,9 @@ double listSpace(const ListStyle &p) { return p.mode?p.level*p.levelIndent+p.mar
 struct Paragraph { std::string text; Style style; size_t baseBytes=0; std::vector<Run> runs; ParagraphStyle layout; Container box; ListStyle list; };
 // Value-owned tree: children are snapshots, not references to VM objects.
 struct Node {
-    int kind=0; // 0 group, 1 paragraph
+    int kind=0; // 0 group, 1 paragraph, 2 decorated container
     Paragraph paragraph;
+    double gap=0;
     std::vector<Node> children;
 };
 struct NodeStats { size_t nodes=0,bytes=0; int depth=0; };
@@ -841,7 +842,7 @@ CK_DLL_MFUN(text_node_copy) {
 }
 namespace {
 bool changeNodeChild(Node *n,t_CKINT index,const Node *child,bool replace) {
-    if(!n||!child||n==child||n->kind!=0||index<0) return false;
+    if(!n||!child||n==child||(n->kind!=0&&n->kind!=2)||index<0) return false;
     if(static_cast<uint64_t>(index)>n->children.size()||(replace&&static_cast<uint64_t>(index)==n->children.size())) return false;
     NodeStats st;
     if(!nodeStats(*n,st)) return false;
@@ -880,6 +881,57 @@ CK_DLL_MFUN(text_node_remove) {
     RETURN->v_int=0;
     auto *n=nodeState(SELF,API); auto i=GET_NEXT_INT(ARGS);
     if(nodeChildOK(n,i)) { n->children.erase(n->children.begin()+i); RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_node_set_container) {
+    RETURN->v_int=0;
+    auto *n=nodeState(SELF,API); auto *box=containerState(GET_NEXT_OBJECT(ARGS),API);
+    if(n&&box) { n->paragraph.box=*box; if(n->kind==0) n->kind=2; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_node_get_container) {
+    RETURN->v_int=0;
+    auto *n=nodeState(SELF,API); auto *box=containerState(GET_NEXT_OBJECT(ARGS),API);
+    if(n&&box) { *box=n->paragraph.box; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_node_set_layout) {
+    RETURN->v_int=0;
+    auto *n=nodeState(SELF,API); auto *p=paragraphStyleState(GET_NEXT_OBJECT(ARGS),API);
+    if(n&&p) { n->paragraph.layout=*p; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_node_get_layout) {
+    RETURN->v_int=0;
+    auto *n=nodeState(SELF,API); auto *p=paragraphStyleState(GET_NEXT_OBJECT(ARGS),API);
+    if(n&&p) { *p=n->paragraph.layout; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_node_set_style) {
+    RETURN->v_int=0;
+    try {
+        auto *n=nodeState(SELF,API); auto *p=styleState(GET_NEXT_OBJECT(ARGS),API);
+        if(n&&p&&n->kind==1) { Style copy=*p; n->paragraph.style=std::move(copy); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_node_get_style) {
+    RETURN->v_int=0;
+    try {
+        auto *n=nodeState(SELF,API); auto *p=styleState(GET_NEXT_OBJECT(ARGS),API);
+        if(n&&p&&n->kind==1) { Style copy=n->paragraph.style; *p=std::move(copy); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_node_set_gap) {
+    RETURN->v_float=-1;
+    auto *n=nodeState(SELF,API); double gap=GET_NEXT_FLOAT(ARGS);
+    if(n&&n->kind!=1&&std::isfinite(gap)&&gap>=0&&gap<=512) RETURN->v_float=n->gap=gap;
+}
+CK_DLL_MFUN(text_node_get_gap) {
+    auto *n=nodeState(SELF,API); RETURN->v_float=n&&n->kind!=1?n->gap:-1;
+}
+CK_DLL_MFUN(text_node_set_text) {
+    RETURN->v_int=0;
+    try {
+        auto *n=nodeState(SELF,API); auto text=GET_NEXT_STRING_SAFE(ARGS);
+        if(!n||n->kind!=1||!validText(text,65536)) return;
+        n->paragraph.text=std::move(text); n->paragraph.baseBytes=n->paragraph.text.size();
+        n->paragraph.runs.clear(); RETURN->v_int=1;
+    } catch(...) {}
 }
 namespace {
 using LayoutPtr=std::unique_ptr<PangoLayout,decltype(&g_object_unref)>;
@@ -1531,6 +1583,24 @@ CK_DLL_QUERY(TextIO) {
     if(nodeOffset==CK_INVALID_OFFSET) return FALSE;
     QUERY->add_ctor(QUERY,text_node_ctor); QUERY->add_dtor(QUERY,text_node_dtor);
     QUERY->add_mfun(QUERY,text_node_kind,"int","kind");
+    QUERY->add_mfun(QUERY,text_node_set_container,"int","setContainer");
+    QUERY->add_arg(QUERY,"TextContainer","box");
+    QUERY->add_mfun(QUERY,text_node_get_container,"int","getContainer");
+    QUERY->add_arg(QUERY,"TextContainer","box");
+    QUERY->add_mfun(QUERY,text_node_set_layout,"int","setLayout");
+    QUERY->add_arg(QUERY,"TextParagraphStyle","style");
+    QUERY->add_mfun(QUERY,text_node_get_layout,"int","getLayout");
+    QUERY->add_arg(QUERY,"TextParagraphStyle","style");
+    QUERY->add_mfun(QUERY,text_node_set_style,"int","setStyle");
+    QUERY->add_arg(QUERY,"TextStyle","style");
+    QUERY->add_mfun(QUERY,text_node_get_style,"int","getStyle");
+    QUERY->add_arg(QUERY,"TextStyle","style");
+    QUERY->add_mfun(QUERY,text_node_set_gap,"float","gap");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_node_get_gap,"float","gap");
+    QUERY->add_mfun(QUERY,text_node_set_text,"int","setText");
+    QUERY->add_arg(QUERY,"string","text");
+
     QUERY->add_mfun(QUERY,text_node_clear,"int","clear");
     QUERY->add_mfun(QUERY,text_node_set_paragraph,"int","setParagraph");
     QUERY->add_arg(QUERY,"string","text");
