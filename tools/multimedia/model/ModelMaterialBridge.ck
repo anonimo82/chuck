@@ -16,6 +16,17 @@ public class ModelMaterialBridge {
         return 1;
     }
 
+    // Explicit opt-in: load the first external base-color texture if available.
+    fun int loadExternalTexture(Model3D model, int meshIndex) {
+        if(model == null) return 0;
+        model.baseColorTexturePath(model.materialAt(meshIndex),0) => string path;
+        if(path == "") return 0;
+        Texture.load(path) @=> Texture tex;
+        if(tex == null) return 0;
+        colorTexture(tex);
+        return 1;
+    }
+
     fun void colorTexture(Texture tex) {
         material.colorMap(tex);
     }

@@ -113,6 +113,7 @@ struct ModelState {
     std::unique_ptr<Assimp::Importer> importer;
     std::unique_ptr<aiScene> generated;
     const aiScene *scene=nullptr;
+    fs::path sourceDirectory;
     std::unordered_map<const aiNode*,aiMatrix4x4> importedPose;
     std::array<double,9> controls{{0,0,0,0,0,0,1,1,1}};
     void reset() { controls={{0,0,0,0,0,0,1,1,1}}; }
@@ -120,7 +121,9 @@ struct ModelState {
         auto candidate=std::make_unique<Assimp::Importer>();
         const auto *next=load(*candidate,path);
         if(!next) return false;
+        auto directory=fs::canonical(fs::path(path)).parent_path();
         importedPose.clear();
+        sourceDirectory.swap(directory);
         generated.reset();
         importer=std::move(candidate);
         scene=next;
@@ -228,7 +231,7 @@ CK_DLL_MFUN(model3d_reset) {
     if(auto *p=modelState(SELF,API)) p->reset();
 }
 CK_DLL_MFUN(model3d_clear) {
-    if(auto *p=modelState(SELF,API)) { p->importedPose.clear(); p->scene=nullptr; p->importer.reset(); p->generated.reset(); p->reset(); }
+    if(auto *p=modelState(SELF,API)) { p->importedPose.clear(); p->sourceDirectory.clear(); p->scene=nullptr; p->importer.reset(); p->generated.reset(); p->reset(); }
 }
 CK_DLL_MFUN(model3d_get_x) { RETURN->v_float=modelGet(modelState(SELF,API),0); }
 CK_DLL_MFUN(model3d_set_x) { RETURN->v_float=modelSet(modelState(SELF,API),0,GET_NEXT_FLOAT(ARGS)); }
@@ -287,6 +290,7 @@ bool makeMesh(ModelState *p,const std::vector<aiVector3D> &vertices,
     scene->mRootNode->mNumMeshes=1;
     p->importedPose.clear();
     p->importer.reset();
+    p->sourceDirectory.clear();
     p->generated=std::move(scene);
     p->scene=p->generated.get(); p->reset();
     return true;
@@ -643,6 +647,42 @@ CK_DLL_MFUN(model3d_base_texture_count) {
     if(!m) return;
     auto n=m->GetTextureCount(aiTextureType_BASE_COLOR);
     RETURN->v_int=n?n:m->GetTextureCount(aiTextureType_DIFFUSE);
+}
+namespace {
+// Resolve only local relative paths beneath the model's canonical directory.
+// Embedded resources, absolute paths, URLs and traversal are not accepted.
+std::string externalBaseTexture(ModelState *p,t_CKINT index,t_CKINT slot) {
+    auto *m=materialByIndex(p,index);
+    if(!m||p->sourceDirectory.empty()||slot<0) return {};
+    auto kind=m->GetTextureCount(aiTextureType_BASE_COLOR)?aiTextureType_BASE_COLOR:aiTextureType_DIFFUSE;
+    if(static_cast<uint64_t>(slot)>=m->GetTextureCount(kind)) return {};
+    aiString value;
+    unsigned uvIndex=0;
+    aiTextureMapping mapping=aiTextureMapping_UV;
+    if(m->GetTexture(kind,static_cast<unsigned>(slot),&value,&mapping,&uvIndex)!=AI_SUCCESS||
+       mapping!=aiTextureMapping_UV||uvIndex!=0) return {};
+    std::string name(value.C_Str());
+    if(name.empty()||name[0]=='*'||name.find(':')!=std::string::npos) return {};
+    std::replace(name.begin(),name.end(),'\\','/');
+    fs::path relative(name);
+    if(relative.is_absolute()||relative.has_root_path()) return {};
+    for(const auto &part:relative) if(part=="..") return {};
+    auto candidate=fs::canonical(p->sourceDirectory/relative);
+    auto root=p->sourceDirectory;
+    auto a=root.begin(),b=candidate.begin();
+    for(;a!=root.end();++a,++b)
+        if(b==candidate.end()||*a!=*b) return {};
+    if(!fs::is_regular_file(candidate)) return {};
+    return candidate.string();
+}
+}
+CK_DLL_MFUN(model3d_base_texture_path) {
+    std::string result;
+    try {
+        auto index=GET_NEXT_INT(ARGS),slot=GET_NEXT_INT(ARGS);
+        result=externalBaseTexture(modelState(SELF,API),index,slot);
+    } catch(...) {}
+    RETURN->v_string=API->object->create_string(VM,result.c_str(),FALSE);
 }
 CK_DLL_MFUN(model3d_assign_material) {
     RETURN->v_int=0;
@@ -1428,6 +1468,9 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_arg(QUERY,"float[]","properties");
     QUERY->add_mfun(QUERY,model3d_base_texture_count,"int","baseColorTextures");
     QUERY->add_arg(QUERY,"int","materialIndex");
+    QUERY->add_mfun(QUERY,model3d_base_texture_path,"string","baseColorTexturePath");
+    QUERY->add_arg(QUERY,"int","materialIndex");
+    QUERY->add_arg(QUERY,"int","slot");
     QUERY->add_mfun(QUERY,model3d_assign_material,"int","assignMaterial");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"int","material");
