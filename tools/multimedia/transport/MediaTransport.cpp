@@ -2,6 +2,7 @@
 #include "MediaPCMBuffer.h"
 #include "MediaAudioMidi.h"
 #include "MediaRasterStream.h"
+#include "MediaVector.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -648,6 +649,47 @@ CK_DLL_MFUN(rs_width) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->width():0; 
 CK_DLL_MFUN(rs_height) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->height():0; }
 CK_DLL_MFUN(rs_pixelBytes) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->pixelBytes():0; }
 CK_DLL_MFUN(rs_error) { auto *p=rsState(SELF,API);RETURN->v_int=p?p->error():0; }
+CK_DLL_SFUN(vg_size) {
+    auto n=GET_NEXT_INT(ARGS); RETURN->v_int=mediawire::vectorPacketSize(n);
+}
+CK_DLL_SFUN(vg_encode) {
+    RETURN->v_int=0;
+    try {
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS);
+        auto svg=GET_NEXT_STRING_SAFE(ARGS);
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto n=mediawire::vectorPacketSize(svg.size());
+        if(!n||stream<1||static_cast<uint64_t>(stream)>=0xffffffffu||seq<0||
+           static_cast<uint64_t>(seq)>0xffffffffu||ts<0||!exact(dst,API,n)) return;
+        mediawire::Bytes data(svg.begin(),svg.end()),wire;
+        if(mediawire::encodeVector({2,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},data,wire)) {
+            write(dst,API,wire);RETURN->v_int=1;
+        }
+    } catch(...) {}
+}
+CK_DLL_SFUN(vg_inspect) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Header h;mediawire::Bytes wire,svg;
+        if(!exact(dst,API,4)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeVector(wire,h,svg)) return;
+        const uint64_t fields[]={h.stream,h.sequence,h.timestamp,svg.size()};
+        for(size_t i=0;i<4;++i) API->object->array_int_set_idx(dst,i,fields[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_SFUN(vg_decode) {
+    std::string result;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Header h;mediawire::Bytes wire,svg;
+        if(read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)&&mediawire::decodeVector(wire,h,svg))
+            result.assign(svg.begin(),svg.end());
+    } catch(...) {}
+    RETURN->v_string=API->object->create_string(VM,result.c_str(),FALSE);
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -966,5 +1008,20 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_mfun(QUERY,rs_height,"int","height");
     QUERY->add_mfun(QUERY,rs_pixelBytes,"int","pixelBytes");
     QUERY->add_mfun(QUERY,rs_error,"int","error");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaVector","Object");
+    QUERY->add_sfun(QUERY,vg_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","utf8Bytes");
+    QUERY->add_sfun(QUERY,vg_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"string","svg");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,vg_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,vg_decode,"string","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
     return QUERY->end_class(QUERY);
 }
