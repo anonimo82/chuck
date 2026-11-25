@@ -3360,6 +3360,53 @@ CK_DLL_MFUN(video_audio_read) {
     RETURN->v_int=1;
 }
 
+CK_DLL_MFUN(video_audio_read_channel) {
+    RETURN->v_int=0;
+    auto *p=videoAudioState(SELF,API);
+    auto channel=GET_NEXT_INT(ARGS),first=GET_NEXT_INT(ARGS);
+    auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+    if(!p||!a||p->data.empty()||channel< -1||channel>=p->channels||
+       first<0||static_cast<uint64_t>(first)>=p->frames()) return;
+    auto n=API->object->array_float_size(a);
+    if(n<1||static_cast<uint64_t>(n)>p->frames()-first) return;
+    for(t_CKINT i=0;i<n;++i) {
+        size_t offset=(static_cast<size_t>(first)+i)*p->channels;
+        double v=0;
+        if(channel>=0) v=p->data[offset+channel];
+        else {
+            for(int c=0;c<p->channels;++c) v+=p->data[offset+c];
+            v/=p->channels;
+        }
+        API->object->array_float_set_idx(a,i,v);
+    }
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(video_audio_analyze) {
+    RETURN->v_int=0;
+    auto *p=videoAudioState(SELF,API);
+    auto channel=GET_NEXT_INT(ARGS),first=GET_NEXT_INT(ARGS),count=GET_NEXT_INT(ARGS);
+    auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+    if(!p||!a||p->data.empty()||channel< -1||channel>=p->channels||
+       first<0||static_cast<uint64_t>(first)>=p->frames()||count<1||
+       static_cast<uint64_t>(count)>p->frames()-first||API->object->array_float_size(a)!=4) return;
+    double lo=1,hi=-1,sum=0,squares=0;
+    for(t_CKINT i=0;i<count;++i) {
+        size_t offset=(static_cast<size_t>(first)+i)*p->channels;
+        double v=0;
+        if(channel>=0) v=p->data[offset+channel];
+        else {
+            for(int c=0;c<p->channels;++c) v+=p->data[offset+c];
+            v/=p->channels;
+        }
+        lo=std::min(lo,v); hi=std::max(hi,v);
+        sum+=v; squares+=v*v;
+    }
+    API->object->array_float_set_idx(a,0,lo);
+    API->object->array_float_set_idx(a,1,hi);
+    API->object->array_float_set_idx(a,2,sum/count);
+    API->object->array_float_set_idx(a,3,std::sqrt(squares/count));
+    RETURN->v_int=1;
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -3654,5 +3701,14 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_mfun(QUERY,video_audio_read,"int","readSamples");
     QUERY->add_arg(QUERY,"int","firstFrame");
     QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,video_audio_read_channel,"int","readChannel");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","firstFrame");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,video_audio_analyze,"int","analyze");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","firstFrame");
+    QUERY->add_arg(QUERY,"int","frameCount");
+    QUERY->add_arg(QUERY,"float[]","stats");
     return QUERY->end_class(QUERY);
 }
