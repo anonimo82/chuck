@@ -53,3 +53,7 @@ Update this checkpoint at each validated cycle, with the last full baseline, fun
 #160: explicit styled insertion/replacement, range formatting and style lookup; 75 new checks, global 4226, local 227; cadence 19/20, native validation pending.
 
 #161: integrated editing regression and documentation; 56 new checks, global 4282, local 283; eighth text cycle implementation 5/5, cadence 20/20. Full native validation required before next functional cycle. Last confirmed cumulative total 3999. Keep all pending groups until success.
+
+## Full validation checkpoint — PR #161
+
+Developer-reported Windows Full validation: expected=4282, PASS=4282, FAIL=0, missing=0, unreported=0, extra=0, suites=3/3, status=PASS. All multimedia smoke tests passed. Eighth text cycle validated (283 new checks). New full baseline 4282; functional cadence resets to 0/20. Next cycle starts at 0/5. Clear the validated local manifest in the checkpoint maintenance PR; retain the global manifest unchanged. This is Windows native validation, not a new Linux/macOS validation claim.
