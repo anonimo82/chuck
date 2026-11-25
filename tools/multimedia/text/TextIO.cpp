@@ -1695,6 +1695,144 @@ CK_DLL_MFUN(text_doc_save_native) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+namespace {
+struct NativeReader {
+    const std::vector<unsigned char> &data;
+    size_t pos=0;
+    bool ok=true;
+    uint32_t u32() {
+        if(!ok||data.size()-pos<4) { ok=false; return 0; }
+        uint32_t v=0; for(int i=0;i<4;i++) v|=static_cast<uint32_t>(data[pos++])<<(8*i);
+        return v;
+    }
+    uint32_t bounded(uint32_t lo,uint32_t hi) {
+        auto v=u32(); if(v<lo||v>hi) { ok=false; return lo; } return v;
+    }
+    t_CKINT color(bool transparent) {
+        auto v=u32(); if(transparent&&v==0xffffffffu) return -1;
+        if(v>0xffffff) { ok=false; return 0; } return v;
+    }
+    double real(double lo,double hi) {
+        if(!ok||data.size()-pos<8) { ok=false; return lo; }
+        uint64_t bits=0; for(int i=0;i<8;i++) bits|=static_cast<uint64_t>(data[pos++])<<(8*i);
+        double v; std::memcpy(&v,&bits,8);
+        if(!std::isfinite(v)||v<lo||v>hi) { ok=false; return lo; } return v;
+    }
+    std::string str(size_t max) {
+        auto n=u32();
+        if(!ok||n>max||n>data.size()-pos) { ok=false; return {}; }
+        std::string v(reinterpret_cast<const char *>(data.data()+pos),n); pos+=n;
+        if(!validText(v,max)) ok=false;
+        return v;
+    }
+    bool style(Style &v) {
+        v.font=str(256); if(v.font.empty()) ok=false;
+        v.size=real(1,512); v.weight=bounded(100,1000); v.italic=bounded(0,1); v.underline=bounded(0,1);
+        v.strikethrough=bounded(0,1); v.script=bounded(0,2); v.rgb=color(false); v.background=color(true);
+        v.spacing=real(-32,128); v.rise=real(-512,512); v.opacity=real(0,1); return ok;
+    }
+    bool paragraph(Paragraph &v,size_t &bytes,size_t &runs,bool allowRuns) {
+        v.text=str(65536); if(!ok||v.text.size()>1048576-bytes) return false;
+        bytes+=v.text.size(); v.baseBytes=bounded(0,static_cast<uint32_t>(v.text.size()));
+        if(!ok||!validText(v.text.substr(0,v.baseBytes),65536)||!style(v.style)) return false;
+        auto nr=bounded(0,allowRuns?1024:0);
+        if(!ok||nr>16384-runs) return false;
+        runs+=nr; size_t offset=v.baseBytes;
+        for(uint32_t i=0;i<nr;i++) {
+            Run run; run.text=str(65536);
+            if(!ok||run.text.empty()||run.text.size()>v.text.size()-offset||v.text.compare(offset,run.text.size(),run.text)!=0||!style(run.style)) return false;
+            offset+=run.text.size(); v.runs.push_back(std::move(run));
+        }
+        if(offset!=v.text.size()) return false;
+        auto &f=v.layout;
+        f.alignment=bounded(0,3); f.wrapMode=bounded(0,2); f.direction=bounded(0,2);
+        f.lineSpacing=real(0,512); f.indent=real(-1024,1024);
+        f.marginLeft=real(0,2048); f.marginRight=real(0,2048); f.marginTop=real(0,2048); f.marginBottom=real(0,2048);
+        auto &b=v.box;
+        b.paddingLeft=real(0,512); b.paddingRight=real(0,512); b.paddingTop=real(0,512); b.paddingBottom=real(0,512);
+        b.borderWidth=real(0,128); b.borderColor=color(false); b.backgroundColor=color(true); b.opacity=real(0,1);
+        auto &l=v.list;
+        l.marker=str(256); l.mode=bounded(0,3); l.number=bounded(1,999999); l.level=bounded(0,16);
+        l.levelIndent=real(0,128); l.markerWidth=real(1,512);
+        return ok&&!l.marker.empty();
+    }
+    bool table(Table &v,size_t &cells,size_t &bytes) {
+        v.grid=bounded(0,1)!=0; v.rows=bounded(1,256); v.cols=bounded(1,32);
+        v.columnGap=bounded(0,v.grid?512:0); v.rowGap=bounded(0,v.grid?512:0);
+        size_t count=static_cast<size_t>(v.rows)*v.cols;
+        if(!ok||count>1024||count>4096-cells) return false;
+        cells+=count;
+        for(int i=0;i<v.cols;i++) v.weights.push_back(real(0.01,100));
+        size_t unused=0,previous=bytes;
+        for(size_t i=0;i<count;i++) { Paragraph p; if(!paragraph(p,bytes,unused,false)) return false; v.cells.push_back(std::move(p)); }
+        v.bytes=bytes-previous; return ok;
+    }
+    bool node(Node &v,size_t &nodes,size_t &bytes,int depth) {
+        if(depth>32||nodes>=4096) return false;
+        ++nodes; v.kind=bounded(0,5);
+        size_t unused=0;
+        if(!paragraph(v.paragraph,bytes,unused,false)) return false;
+        if(v.kind!=1&&!v.paragraph.text.empty()) return false;
+        v.gap=real(0,(v.kind==0||v.kind==2||v.kind==5)?512:0);
+        v.columnGap=bounded(0,v.kind==4?512:0); v.rowGap=bounded(0,v.kind==4?512:0);
+        bool rect=v.kind==3||v.kind==4;
+        v.rows=bounded(rect?1:0,rect?256:0); v.cols=bounded(rect?1:0,rect?32:0);
+        auto nw=bounded(v.cols,v.cols);
+        if(!ok||v.rows*v.cols>1024||(v.kind==5&&v.paragraph.list.mode==0)) return false;
+        for(uint32_t i=0;i<nw;i++) v.weights.push_back(real(0.01,100));
+        uint32_t expected=v.rows*v.cols;
+        auto nc=bounded(rect?expected:0,rect?expected:(v.kind==1?0:4096));
+        if(!ok||nc>4096-nodes) return false;
+        for(uint32_t i=0;i<nc;i++) { Node child; if(!node(child,nodes,bytes,depth+1)) return false; v.children.push_back(std::move(child)); }
+        return ok;
+    }
+};
+bool decodeNative(const std::vector<unsigned char> &data,Document &d) {
+    if(data.size()<24||data.size()>nativeLimit||std::memcmp(data.data(),"CKTXTDOC",8)!=0) return false;
+    NativeReader rd{data}; rd.pos=8;
+    if(rd.u32()!=1) return false;
+    auto np=rd.bounded(0,4096),nt=rd.bounded(0,256),nn=rd.bounded(0,256);
+    if(!rd.ok) return false;
+    for(uint32_t i=0;i<np;i++) { Paragraph p; if(!rd.paragraph(p,d.bytes,d.runs,true)) return false; d.paragraphs.push_back(std::move(p)); }
+    std::vector<int> anchors(nt+nn,-1);
+    auto header=[&](size_t &after,size_t &order,size_t index,size_t prevAfter,size_t prevOrder) {
+        after=rd.bounded(0,np); order=rd.bounded(0,nt+nn-1);
+        if(!rd.ok||anchors[order]!=-1||(index&&(after<prevAfter||order<=prevOrder))) return false;
+        anchors[order]=static_cast<int>(after); return true;
+    };
+    size_t pa=0,po=0;
+    for(uint32_t i=0;i<nt;i++) {
+        TableBlock b; if(!header(b.after,b.order,i,pa,po)||!rd.table(b.table,d.tableCells,d.tableBytes)) return false;
+        pa=b.after; po=b.order; d.tables.push_back(std::move(b));
+    }
+    pa=0; po=0; size_t nodes=0,bytes=0;
+    for(uint32_t i=0;i<nn;i++) {
+        NodeBlock b; if(!header(b.after,b.order,i,pa,po)||!rd.node(b.node,nodes,bytes,1)) return false;
+        pa=b.after; po=b.order; d.nodes.push_back(std::move(b));
+    }
+    for(size_t i=0;i<anchors.size();i++) if(anchors[i]<0||(i&&anchors[i]<anchors[i-1])) return false;
+    d.nextOrder=anchors.size(); return rd.ok&&rd.pos==data.size();
+}
+}
+CK_DLL_MFUN(text_doc_load_native) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(!d||path.size()<6||path.substr(path.size()-6)!=".cktxt"||path.find('\0')!=std::string::npos) return;
+        std::unique_ptr<FILE,decltype(&std::fclose)> f(std::fopen(path.c_str(),"rb"),std::fclose);
+        if(!f) return;
+        std::vector<unsigned char> data; unsigned char chunk[16384];
+        for(;;) {
+            size_t n=std::fread(chunk,1,sizeof(chunk),f.get());
+            if(n>nativeLimit-data.size()) return;
+            data.insert(data.end(),chunk,chunk+n);
+            if(n<sizeof(chunk)) { if(std::ferror(f.get())||!std::feof(f.get())) return; break; }
+        }
+        Document next;
+        if(!decodeNative(data,next)) return;
+        *d=std::move(next); RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(TextIO) {
     QUERY->setname(QUERY,"TextIO");
     QUERY->begin_class(QUERY,"TextIO","Object");
@@ -2120,6 +2258,8 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"TextNode","destination");
     QUERY->add_mfun(QUERY,text_doc_remove_node,"int","removeNode");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_doc_load_native,"int","loadNative");
+    QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,text_doc_save_native,"int","saveNative");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,text_doc_measure_document,"int","measureDocument");
