@@ -605,17 +605,10 @@ CK_DLL_MFUN(audio_buffer_waveform) {
         publishImage(rgba,a,API); RETURN->v_int=1;
     } catch(...) {}
 }
-CK_DLL_MFUN(audio_buffer_spectrogram) {
-    RETURN->v_int=0;
-    try {
-        auto *p=audioState(SELF,API);
-        auto channel=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),n=GET_NEXT_INT(ARGS);
-        double floorDb=GET_NEXT_FLOAT(ARGS);
-        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
-        if(n<32||n>4096||(n&(n-1))||!std::isfinite(floorDb)||floorDb< -160||floorDb> -10) return;
-        auto h=n/2+1;
-        if(!imageOutput(p,channel,w,h,a,API)||uint64_t(w)*n>8388608) return;
-        std::vector<unsigned char> rgba(w*h*4,0);
+namespace {
+template<class Sink>
+void spectralLevels(AudioBufferState *p,t_CKINT channel,t_CKINT w,t_CKINT n,double floorDb,Sink sink) {
+    auto h=n/2+1;
         std::vector<double> window(n);
         std::vector<std::complex<double>> bins(n);
         double sum=0;
@@ -635,11 +628,67 @@ CK_DLL_MFUN(audio_buffer_spectrogram) {
                 double magnitude=std::abs(bins[k])/sum;
                 if(k>0&&k<static_cast<size_t>(n/2)) magnitude*=2;
                 double db=20*std::log10(std::max(magnitude,1e-12));
-                auto level=static_cast<unsigned char>(std::lround(255*std::clamp((db-floorDb)/(-floorDb),0.0,1.0)));
-                grayPixel(rgba,(h-1-k)*w+x,level);
+                double level=std::clamp((db-floorDb)/(-floorDb),0.0,1.0);
+                sink((h-1-k)*w+x,level);
             }
         }
+ }
+}
+CK_DLL_MFUN(audio_buffer_spectrogram) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API);
+        auto channel=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),n=GET_NEXT_INT(ARGS);
+        double floorDb=GET_NEXT_FLOAT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(n<32||n>4096||(n&(n-1))||!std::isfinite(floorDb)||floorDb< -160||floorDb> -10) return;
+        auto h=n/2+1;
+        if(!imageOutput(p,channel,w,h,a,API)||uint64_t(w)*n>8388608) return;
+        std::vector<unsigned char> rgba(w*h*4,0);
+        spectralLevels(p,channel,w,n,floorDb,[&](size_t i,double v){grayPixel(rgba,i,static_cast<unsigned char>(std::lround(255*v)));});
         publishImage(rgba,a,API); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(audio_buffer_spectral_heightmap) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API);
+        auto channel=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),n=GET_NEXT_INT(ARGS);
+        double floorDb=GET_NEXT_FLOAT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->loaded()||!p->frames()||!a||channel<0||channel>=p->channels||
+           w<2||w>512||n<32||n>512||(n&(n-1))||
+           !std::isfinite(floorDb)||floorDb< -160||floorDb> -10) return;
+        auto h=n/2+1;
+        if(API->object->array_float_size(a)!=w*h) return;
+        std::vector<double> heights(w*h);
+        spectralLevels(p,channel,w,n,floorDb,[&](size_t i,double v){heights[i]=v;});
+        for(size_t i=0;i<heights.size();++i) API->object->array_float_set_idx(a,i,heights[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(audio_buffer_waveform_heightmap) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API);
+        auto channel=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->loaded()||!p->frames()||!a||channel<0||channel>=p->channels||
+           w<2||w>512||API->object->array_float_size(a)!=2*w) return;
+        std::vector<double> heights(2*w);
+        for(size_t x=0;x<static_cast<size_t>(w);++x) {
+            size_t begin=x*uint64_t(p->frames())/w;
+            size_t end=std::max(begin+1,(x+1)*uint64_t(p->frames())/w);
+            double lo=1,hi=-1;
+            for(size_t i=begin;i<end;++i) {
+                double v=p->value(i,channel);
+                lo=std::min(lo,v); hi=std::max(hi,v);
+            }
+            heights[x]=(hi+1)*0.5;
+            heights[w+x]=(lo+1)*0.5;
+        }
+        for(size_t i=0;i<heights.size();++i) API->object->array_float_set_idx(a,i,heights[i]);
+        RETURN->v_int=1;
     } catch(...) {}
 }
 CK_DLL_MFUN(audio_buffer_envelope) {
@@ -850,6 +899,16 @@ CK_DLL_QUERY(AudioIO) {
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,audio_buffer_spectral_heightmap,"int","exportSpectralHeightmap");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","fftSize");
+    QUERY->add_arg(QUERY,"float","floorDb");
+    QUERY->add_arg(QUERY,"float[]","heights");
+    QUERY->add_mfun(QUERY,audio_buffer_waveform_heightmap,"int","exportWaveformHeightmap");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"float[]","heights");
     QUERY->add_mfun(QUERY,audio_buffer_spectrogram,"int","exportSpectrogram");
     QUERY->add_arg(QUERY,"int","channel");
     QUERY->add_arg(QUERY,"int","width");
