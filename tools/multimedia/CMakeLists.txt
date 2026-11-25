@@ -60,3 +60,5 @@ chugin(KeyframeIO keyframe/KeyframeIO.cpp)
 
 chugin(TextIO text/TextIO.cpp)
 target_link_libraries(TextIO PRIVATE PkgConfig::TEXT PkgConfig::GLIB)
+
+chugin(MediaTransport transport/MediaTransport.cpp)
