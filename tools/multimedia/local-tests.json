@@ -1,6 +1,7 @@
 {
   "version": 1,
   "groups": [
-    "raster-capture-foundation"
+    "raster-capture-foundation",
+    "raster-camera-capture"
   ]
 }
