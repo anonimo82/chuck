@@ -1049,7 +1049,7 @@ mediawire::TextAssembler *textAssembler(Chuck_Object *self,CK_DL_API API) {
 }
 }
 CK_DLL_SFUN(tf_size) {
-    RETURN->v_int=mediawire::fragmentPacketSize(GET_NEXT_INT(ARGS));
+    RETURN->v_int=mediawire::textFragmentPacketSize(GET_NEXT_INT(ARGS));
 }
 CK_DLL_SFUN(tf_encode) {
     RETURN->v_int=0;
@@ -1063,7 +1063,7 @@ CK_DLL_SFUN(tf_encode) {
            offset<0||count<=0||text.size()>mediawire::maxTextMessage||
            static_cast<uint64_t>(offset)>=text.size()||
            static_cast<uint64_t>(count)>text.size()-static_cast<size_t>(offset))return;
-        auto n=mediawire::fragmentPacketSize(count);
+        auto n=mediawire::textFragmentPacketSize(count);
         if(!n||!exact(dst,API,n))return;
         mediawire::Bytes data(text.begin(),text.end()),wire;
         if(!mediawire::textUtf8(data))return;
