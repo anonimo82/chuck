@@ -42,6 +42,11 @@ public:
     unsigned mask() const { return common_; }
     unsigned limit() const { return negotiated_; }
     unsigned port() const { return link_.port(); }
+    uint64_t sentPackets() const { return link_.sentPackets(); }
+    uint64_t receivedPackets() const { return link_.receivedPackets(); }
+    uint64_t sentBytes() const { return link_.sentBytes(); }
+    uint64_t receivedBytes() const { return link_.receivedBytes(); }
+    int transportError() const { return link_.transportError(); }
     bool busy() const { return state_==2&&link_.busy(); }
     size_t packetSize() const { return state_==2?link_.packetSize():0; }
     bool allowRemote(bool enabled) { return link_.allowRemote(enabled); }
@@ -68,6 +73,8 @@ public:
         if(state_!=1&&state_!=2) return -1;
         try {
             if(state_==1&&std::chrono::steady_clock::now()>=deadline_) return fail(4);
+            bool hadPacket=link_.packetSize()!=0;
+            bool wasReady=state_==2;
             int r=link_.poll();
             if(r<0) return fail(1);
             if(state_==1) {
@@ -84,7 +91,7 @@ public:
                 }
                 if(hello_&&!link_.busy()) { state_=2; r=1; }
             }
-            if(state_==2&&link_.packetSize()) {
+            if(state_==2&&link_.packetSize()&&(!hadPacket||!wasReady)) {
                 // Validate before exposing the queued packet; no extra packet buffer.
                 Header h; Bytes data;
                 if(!decode(link_.front(),h,data)||!allowed(h,data.size())) return fail(5);
