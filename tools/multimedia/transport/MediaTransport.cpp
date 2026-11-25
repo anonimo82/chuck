@@ -213,6 +213,16 @@ CK_DLL_MFUN(session_peer_address) {
     auto *p=session(SELF,API);
     RETURN->v_string=API->object->create_string(VM,p?p->peerAddress().c_str():"",FALSE);
 }
+CK_DLL_MFUN(loop_sentPackets) { auto *p=loop(SELF,API); RETURN->v_int=p?p->sentPackets():0; }
+CK_DLL_MFUN(loop_receivedPackets) { auto *p=loop(SELF,API); RETURN->v_int=p?p->receivedPackets():0; }
+CK_DLL_MFUN(loop_sentBytes) { auto *p=loop(SELF,API); RETURN->v_int=p?p->sentBytes():0; }
+CK_DLL_MFUN(loop_receivedBytes) { auto *p=loop(SELF,API); RETURN->v_int=p?p->receivedBytes():0; }
+CK_DLL_MFUN(loop_transportError) { auto *p=loop(SELF,API); RETURN->v_int=p?p->transportError():0; }
+CK_DLL_MFUN(session_sentPackets) { auto *p=session(SELF,API); RETURN->v_int=p?p->sentPackets():0; }
+CK_DLL_MFUN(session_receivedPackets) { auto *p=session(SELF,API); RETURN->v_int=p?p->receivedPackets():0; }
+CK_DLL_MFUN(session_sentBytes) { auto *p=session(SELF,API); RETURN->v_int=p?p->sentBytes():0; }
+CK_DLL_MFUN(session_receivedBytes) { auto *p=session(SELF,API); RETURN->v_int=p?p->receivedBytes():0; }
+CK_DLL_MFUN(session_transportError) { auto *p=session(SELF,API); RETURN->v_int=p?p->transportError():0; }
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -263,6 +273,11 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int","port");
     QUERY->add_arg(QUERY,"int","timeoutMs");
     QUERY->add_mfun(QUERY,loop_peer_address,"string","peerAddress");
+    QUERY->add_mfun(QUERY,loop_sentPackets,"int","sentPackets");
+    QUERY->add_mfun(QUERY,loop_receivedPackets,"int","receivedPackets");
+    QUERY->add_mfun(QUERY,loop_sentBytes,"int","sentBytes");
+    QUERY->add_mfun(QUERY,loop_receivedBytes,"int","receivedBytes");
+    QUERY->add_mfun(QUERY,loop_transportError,"int","transportError");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"MediaSession","Object");
     sessionOffset=QUERY->add_mvar(QUERY,"int","@sessionNative",FALSE);
@@ -297,6 +312,11 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int","port");
     QUERY->add_arg(QUERY,"int","timeoutMs");
     QUERY->add_mfun(QUERY,session_peer_address,"string","peerAddress");
+    QUERY->add_mfun(QUERY,session_sentPackets,"int","sentPackets");
+    QUERY->add_mfun(QUERY,session_receivedPackets,"int","receivedPackets");
+    QUERY->add_mfun(QUERY,session_sentBytes,"int","sentBytes");
+    QUERY->add_mfun(QUERY,session_receivedBytes,"int","receivedBytes");
+    QUERY->add_mfun(QUERY,session_transportError,"int","transportError");
     QUERY->add_mfun(QUERY,session_configure,"int","configure");
     QUERY->add_arg(QUERY,"int","mediaMask");
     QUERY->add_arg(QUERY,"int","maxPayload");
