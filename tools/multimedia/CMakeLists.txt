@@ -111,3 +111,7 @@ chugin(TextIO text/TextIO.cpp)
 target_link_libraries(TextIO PRIVATE PkgConfig::TEXT PkgConfig::GLIB)
 
 chugin(MediaTransport transport/MediaTransport.cpp)
+
+if(WIN32)
+  target_link_libraries(MediaTransport PRIVATE ws2_32)
+endif()
