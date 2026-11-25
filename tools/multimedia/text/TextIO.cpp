@@ -2560,6 +2560,55 @@ bool plainDocument(const Document &d,std::string &out) {
     return k==entries.size();
 }
 }
+CK_DLL_MFUN(text_flow_load_txt) {
+    RETURN->v_int=0;
+    try {
+        auto *p=flowState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        auto *style=styleState(GET_NEXT_OBJECT(ARGS),API);
+        if(!p||!style||!txtPath(path)) return;
+        std::unique_ptr<FILE,decltype(&std::fclose)> f(std::fopen(path.c_str(),"rb"),std::fclose);
+        if(!f) return;
+        // CRLF normalization can reduce the input to half its raw byte size.
+        constexpr size_t limit=2*65536+3;
+        std::string data; char chunk[16384];
+        for(;;) {
+            size_t n=std::fread(chunk,1,sizeof(chunk),f.get());
+            if(n>limit-data.size()) return;
+            data.append(chunk,n);
+            if(n<sizeof(chunk)) { if(std::ferror(f.get())||!std::feof(f.get())) return; break; }
+        }
+        if(data.compare(0,3,"\xef\xbb\xbf")==0) data.erase(0,3);
+        if(!validText(data,limit)) return;
+        Paragraph next; next.style=*style;
+        for(size_t i=0;i<data.size();++i) {
+            if(data[i]=='\r') {
+                next.text+='\n';
+                if(i+1<data.size()&&data[i+1]=='\n') ++i;
+            } else next.text+=data[i];
+            if(next.text.size()>65536) return;
+        }
+        next.baseBytes=next.text.size();
+        p->source=std::move(next); p->planned=false; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_flow_save_txt) {
+    RETURN->v_int=0;
+    try {
+        auto *p=flowState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(!p||!txtPath(path)) return;
+        // Export the complete source, including text not assigned to a frame.
+        std::string out; const auto &s=p->source.text; out.reserve(s.size());
+        for(size_t i=0;i<s.size();++i) {
+            if(s[i]=='\r') { out+='\n'; if(i+1<s.size()&&s[i+1]=='\n') ++i; }
+            else out+=s[i];
+        }
+        FILE *f=mediaio::openNew(path.c_str()); if(!f) return;
+        bool ok=std::fwrite(out.data(),1,out.size(),f)==out.size();
+        if(std::fclose(f)!=0) ok=false;
+        if(!ok) { std::remove(path.c_str()); return; }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_MFUN(text_doc_plain_text) {
     std::string out;
     try {
@@ -2914,6 +2963,11 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_flow_ready,"int","ready");
     QUERY->add_mfun(QUERY,text_flow_layout,"int","layout");
+    QUERY->add_mfun(QUERY,text_flow_load_txt,"int","loadTXT");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_arg(QUERY,"TextStyle","style");
+    QUERY->add_mfun(QUERY,text_flow_save_txt,"int","saveTXT");
+    QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,text_flow_save_native,"int","saveNative");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,text_flow_load_native,"int","loadNative");

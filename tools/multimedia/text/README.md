@@ -123,3 +123,7 @@ TextFlow.saveNative(path) and loadNative(path) use independent lowercase .ckflow
 ## Logical reading order and text ranges
 
 TextDocument.plainText() returns a logical reading-order string with list labels, tab-separated cells and newline-separated blocks, using the same traversal as saveTXT (without its line-ending normalization). TextFlow.sourceText() returns the complete source including mixed runs and overflow, independent of layout. After successful layout, frameStartByte(index) and frameEndByte(index) expose half-open UTF-8 byte ranges in source order, including empty frames; invalid indices or stale layout return -1. These are programmatic accessibility building blocks, not OS accessibility integration or tagged PDF. No native format changes.
+
+## TextFlow plain text interchange
+
+TextFlow.loadTXT(path, TextStyle) imports lowercase .txt files as a single styled source, retaining the frame chain, replacing mixed runs and invalidating layout on success. UTF-8 with optional initial BOM is accepted; CRLF and CR normalize to LF, preserving empty lines and final newlines. Invalid UTF-8, embedded NUL, missing files and normalized sources over 65536 bytes are rejected without modifying source or layout. Raw input is bounded to 131075 bytes. TextFlow.saveTXT(path) writes the complete source including overflow, without BOM, with LF normalization; it needs no current layout and never overwrites. TXT does not preserve styles or frame geometry; use .ckflow for lossless persistence. Native validation pending.
