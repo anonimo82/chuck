@@ -11950,8 +11950,57 @@ for(0=>int j;j<2;j++){
 """,463,p)
 
 
+def transport_mesh_attributes():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("transport", """
+int meta[6]; int routeMeta[6]; int result[3];
+[0,1,2] @=> int tri[];
+MediaRouter router;
+check(router.configure(4));
+check(router.addStream(9,3,0,100));
+check(MediaMeshAttributes.packetSize(2,1,0)==0);
+check(MediaMeshAttributes.packetSize(3,0,0)==0);
+check(MediaMeshAttributes.packetSize(3,1,32)==0);
+check(MediaMeshAttributes.packetSize(3,1,-1)==0);
+check(MediaMeshAttributes.packetSize(1000000,1,31)==0);
+for(0=>int mask;mask<32;mask++){
+    3=>int stride;
+    if(mask&1) 3 +=> stride;
+    if(mask&2) 2 +=> stride;
+    if(mask&4) 4 +=> stride;
+    if(mask&8) 3 +=> stride;
+    if(mask&16) 3 +=> stride;
+    float attrs[3*stride]; float decoded[3*stride];
+    for(0=>int i;i<attrs.size();i++) (i-20)*0.125=>attrs[i];
+    MediaMeshAttributes.packetSize(3,1,mask)=>int n;
+    check(n==52+4*(3*stride+3));
+    int packet[n];
+    check(MediaMeshAttributes.encode(9,mask,100+mask,3,mask,attrs,tri,packet));
+    check(MediaMeshAttributes.inspect(packet,meta));
+    check(meta[0]==9 && meta[1]==mask && meta[2]==100+mask && meta[3]==3 && meta[4]==1 && meta[5]==mask);
+    check(MediaGraphics.inspect(packet,meta)==10);
+    check(meta[4]==3 && meta[5]==1);
+    check(MediaPacket.inspect(packet,routeMeta)==18);
+    check(router.route(packet,routeMeta)==18);
+    check(!router.route(packet,routeMeta));
+    check(MediaMeshAttributes.decode(packet,decoded,result));
+    1=>int same;
+    for(0=>int i;i<attrs.size();i++) if(decoded[i]!=attrs[i]) 0=>same;
+    check(same);
+    check(result[0]==0 && result[1]==1 && result[2]==2);
+    check(!MediaMeshAttributes.decode(packet,decoded,[0]));
+    check(!MediaMeshAttributes.encode(9,mask,100,3,mask,attrs,[0,1,3],packet));
+    check(!MediaMeshAttributes.encode(9,mask,100,3,mask,[0.0],tri,packet));
+    0=>packet[35];
+    check(!MediaMeshAttributes.inspect(packet,meta));
+    check(!MediaPacket.inspect(packet,routeMeta));
+}
+""",551,p)
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing, "transport-loopback": transport_loopback, "transport-session": transport_session, "transport-endpoints": transport_endpoints, "transport-consolidation": transport_consolidation, "transport-pcm": transport_pcm, "transport-pcm-stream": transport_pcm_stream, "transport-pcm-buffer": transport_pcm_buffer, "transport-midi": transport_midi, "transport-audio-midi": transport_audio_midi, "transport-raster": transport_raster, "transport-raster-stream": transport_raster_stream, "transport-vector": transport_vector, "transport-model": transport_model, "transport-graphics": transport_graphics, "transport-video-frame": transport_video_frame, "transport-video-stream": transport_video_stream, "transport-video-buffer": transport_video_buffer, "transport-audio-video": transport_audio_video, "transport-av-consolidation": transport_av_consolidation, "transport-text": transport_text, "transport-text-fragments": transport_text_fragments, "transport-text-buffer": transport_text_buffer, "transport-heterogeneous": transport_heterogeneous, "transport-raster-lossless": transport_raster_lossless, "transport-raster-png": transport_raster_png, "transport-raster-photo": transport_raster_photo, "transport-raster-compressed-fragments": transport_raster_compressed_fragments, "transport-raster-auto": transport_raster_auto, "transport-video-auto-fragments": transport_video_auto_fragments, "transport-video-high-resolution": transport_video_high_resolution, "transport-video-intraframe": transport_video_intraframe, "transport-video-interframe": transport_video_interframe, "transport-video-consolidation": transport_video_consolidation}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing, "transport-loopback": transport_loopback, "transport-session": transport_session, "transport-endpoints": transport_endpoints, "transport-consolidation": transport_consolidation, "transport-pcm": transport_pcm, "transport-pcm-stream": transport_pcm_stream, "transport-pcm-buffer": transport_pcm_buffer, "transport-midi": transport_midi, "transport-audio-midi": transport_audio_midi, "transport-raster": transport_raster, "transport-raster-stream": transport_raster_stream, "transport-vector": transport_vector, "transport-model": transport_model, "transport-graphics": transport_graphics, "transport-video-frame": transport_video_frame, "transport-video-stream": transport_video_stream, "transport-video-buffer": transport_video_buffer, "transport-audio-video": transport_audio_video, "transport-av-consolidation": transport_av_consolidation, "transport-text": transport_text, "transport-text-fragments": transport_text_fragments, "transport-text-buffer": transport_text_buffer, "transport-heterogeneous": transport_heterogeneous, "transport-raster-lossless": transport_raster_lossless, "transport-raster-png": transport_raster_png, "transport-raster-photo": transport_raster_photo, "transport-raster-compressed-fragments": transport_raster_compressed_fragments, "transport-raster-auto": transport_raster_auto, "transport-video-auto-fragments": transport_video_auto_fragments, "transport-video-high-resolution": transport_video_high_resolution, "transport-video-intraframe": transport_video_intraframe, "transport-video-interframe": transport_video_interframe, "transport-video-consolidation": transport_video_consolidation, "transport-mesh-attributes": transport_mesh_attributes}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
