@@ -790,6 +790,10 @@ struct MidiCaptureState {
     int tpq=0;
     double bpm=0;
     std::vector<CapturedMidiEvent> events;
+    // 0 = manual, 1 = recording, 2 = paused, 3 = stopped
+    int mode=0;
+    double lastClock=0, elapsed=0;
+    void resetSession() { mode=0; lastClock=elapsed=0; }
 };
 t_CKUINT midiCaptureOffset=0;
 MidiCaptureState *captureState(Chuck_Object *self,CK_DL_API API) {
@@ -808,7 +812,7 @@ CK_DLL_MFUN(midi_capture_create) {
     auto *p=captureState(SELF,API);
     auto tpq=GET_NEXT_INT(ARGS); double bpm=GET_NEXT_FLOAT(ARGS);
     if(!p||tpq<1||tpq>32767||!std::isfinite(bpm)||bpm<4||bpm>1000) return;
-    p->events.clear(); p->tpq=static_cast<int>(tpq); p->bpm=bpm;
+    p->events.clear(); p->tpq=static_cast<int>(tpq); p->bpm=bpm; p->resetSession();
     RETURN->v_int=1;
 }
 namespace {
@@ -833,7 +837,7 @@ CK_DLL_MFUN(midi_capture_append) {
         auto *p=captureState(SELF,API);
         double seconds=GET_NEXT_FLOAT(ARGS);
         auto status=GET_NEXT_INT(ARGS),d1=GET_NEXT_INT(ARGS),d2=GET_NEXT_INT(ARGS);
-        RETURN->v_int=appendCaptured(p,seconds,status,d1,d2);
+        RETURN->v_int=p&&p->mode==0&&appendCaptured(p,seconds,status,d1,d2);
     } catch(...) {}
 }
 CK_DLL_MFUN(midi_capture_append_message) {
@@ -844,8 +848,60 @@ CK_DLL_MFUN(midi_capture_append_message) {
         auto status=GET_NEXT_INT(ARGS),d1=GET_NEXT_INT(ARGS),d2=GET_NEXT_INT(ARGS);
         // MidiIn exposes three integer fields even for two-byte messages.
         if(status>=0xc0&&status<=0xdf) d2=0;
-        RETURN->v_int=appendCaptured(p,seconds,status,d1,d2);
+        RETURN->v_int=p&&p->mode==0&&appendCaptured(p,seconds,status,d1,d2);
     } catch(...) {}
+}
+namespace {
+bool sessionClock(MidiCaptureState *p,double clock,double &elapsed) {
+    if(!p||!p->tpq||!std::isfinite(clock)||clock<0||clock<p->lastClock) return false;
+    elapsed=p->elapsed+(p->mode==1?clock-p->lastClock:0);
+    double ticks=elapsed*p->tpq*p->bpm/60.0;
+    return std::isfinite(ticks)&&ticks<=0x0fffffff;
+}
+}
+CK_DLL_MFUN(midi_capture_start) {
+    RETURN->v_int=0;
+    auto *p=captureState(SELF,API); double clock=GET_NEXT_FLOAT(ARGS);
+    if(!p||!p->tpq||p->mode==1||p->mode==2||!std::isfinite(clock)||clock<0) return;
+    p->events.clear(); p->elapsed=0; p->lastClock=clock; p->mode=1;
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(midi_capture_pause) {
+    RETURN->v_int=0;
+    auto *p=captureState(SELF,API); double clock=GET_NEXT_FLOAT(ARGS),elapsed;
+    if(!p||p->mode!=1||!sessionClock(p,clock,elapsed)) return;
+    p->elapsed=elapsed; p->lastClock=clock; p->mode=2; RETURN->v_int=1;
+}
+CK_DLL_MFUN(midi_capture_resume) {
+    RETURN->v_int=0;
+    auto *p=captureState(SELF,API); double clock=GET_NEXT_FLOAT(ARGS),elapsed;
+    if(!p||p->mode!=2||!sessionClock(p,clock,elapsed)) return;
+    p->lastClock=clock; p->mode=1; RETURN->v_int=1;
+}
+CK_DLL_MFUN(midi_capture_stop) {
+    RETURN->v_int=0;
+    auto *p=captureState(SELF,API); double clock=GET_NEXT_FLOAT(ARGS),elapsed;
+    if(!p||(p->mode!=1&&p->mode!=2)||!sessionClock(p,clock,elapsed)) return;
+    p->elapsed=elapsed; p->lastClock=clock; p->mode=3; RETURN->v_int=1;
+}
+CK_DLL_MFUN(midi_capture_record) {
+    RETURN->v_int=0;
+    try {
+        auto *p=captureState(SELF,API); double clock=GET_NEXT_FLOAT(ARGS),elapsed;
+        auto status=GET_NEXT_INT(ARGS),d1=GET_NEXT_INT(ARGS),d2=GET_NEXT_INT(ARGS);
+        if(!p||p->mode!=1||!sessionClock(p,clock,elapsed)) return;
+        if(status>=0xc0&&status<=0xdf) d2=0;
+        if(!appendCaptured(p,elapsed,status,d1,d2)) return;
+        p->elapsed=elapsed; p->lastClock=clock; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_capture_session_state) {
+    auto *p=captureState(SELF,API); RETURN->v_int=p?p->mode:0;
+}
+CK_DLL_MFUN(midi_capture_duration) {
+    auto *p=captureState(SELF,API); double clock=GET_NEXT_FLOAT(ARGS),elapsed;
+    RETURN->v_float=-1;
+    if(p&&p->mode!=0&&sessionClock(p,clock,elapsed)) RETURN->v_float=elapsed;
 }
 CK_DLL_MFUN(midi_capture_save) {
     RETURN->v_int=0;
@@ -890,7 +946,7 @@ CK_DLL_MFUN(midi_capture_byte) {
     if(k>=0&&k<e.length) RETURN->v_int=k==0?e.status:k==1?e.data1:e.data2;
 }
 CK_DLL_MFUN(midi_capture_clear) {
-    if(auto *p=captureState(SELF,API)) p->events.clear();
+    if(auto *p=captureState(SELF,API)) { p->events.clear(); p->resetSession(); }
 }
 CK_DLL_QUERY(MidiFileIO) {
     QUERY->setname(QUERY, "MidiFileIO");
@@ -1058,6 +1114,22 @@ CK_DLL_QUERY(MidiFileIO) {
     QUERY->add_arg(QUERY,"int","data3");
     QUERY->add_mfun(QUERY,midi_capture_save,"int","save");
     QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,midi_capture_start,"int","start");
+    QUERY->add_arg(QUERY,"float","clockSeconds");
+    QUERY->add_mfun(QUERY,midi_capture_pause,"int","pause");
+    QUERY->add_arg(QUERY,"float","clockSeconds");
+    QUERY->add_mfun(QUERY,midi_capture_resume,"int","resume");
+    QUERY->add_arg(QUERY,"float","clockSeconds");
+    QUERY->add_mfun(QUERY,midi_capture_stop,"int","stop");
+    QUERY->add_arg(QUERY,"float","clockSeconds");
+    QUERY->add_mfun(QUERY,midi_capture_record,"int","recordMessage");
+    QUERY->add_arg(QUERY,"float","clockSeconds");
+    QUERY->add_arg(QUERY,"int","data1");
+    QUERY->add_arg(QUERY,"int","data2");
+    QUERY->add_arg(QUERY,"int","data3");
+    QUERY->add_mfun(QUERY,midi_capture_session_state,"int","sessionState");
+    QUERY->add_mfun(QUERY,midi_capture_duration,"float","durationAt");
+    QUERY->add_arg(QUERY,"float","clockSeconds");
     QUERY->add_mfun(QUERY,midi_capture_count,"int","count");
     QUERY->add_mfun(QUERY,midi_capture_seconds,"float","secondsAt");
     QUERY->add_arg(QUERY,"int","index");
