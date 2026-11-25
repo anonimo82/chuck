@@ -1,10 +1,4 @@
 {
   "version": 1,
-  "groups": [
-    "vector-shape-edit",
-    "vector-shape-transform",
-    "vector-shape-style",
-    "vector-shape-group",
-    "vector-editable-svg"
-  ]
+  "groups": []
 }
