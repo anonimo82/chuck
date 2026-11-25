@@ -72,8 +72,20 @@ bool cellOK(Table *t,t_CKINT row,t_CKINT col) {
     return t&&row>=0&&col>=0&&row<t->rows&&col<t->cols;
 }
 struct TableBlock { size_t after=0; Table table; };
+struct PageStyle {
+    t_CKINT width=640;
+    t_CKINT height=480;
+    t_CKINT marginLeft=0;
+    t_CKINT marginRight=0;
+    t_CKINT marginTop=0;
+    t_CKINT marginBottom=0;
+    t_CKINT backgroundColor=16777215;
+};
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; };
-t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0;
+t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0;
+PageStyle *pageState(Chuck_Object *self,CK_DL_API API) {
+    return self?reinterpret_cast<PageStyle *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,pageOffset))):nullptr;
+}
 Table *gridState(Chuck_Object *self,CK_DL_API API) {
     return self?reinterpret_cast<Table *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,gridOffset))):nullptr;
 }
@@ -719,6 +731,46 @@ CK_DLL_MFUN(text_doc_set_grid) {
 CK_DLL_MFUN(text_doc_remove_grid) {
     auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); RETURN->v_int=removeBlock(d,i,true);
 }
+CK_DLL_CTOR(text_page_ctor) {
+    OBJ_MEMBER_UINT(SELF,pageOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,pageOffset)=reinterpret_cast<uintptr_t>(new PageStyle); } catch(...) {}
+}
+CK_DLL_DTOR(text_page_dtor) { delete pageState(SELF,API); OBJ_MEMBER_UINT(SELF,pageOffset)=0; }
+CK_DLL_MFUN(text_page_width_get) { auto *p=pageState(SELF,API); RETURN->v_int=p?p->width:-1; }
+CK_DLL_MFUN(text_page_width_set) {
+    auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=1&&v<=4096) RETURN->v_int=p->width=v;
+}
+CK_DLL_MFUN(text_page_height_get) { auto *p=pageState(SELF,API); RETURN->v_int=p?p->height:-1; }
+CK_DLL_MFUN(text_page_height_set) {
+    auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=1&&v<=4096) RETURN->v_int=p->height=v;
+}
+CK_DLL_MFUN(text_page_marginLeft_get) { auto *p=pageState(SELF,API); RETURN->v_int=p?p->marginLeft:-1; }
+CK_DLL_MFUN(text_page_marginLeft_set) {
+    auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=0&&v<=2048) RETURN->v_int=p->marginLeft=v;
+}
+CK_DLL_MFUN(text_page_marginRight_get) { auto *p=pageState(SELF,API); RETURN->v_int=p?p->marginRight:-1; }
+CK_DLL_MFUN(text_page_marginRight_set) {
+    auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=0&&v<=2048) RETURN->v_int=p->marginRight=v;
+}
+CK_DLL_MFUN(text_page_marginTop_get) { auto *p=pageState(SELF,API); RETURN->v_int=p?p->marginTop:-1; }
+CK_DLL_MFUN(text_page_marginTop_set) {
+    auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=0&&v<=2048) RETURN->v_int=p->marginTop=v;
+}
+CK_DLL_MFUN(text_page_marginBottom_get) { auto *p=pageState(SELF,API); RETURN->v_int=p?p->marginBottom:-1; }
+CK_DLL_MFUN(text_page_marginBottom_set) {
+    auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=0&&v<=2048) RETURN->v_int=p->marginBottom=v;
+}
+CK_DLL_MFUN(text_page_backgroundColor_get) { auto *p=pageState(SELF,API); RETURN->v_int=p?p->backgroundColor:-2; }
+CK_DLL_MFUN(text_page_backgroundColor_set) {
+    auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-2;
+    if(p&&v>=-1&&v<=16777215) RETURN->v_int=p->backgroundColor=v;
+}
 namespace {
 using LayoutPtr=std::unique_ptr<PangoLayout,decltype(&g_object_unref)>;
 LayoutPtr makeLayout(cairo_t *cr,const Paragraph &p,int width) {
@@ -887,6 +939,78 @@ using SurfacePtr=std::unique_ptr<cairo_surface_t,decltype(&cairo_surface_destroy
 bool validCanvas(t_CKINT w,t_CKINT h,t_CKINT bg) {
     return w>=1&&w<=4096&&h>=1&&h<=4096&&w*h<=4194304&&bg>=-1&&bg<=0xffffff;
 }
+bool drawDocument(cairo_t *cr,const Document &d,int w,int h) {
+    // Validate all paragraphs, including those beyond the visible canvas.
+    int64_t y=0; size_t block=0;
+    for(size_t pi=0;pi<=d.paragraphs.size();++pi) {
+        while(block<d.tables.size()&&d.tables[block].after==pi) {
+            if(!drawTable(cr,d.tables[block].table,w,h,y,true)) return false;
+            ++block;
+        }
+        if(pi==d.paragraphs.size()) break;
+        const auto &p=d.paragraphs[pi];
+        auto layout=makeLayout(cr,p,w);
+        if(!layout) return false;
+        int contentW=0,contentH=0;
+        pango_layout_get_pixel_size(layout.get(),&contentW,&contentH);
+        LayoutPtr marker(nullptr,g_object_unref);
+        if(p.list.mode) { marker=makeMarker(cr,p); if(!marker) return false; int mw=0,mh=0; pango_layout_get_pixel_size(marker.get(),&mw,&mh); contentH=std::max(contentH,mh); }
+        double totalW=contentW+p.layout.marginLeft+p.layout.marginRight+p.box.paddingLeft+p.box.paddingRight+2*p.box.borderWidth+listSpace(p.list);
+        double totalH=contentH+p.layout.marginTop+p.layout.marginBottom+p.box.paddingTop+p.box.paddingBottom+2*p.box.borderWidth;
+        if(totalW<0||totalH<0||totalW>100000000||totalH>100000000) return false;
+        if(y<h&&!p.list.mode&&p.box.opacity==1&&p.box.borderWidth==0&&p.box.backgroundColor<0&&p.box.paddingLeft==0&&p.box.paddingRight==0&&p.box.paddingTop==0&&p.box.paddingBottom==0) {
+            cairo_save(cr);
+            cairo_rectangle(cr,p.layout.marginLeft,0,w-p.layout.marginLeft-p.layout.marginRight,h);
+            cairo_clip(cr);
+            cairo_move_to(cr,p.layout.marginLeft,y+p.layout.marginTop);
+            cairo_set_source_rgb(cr,0,0,0);
+            pango_cairo_show_layout(cr,layout.get());
+            cairo_restore(cr);
+        } else if(y<h&&p.box.opacity>0) {
+            const auto &box=p.box;
+            double x=p.layout.marginLeft, top=y+p.layout.marginTop;
+            double bw=w-p.layout.marginLeft-p.layout.marginRight;
+            double bh=contentH+box.paddingTop+box.paddingBottom+2*box.borderWidth;
+            auto color=[&](t_CKINT rgb) { cairo_set_source_rgb(cr,((rgb>>16)&255)/255.0,((rgb>>8)&255)/255.0,(rgb&255)/255.0); };
+            cairo_save(cr);
+            cairo_rectangle(cr,x,top,bw,bh);
+            cairo_clip(cr);
+            if(box.opacity<1) cairo_push_group(cr);
+            if(box.backgroundColor>=0) {
+                color(box.backgroundColor); cairo_paint(cr);
+            }
+            if(box.borderWidth>0) {
+                color(box.borderColor);
+                cairo_set_line_width(cr,box.borderWidth);
+                double half=box.borderWidth/2;
+                cairo_rectangle(cr,x+half,top+half,bw-box.borderWidth,bh-box.borderWidth);
+                cairo_stroke(cr);
+            }
+            cairo_save(cr);
+            double tx=x+box.borderWidth+box.paddingLeft,ty=top+box.borderWidth+box.paddingTop;
+            cairo_rectangle(cr,tx,ty,bw-2*box.borderWidth-box.paddingLeft-box.paddingRight,contentH);
+            cairo_clip(cr);
+            cairo_set_source_rgb(cr,0,0,0);
+            if(marker) {
+                double mx=tx+p.list.level*p.list.levelIndent;
+                cairo_save(cr);
+                cairo_rectangle(cr,mx,ty,p.list.markerWidth,contentH); cairo_clip(cr);
+                cairo_move_to(cr,mx,ty); pango_cairo_show_layout(cr,marker.get());
+                cairo_restore(cr);
+            }
+            cairo_rectangle(cr,tx+listSpace(p.list),ty,bw-2*box.borderWidth-box.paddingLeft-box.paddingRight-listSpace(p.list),contentH);
+            cairo_clip(cr);
+            cairo_move_to(cr,tx+listSpace(p.list),ty);
+            pango_cairo_show_layout(cr,layout.get());
+            cairo_restore(cr);
+            if(box.opacity<1) { cairo_pop_group_to_source(cr); cairo_paint_with_alpha(cr,box.opacity); }
+            cairo_restore(cr);
+        }
+        y+=static_cast<int64_t>(std::ceil(totalH));
+        if(y>100000000||cairo_status(cr)!=CAIRO_STATUS_SUCCESS) return false;
+    }
+    return cairo_status(cr)==CAIRO_STATUS_SUCCESS;
+}
 SurfacePtr renderDocument(const Document &d,int w,int h,t_CKINT bg) {
     SurfacePtr surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,w,h),cairo_surface_destroy);
     if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
@@ -897,75 +1021,61 @@ SurfacePtr renderDocument(const Document &d,int w,int h,t_CKINT bg) {
     else cairo_set_source_rgb(cr.get(),((bg>>16)&255)/255.0,((bg>>8)&255)/255.0,(bg&255)/255.0);
     cairo_paint(cr.get());
     cairo_set_operator(cr.get(),CAIRO_OPERATOR_OVER);
-    // Validate all paragraphs, including those beyond the visible canvas.
-    int64_t y=0; size_t block=0;
+    if(!drawDocument(cr.get(),d,w,h)) return SurfacePtr(nullptr,cairo_surface_destroy);
+    cairo_surface_flush(surface.get());
+    if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
+    return surface;
+}
+bool validPage(const PageStyle &p) {
+    return validCanvas(p.width,p.height,p.backgroundColor)&&p.width>p.marginLeft+p.marginRight&&p.height>p.marginTop+p.marginBottom;
+}
+struct PageEntry { bool table=false; size_t index=0; int page=0; };
+bool planPages(const Document &d,const PageStyle &p,std::vector<PageEntry> &entries,int &count) {
+    if(!validPage(p)) return false;
+    SurfacePtr surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1),cairo_surface_destroy);
+    if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return false;
+    std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
+    if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return false;
+    int width=p.width-p.marginLeft-p.marginRight, height=p.height-p.marginTop-p.marginBottom;
+    count=1; int used=0;
+    auto place=[&](bool table,size_t index,int h) {
+        if(h<0||h>height) return false;
+        if(h>height-used) { if(count>=4096) return false; ++count; used=0; }
+        entries.push_back({table,index,count-1}); used+=h; return true;
+    };
+    size_t block=0;
     for(size_t pi=0;pi<=d.paragraphs.size();++pi) {
         while(block<d.tables.size()&&d.tables[block].after==pi) {
-            if(!drawTable(cr.get(),d.tables[block].table,w,h,y,true)) return SurfacePtr(nullptr,cairo_surface_destroy);
+            std::vector<int> xs,hs; int h=0;
+            if(!tableGeometry(cr.get(),d.tables[block].table,width,xs,hs,h)||!place(true,block,h)) return false;
             ++block;
         }
         if(pi==d.paragraphs.size()) break;
-        const auto &p=d.paragraphs[pi];
-        auto layout=makeLayout(cr.get(),p,w);
-        if(!layout) return SurfacePtr(nullptr,cairo_surface_destroy);
-        int contentW=0,contentH=0;
-        pango_layout_get_pixel_size(layout.get(),&contentW,&contentH);
-        LayoutPtr marker(nullptr,g_object_unref);
-        if(p.list.mode) { marker=makeMarker(cr.get(),p); if(!marker) return SurfacePtr(nullptr,cairo_surface_destroy); int mw=0,mh=0; pango_layout_get_pixel_size(marker.get(),&mw,&mh); contentH=std::max(contentH,mh); }
-        double totalW=contentW+p.layout.marginLeft+p.layout.marginRight+p.box.paddingLeft+p.box.paddingRight+2*p.box.borderWidth+listSpace(p.list);
-        double totalH=contentH+p.layout.marginTop+p.layout.marginBottom+p.box.paddingTop+p.box.paddingBottom+2*p.box.borderWidth;
-        if(totalW<0||totalH<0||totalW>100000000||totalH>100000000) return SurfacePtr(nullptr,cairo_surface_destroy);
-        if(y<h&&!p.list.mode&&p.box.opacity==1&&p.box.borderWidth==0&&p.box.backgroundColor<0&&p.box.paddingLeft==0&&p.box.paddingRight==0&&p.box.paddingTop==0&&p.box.paddingBottom==0) {
-            cairo_save(cr.get());
-            cairo_rectangle(cr.get(),p.layout.marginLeft,0,w-p.layout.marginLeft-p.layout.marginRight,h);
-            cairo_clip(cr.get());
-            cairo_move_to(cr.get(),p.layout.marginLeft,y+p.layout.marginTop);
-            cairo_set_source_rgb(cr.get(),0,0,0);
-            pango_cairo_show_layout(cr.get(),layout.get());
-            cairo_restore(cr.get());
-        } else if(y<h&&p.box.opacity>0) {
-            const auto &box=p.box;
-            double x=p.layout.marginLeft, top=y+p.layout.marginTop;
-            double bw=w-p.layout.marginLeft-p.layout.marginRight;
-            double bh=contentH+box.paddingTop+box.paddingBottom+2*box.borderWidth;
-            auto color=[&](t_CKINT rgb) { cairo_set_source_rgb(cr.get(),((rgb>>16)&255)/255.0,((rgb>>8)&255)/255.0,(rgb&255)/255.0); };
-            cairo_save(cr.get());
-            cairo_rectangle(cr.get(),x,top,bw,bh);
-            cairo_clip(cr.get());
-            if(box.opacity<1) cairo_push_group(cr.get());
-            if(box.backgroundColor>=0) {
-                color(box.backgroundColor); cairo_paint(cr.get());
-            }
-            if(box.borderWidth>0) {
-                color(box.borderColor);
-                cairo_set_line_width(cr.get(),box.borderWidth);
-                double half=box.borderWidth/2;
-                cairo_rectangle(cr.get(),x+half,top+half,bw-box.borderWidth,bh-box.borderWidth);
-                cairo_stroke(cr.get());
-            }
-            cairo_save(cr.get());
-            double tx=x+box.borderWidth+box.paddingLeft,ty=top+box.borderWidth+box.paddingTop;
-            cairo_rectangle(cr.get(),tx,ty,bw-2*box.borderWidth-box.paddingLeft-box.paddingRight,contentH);
-            cairo_clip(cr.get());
-            cairo_set_source_rgb(cr.get(),0,0,0);
-            if(marker) {
-                double mx=tx+p.list.level*p.list.levelIndent;
-                cairo_save(cr.get());
-                cairo_rectangle(cr.get(),mx,ty,p.list.markerWidth,contentH); cairo_clip(cr.get());
-                cairo_move_to(cr.get(),mx,ty); pango_cairo_show_layout(cr.get(),marker.get());
-                cairo_restore(cr.get());
-            }
-            cairo_rectangle(cr.get(),tx+listSpace(p.list),ty,bw-2*box.borderWidth-box.paddingLeft-box.paddingRight-listSpace(p.list),contentH);
-            cairo_clip(cr.get());
-            cairo_move_to(cr.get(),tx+listSpace(p.list),ty);
-            pango_cairo_show_layout(cr.get(),layout.get());
-            cairo_restore(cr.get());
-            if(box.opacity<1) { cairo_pop_group_to_source(cr.get()); cairo_paint_with_alpha(cr.get(),box.opacity); }
-            cairo_restore(cr.get());
-        }
-        y+=static_cast<int64_t>(std::ceil(totalH));
-        if(y>100000000||cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
+        int w=0,h=0;
+        if(!paragraphDimensions(cr.get(),d.paragraphs[pi],width,w,h)||!place(false,pi,h)) return false;
     }
+    return true;
+}
+SurfacePtr renderPage(const Document &d,const PageStyle &p,t_CKINT page) {
+    std::vector<PageEntry> entries; int count=0;
+    if(!planPages(d,p,entries,count)||page<0||page>=count) return SurfacePtr(nullptr,cairo_surface_destroy);
+    Document selected;
+    for(const auto &e:entries) if(e.page==page) {
+        if(e.table) selected.tables.push_back({selected.paragraphs.size(),d.tables[e.index].table});
+        else selected.paragraphs.push_back(d.paragraphs[e.index]);
+    }
+    SurfacePtr surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,p.width,p.height),cairo_surface_destroy);
+    if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
+    std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
+    if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
+    cairo_set_operator(cr.get(),CAIRO_OPERATOR_SOURCE);
+    if(p.backgroundColor<0) cairo_set_source_rgba(cr.get(),0,0,0,0);
+    else cairo_set_source_rgb(cr.get(),((p.backgroundColor>>16)&255)/255.0,((p.backgroundColor>>8)&255)/255.0,(p.backgroundColor&255)/255.0);
+    cairo_paint(cr.get()); cairo_set_operator(cr.get(),CAIRO_OPERATOR_OVER);
+    int w=p.width-p.marginLeft-p.marginRight,h=p.height-p.marginTop-p.marginBottom;
+    cairo_translate(cr.get(),p.marginLeft,p.marginTop);
+    cairo_rectangle(cr.get(),0,0,w,h); cairo_clip(cr.get());
+    if(!drawDocument(cr.get(),selected,w,h)) return SurfacePtr(nullptr,cairo_surface_destroy);
     cairo_surface_flush(surface.get());
     if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
     return surface;
@@ -1004,6 +1114,54 @@ CK_DLL_MFUN(text_doc_save_png) {
         auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),bg=GET_NEXT_INT(ARGS);
         if(!d||!validCanvas(w,h,bg)||path.size()<4||path.substr(path.size()-4)!=".png") return;
         auto surface=renderDocument(*d,w,h,bg);
+        if(!surface) return;
+        FILE *f=mediaio::openNew(path.c_str());
+        if(!f) return;
+        bool ok=cairo_surface_write_to_png_stream(surface.get(),textWritePng,f)==CAIRO_STATUS_SUCCESS;
+        if(std::fclose(f)!=0) ok=false;
+        if(!ok) { std::remove(path.c_str()); return; }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_page_count) {
+    RETURN->v_int=-1;
+    try {
+        auto *d=docState(SELF,API); auto *p=pageState(GET_NEXT_OBJECT(ARGS),API);
+        std::vector<PageEntry> entries; int n=0;
+        if(d&&p&&planPages(*d,*p,entries,n)) RETURN->v_int=n;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_export_page) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto *p=pageState(GET_NEXT_OBJECT(ARGS),API); auto page=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!d||!p||!validPage(*p)||!a||API->object->array_int_size(a)!=p->width*p->height*4) return;
+        int w=p->width,h=p->height;
+        auto surface=renderPage(*d,*p,page);
+        if(!surface) return;
+        auto *data=cairo_image_surface_get_data(surface.get());
+        int stride=cairo_image_surface_get_stride(surface.get());
+        if(!data) return;
+        for(int y=0;y<h;++y) for(int x=0;x<w;++x) {
+            uint32_t v; std::memcpy(&v,data+static_cast<size_t>(y)*stride+x*4,4);
+            unsigned alpha=v>>24; size_t i=(static_cast<size_t>(y)*w+x)*4;
+            for(int c=0;c<3;++c) {
+                unsigned q=(v>>(16-8*c))&255;
+                API->object->array_int_set_idx(a,i+c,alpha?std::min(255u,(q*255+alpha/2)/alpha):0);
+            }
+            API->object->array_int_set_idx(a,i+3,alpha);
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_save_page) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        auto *p=pageState(GET_NEXT_OBJECT(ARGS),API); auto page=GET_NEXT_INT(ARGS);
+        if(!d||!p||!validPage(*p)||path.size()<4||path.substr(path.size()-4)!=".png") return;
+        auto surface=renderPage(*d,*p,page);
         if(!surface) return;
         FILE *f=mediaio::openNew(path.c_str());
         if(!f) return;
@@ -1232,6 +1390,32 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_grid_rowGap_set,"int","rowGap");
     QUERY->add_arg(QUERY,"int","value");
     if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"TextPage","Object");
+    pageOffset=QUERY->add_mvar(QUERY,"int","@textPageNative",FALSE);
+    if(pageOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,text_page_ctor); QUERY->add_dtor(QUERY,text_page_dtor);
+    QUERY->add_mfun(QUERY,text_page_width_get,"int","width");
+    QUERY->add_mfun(QUERY,text_page_width_set,"int","width");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_page_height_get,"int","height");
+    QUERY->add_mfun(QUERY,text_page_height_set,"int","height");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_page_marginLeft_get,"int","marginLeft");
+    QUERY->add_mfun(QUERY,text_page_marginLeft_set,"int","marginLeft");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_page_marginRight_get,"int","marginRight");
+    QUERY->add_mfun(QUERY,text_page_marginRight_set,"int","marginRight");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_page_marginTop_get,"int","marginTop");
+    QUERY->add_mfun(QUERY,text_page_marginTop_set,"int","marginTop");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_page_marginBottom_get,"int","marginBottom");
+    QUERY->add_mfun(QUERY,text_page_marginBottom_set,"int","marginBottom");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_page_backgroundColor_get,"int","backgroundColor");
+    QUERY->add_mfun(QUERY,text_page_backgroundColor_set,"int","backgroundColor");
+    QUERY->add_arg(QUERY,"int","value");
+    if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextDocument","Object");
     docOffset=QUERY->add_mvar(QUERY,"int","@textDocumentNative",FALSE);
     if(docOffset==CK_INVALID_OFFSET) return FALSE;
@@ -1305,6 +1489,16 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"TextGrid","grid");
     QUERY->add_mfun(QUERY,text_doc_remove_grid,"int","removeGrid");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_doc_page_count,"int","pageCount");
+    QUERY->add_arg(QUERY,"TextPage","page");
+    QUERY->add_mfun(QUERY,text_doc_export_page,"int","exportPage");
+    QUERY->add_arg(QUERY,"TextPage","page");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,text_doc_save_page,"int","savePagePNG");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_arg(QUERY,"TextPage","page");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_doc_measure_document,"int","measureDocument");
     QUERY->add_arg(QUERY,"int","width");
