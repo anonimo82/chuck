@@ -4920,3 +4920,75 @@ check(doc.pageCount(sheet)==1);
 """,49,p)
     assert (p / "text-page.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert not (p / "text-invalid-page.png").exists()
+
+    run("text", """
+TextNode root;
+TextNode leaf;
+TextNode saved;
+TextNode group;
+TextStyle style;
+check(root.kind()==0 && root.childCount()==0);
+check(root.depth()==1 && root.nodeCount()==1 && root.textBytes()==0);
+check(root.text()=="");
+check(leaf.setParagraph("Hello",style));
+check(leaf.kind()==1 && leaf.text()=="Hello" && leaf.textBytes()==5);
+check(!leaf.appendChild(root));
+check(!root.appendChild(root));
+check(root.appendChild(leaf));
+check(root.childCount()==1 && root.depth()==2 && root.nodeCount()==2);
+check(root.textBytes()==5);
+check(leaf.setParagraph("World!",style));
+check(root.getChild(0,saved));
+check(saved.text()=="Hello");
+check(!root.getChild(0,root));
+check(!root.getChild(1,saved));
+check(saved.text()=="Hello");
+check(root.insertChild(0,leaf));
+check(root.childCount()==2 && root.textBytes()==11);
+check(root.getChild(0,saved));
+check(saved.text()=="World!");
+check(root.getChild(1,saved));
+check(saved.text()=="Hello");
+check(!root.insertChild(-1,leaf));
+check(!root.insertChild(3,leaf));
+check(!root.setChild(2,leaf));
+check(root.setChild(1,leaf));
+check(root.textBytes()==12);
+check(group.appendChild(root));
+check(group.depth()==3 && group.nodeCount()==4);
+check(group.copyFrom(group));
+check(saved.copyFrom(group));
+check(saved.depth()==3 && saved.textBytes()==12);
+check(root.removeChild(0));
+check(root.childCount()==1 && root.textBytes()==6);
+check(group.textBytes()==12 && saved.textBytes()==12);
+check(!root.removeChild(2));
+check(saved.clear());
+check(saved.kind()==0 && saved.nodeCount()==1);
+check(root.setParagraph("Reset",style));
+check(root.kind()==1 && root.childCount()==0 && root.text()=="Reset");
+check(root.clear());
+check(root.kind()==0 && root.depth()==1);
+TextNode chain;
+TextNode wrapper;
+0=>int successCount;
+for(0=>int i;i<31;i++) {
+    wrapper.clear();
+    if(wrapper.appendChild(chain) && chain.copyFrom(wrapper)) successCount++;
+}
+check(successCount==31 && chain.depth()==32 && chain.nodeCount()==32);
+wrapper.clear();
+check(!wrapper.appendChild(chain));
+check(wrapper.depth()==1 && wrapper.childCount()==0);
+TextNode wide;
+0=>int added;
+for(0=>int i;i<4095;i++) if(wide.appendChild(leaf)) added++;
+check(added==4095 && wide.nodeCount()==4096);
+check(!wide.appendChild(leaf));
+check(wide.nodeCount()==4096);
+check(wide.setChild(0,leaf));
+check(wide.nodeCount()==4096);
+check(wide.removeChild(0));
+check(wide.appendChild(leaf));
+check(wide.nodeCount()==4096);
+""",53,p)
