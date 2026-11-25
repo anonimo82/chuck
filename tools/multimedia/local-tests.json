@@ -2,6 +2,7 @@
   "version": 1,
   "groups": [
     "transport-video-high-resolution",
-    "transport-video-intraframe"
+    "transport-video-intraframe",
+    "transport-video-interframe"
   ]
 }

@@ -1456,6 +1456,48 @@ CK_DLL_SFUN(cf_inspect){
         for(size_t i=0;i<9;++i)API->object->array_int_set_idx(dst,i,m[i]);RETURN->v_int=1;
     }catch(...){}
 }
+static bool delta_make(CK_DL_API API,t_CKINT stream,t_CKINT seq,t_CKINT ts,t_CKINT w,t_CKINT h,t_CKINT frame,t_CKINT offset,t_CKINT reference,Arr base,Arr current,mediawire::Bytes &wire){
+    if(stream<=0||stream>=0xffffffffull||seq<0||seq>0xffffffffull||ts<0||w<=0||h<=0||
+       !mediawire::videoPixels(w,h)||frame<=0||frame>0xffffffffull||reference<0||reference!=frame-1||
+       offset<0||offset>=mediawire::videoPixels(w,h)||!base||!current)return false;
+    auto n=API->object->array_int_size(base);
+    if(n<=0||n%4||!mediawire::videoFragmentPacketSize(n/4)||!exact(current,API,n))return false;
+    mediawire::Bytes a,c;
+    if(!read(base,API,n,a)||!read(current,API,n,c))return false;
+    return mediawire::encodeVideoDelta({6,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},
+        {{static_cast<uint32_t>(w),static_cast<uint32_t>(h),static_cast<uint32_t>(frame),static_cast<uint32_t>(offset),static_cast<uint32_t>(n/4)},static_cast<uint32_t>(reference)},a,c,wire);
+}
+CK_DLL_SFUN(video_delta_size){
+    RETURN->v_int=0;try{
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),offset=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),c=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire;
+        if(delta_make(API,1,0,0,w,h,1,offset,0,a,c,wire))RETURN->v_int=wire.size();
+    }catch(...){}
+}
+CK_DLL_SFUN(video_delta_encode){
+    RETURN->v_int=0;try{
+        auto s=GET_NEXT_INT(ARGS),q=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),f=GET_NEXT_INT(ARGS),o=GET_NEXT_INT(ARGS),r=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),c=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire;
+        if(delta_make(API,s,q,t,w,h,f,o,r,a,c,wire)&&exact(dst,API,wire.size())){write(dst,API,wire);RETURN->v_int=1;}
+    }catch(...){}
+}
+CK_DLL_SFUN(video_delta_inspect){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire,data;mediawire::Header h;mediawire::VideoDelta d;uint32_t crc;
+        if(!exact(dst,API,9)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||!mediawire::decodeVideoDelta(wire,h,d,crc,data))return;
+        const uint64_t m[]={h.stream,h.sequence,h.timestamp,d.f.width,d.f.height,d.f.frame,d.f.offset,d.f.count,d.reference};
+        for(size_t i=0;i<9;++i)API->object->array_int_set_idx(dst,i,m[i]);RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(video_delta_reconstruct){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));auto ref=GET_NEXT_INT(ARGS);
+        auto base=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire,a,raw;
+        if(ref<0||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||!read(base,API,mediawire::maxPayload,a)||
+           !mediawire::reconstructVideoDelta(wire,ref,a,raw)||!exact(dst,API,raw.size()))return;
+        write(dst,API,raw);RETURN->v_int=1;
+    }catch(...){}
+}
 bool vcf_make(CK_DL_API API, t_CKINT s,t_CKINT q,t_CKINT t,t_CKINT w,t_CKINT h,t_CKINT image,t_CKINT row,t_CKINT rows,t_CKINT codec,t_CKINT quality,Arr src,mediawire::Bytes &wire){
     if(s<=0||s>=0xffffffffull||q<0||q>0xffffffffull||t<0||w<=0||h<=0||!mediawire::videoPixels(w,h)||
        image<0||image>0xffffffffull||row<0||row>=h||rows<=0||rows>h-row||codec<1||codec>5||quality<1||quality>100)return false;
@@ -2314,6 +2356,34 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_sfun(QUERY,cf_inspect,"int","inspect");
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"int[]","metadata");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaVideoDeltaFragment","Object");
+    QUERY->add_sfun(QUERY,video_delta_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","pixelOffset");
+    QUERY->add_arg(QUERY,"int[]","referencePixels");
+    QUERY->add_arg(QUERY,"int[]","currentPixels");
+    QUERY->add_sfun(QUERY,video_delta_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","frameIndex");
+    QUERY->add_arg(QUERY,"int","pixelOffset");
+    QUERY->add_arg(QUERY,"int","referenceFrame");
+    QUERY->add_arg(QUERY,"int[]","referencePixels");
+    QUERY->add_arg(QUERY,"int[]","currentPixels");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,video_delta_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,video_delta_reconstruct,"int","reconstruct");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int","referenceFrame");
+    QUERY->add_arg(QUERY,"int[]","referencePixels");
+    QUERY->add_arg(QUERY,"int[]","rawPacket");
     if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaVideoCompressedFragment","Object");
     QUERY->add_sfun(QUERY,vcf_size,"int","packetSize");

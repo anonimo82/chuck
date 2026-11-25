@@ -82,6 +82,7 @@
     "transport-raster-auto",
     "transport-video-auto-fragments",
     "transport-video-high-resolution",
-    "transport-video-intraframe"
+    "transport-video-intraframe",
+    "transport-video-interframe"
   ]
 }

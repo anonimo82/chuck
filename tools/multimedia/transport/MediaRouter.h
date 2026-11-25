@@ -17,7 +17,7 @@ inline int inspectMedia(const Bytes &wire,std::array<uint64_t,6> &out) {
     else if(h.type==4||h.type==6){
         std::array<uint64_t,9> m{};
         int av=inspectAV(wire,m);
-        if(av==1)kind=5;else if(av==2)kind=7;else if(av==3)kind=8;else if(av==4)kind=16;
+        if(av==1)kind=5;else if(av==2)kind=7;else if(av==3)kind=8;else if(av==4)kind=16;else if(av==5)kind=17;
     }else if(h.type==5){Bytes msg;if(decodeMidi(wire,h,msg))kind=6;}
     else if(h.type==7){
         Bytes text;uint32_t total,offset,first;
