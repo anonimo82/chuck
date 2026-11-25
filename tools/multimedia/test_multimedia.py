@@ -8,7 +8,7 @@ CHUCK = HERE.parents[1] / "src/chuck"
 
 def run(module, script, expected, directory):
     path = directory / "test.ck"
-    name = {"audio": "AudioIO", "vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO", "raster": "RasterIO", "text": "TextIO"}[module]
+    name = {"audio": "AudioIO", "vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO", "raster": "RasterIO", "text": "TextIO", "transport": "MediaTransport"}[module]
     path.write_text(f'@import "{name}";\n' + '0 => int smokeCheckIndex;\nfun void check(int ok) { smokeCheckIndex++; if(ok) <<< "PASS", smokeCheckIndex >>>; else <<< "FAIL", smokeCheckIndex >>>; }\n' + script, encoding="utf-8")
     print(f"SMOKE_EXPECTED {expected}", flush=True)
     r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
@@ -8793,8 +8793,66 @@ check(cap.clear());
         for name in ("lost.mkv", "alpha.mkv"):
             assert not (p / name).exists()
 
+def transport_framing():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("transport", """
+check(MediaTransport.headerSize()==32);
+check(MediaTransport.maxPayload()==1048576);
+int packet[36];
+int meta[4];
+int out[4];
+[0,127,128,255] @=> int data[];
+for(1=>int t;t<=7;t++) {
+    check(MediaTransport.encode(t,42,9,1234567,data,packet));
+    check(MediaTransport.decode(packet,meta,out));
+    check(meta[0]==t && meta[1]==42 && meta[2]==9 && meta[3]==1234567);
+    check(out[0]==0 && out[1]==127 && out[2]==128 && out[3]==255);
+}
+check(packet[0]==67 && packet[1]==75 && packet[2]==77 && packet[3]==80);
+check(packet[4]==1 && packet[5]==7 && packet[6]==0 && packet[7]==0);
+check(packet[8]==0 && packet[11]==42 && packet[15]==9 && packet[27]==4);
+check(!MediaTransport.encode(0,42,9,0,data,packet));
+check(!MediaTransport.encode(8,42,9,0,data,packet));
+check(!MediaTransport.encode(7,0,9,0,data,packet));
+check(!MediaTransport.encode(7,-1,9,0,data,packet));
+check(!MediaTransport.encode(7,42,-1,0,data,packet));
+check(!MediaTransport.encode(7,42,9,-1,data,packet));
+check(!MediaTransport.encode(7,42,9,0,[-1,0,0,0],packet));
+check(!MediaTransport.encode(7,42,9,0,[256,0,0,0],packet));
+check(!MediaTransport.encode(7,42,9,0,[1],packet));
+check(MediaTransport.decode(packet,meta,out));
+check(meta[3]==1234567 && out[3]==255);
+for(0=>int i;i<packet.size();i++) {
+    packet[i]=>int old;
+    (old+1)%256=>packet[i];
+    check(!MediaTransport.decode(packet,meta,out));
+    old=>packet[i];
+}
+check(meta[0]==7 && meta[3]==1234567 && out[3]==255);
+check(!MediaTransport.decode(packet,meta,meta));
+check(!MediaTransport.decode(packet,[0,0,0],out));
+check(!MediaTransport.decode(packet,meta,[0]));
+check(!MediaTransport.decode([1,2,3],meta,out));
+int empty[0];
+int emptyPacket[32];
+check(MediaTransport.encode(1,1,0,0,empty,emptyPacket));
+check(MediaTransport.decode(emptyPacket,meta,empty));
+check(meta[0]==1 && meta[1]==1 && meta[2]==0 && meta[3]==0);
+int huge[1048577];
+check(!MediaTransport.encode(1,1,0,0,huge,packet));
+int limit[1048576];
+int limitPacket[1048608];
+int limitOut[1048576];
+255=>limit[1048575];
+check(MediaTransport.encode(6,1,0,0,limit,limitPacket));
+check(MediaTransport.decode(limitPacket,meta,limitOut));
+check(limitOut[0]==0 && limitOut[1048575]==255);
+""",92,p)
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
