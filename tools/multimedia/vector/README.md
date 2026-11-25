@@ -48,3 +48,7 @@ exportAlpha(width,height,int[] alpha) renders the current SVG with all global co
 ## Raster-to-vector conversion
 
 importPixels(width,height,int[] pixels) converts straight row-major RGBA8 pixels to editable SVG rectangles, merging horizontally adjacent pixels of identical RGBA and omitting fully transparent runs. Dimensions 1–4096, at most 4194304 pixels and 4096 nontransparent runs; exact array size width*height*4, components 0–255. Invalid input or excess complexity preserves the previous document and controls. Success replaces the document and resets controls. This is pixel-art vectorization, not contour tracing or photographic simplification. Compatible with RasterImage.exportPixels, including its current color controls. Rendering at original dimensions preserves opaque colors and alpha, subject to Cairo premultiplication rounding for translucent colors. No new dependency; native validation pending.
+
+## Projected triangle import
+
+importTriangles(width,height,float[] triangles) replaces the current document with editable filled polygons in supplied order. Seven floats per triangle: three XY pairs and integral packed RGB 0–0xffffff. Dimensions 1–4096, 1–4096 input triangles; finite coordinates within existing SVG limits. Zero-area triangles are omitted, and canvas clips out-of-bounds geometry. Success resets controls; failure preserves document and controls. Compatible with Model3D.projectTriangles; no new native dependency. Native validation pending.

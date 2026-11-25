@@ -1780,6 +1780,65 @@ CK_DLL_MFUN(model3d_render_orthographic) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(model3d_project_triangles) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto index=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        double span=GET_NEXT_FLOAT(ARGS);
+        auto rgb=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto *m=meshAt(p,index);
+        if(!m||!a||w<1||h<1||w>4096||h>4096||
+           !std::isfinite(span)||span<0.0001||span>1e9||rgb<0||rgb>0xffffff||
+           m->mNumVertices>1000000||m->mNumFaces<1||m->mNumFaces>4096||
+           API->object->array_float_size(a)!=static_cast<t_CKINT>(m->mNumFaces)*7) return;
+        aiMatrix4x4 t,rx,ry,rz,s;
+        constexpr double rad=3.14159265358979323846/180.0;
+        auto &c=p->controls;
+        aiMatrix4x4::Translation(aiVector3D(c[0],c[1],c[2]),t);
+        aiMatrix4x4::RotationX(static_cast<ai_real>(std::remainder(c[3],360.0)*rad),rx);
+        aiMatrix4x4::RotationY(static_cast<ai_real>(std::remainder(c[4],360.0)*rad),ry);
+        aiMatrix4x4::RotationZ(static_cast<ai_real>(std::remainder(c[5],360.0)*rad),rz);
+        aiMatrix4x4::Scaling(aiVector3D(c[6],c[7],c[8]),s);
+        auto transform=t*rz*ry*rx*s;
+        struct V { double x,y,z; };
+        std::vector<V> verts;
+        verts.reserve(m->mNumVertices);
+        double factor=h/span;
+        for(unsigned i=0;i<m->mNumVertices;++i) {
+            auto v=transform*m->mVertices[i];
+            double x=w*0.5+v.x*factor,y=h*0.5-v.y*factor;
+            if(!std::isfinite(x)||!std::isfinite(y)||std::abs(x)>1000000||std::abs(y)>1000000||!std::isfinite(v.z)) return;
+            verts.push_back({x,y,v.z});
+        }
+        struct Triangle { double depth; std::array<double,7> values; };
+        std::vector<Triangle> out;
+        out.reserve(m->mNumFaces);
+        for(unsigned f=0;f<m->mNumFaces;++f) {
+            const auto &face=m->mFaces[f];
+            if(face.mNumIndices!=3) return;
+            for(unsigned k=0;k<3;++k) if(face.mIndices[k]>=verts.size()) return;
+            V A=verts[face.mIndices[0]],B=verts[face.mIndices[1]],C=verts[face.mIndices[2]];
+            double ux=(B.x-A.x)/factor,uy=-(B.y-A.y)/factor,uz=B.z-A.z;
+            double vx=(C.x-A.x)/factor,vy=-(C.y-A.y)/factor,vz=C.z-A.z;
+            double nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;
+            double len=std::hypot(nx,ny,nz);
+            if(!std::isfinite(len)) return;
+            double light=0.25+0.75*(len>0?std::clamp(nz/len,0.0,1.0):0.0);
+            unsigned color=0;
+            for(int k=0;k<3;++k) color=(color<<8)|static_cast<unsigned>(
+                std::lround(((rgb>>(16-8*k))&255)*light));
+            out.push_back({(A.z+B.z+C.z)/3.0,{A.x,A.y,B.x,B.y,C.x,C.y,double(color)}});
+        }
+        std::stable_sort(out.begin(),out.end(),[](const Triangle &a,const Triangle &b){
+            return a.depth<b.depth;
+        });
+        for(size_t i=0;i<out.size();++i) for(size_t k=0;k<7;++k)
+            API->object->array_float_set_idx(a,7*i+k,out[i].values[k]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(ModelIO) {
     QUERY->setname(QUERY, "ModelIO");
     QUERY->begin_class(QUERY, "ModelIO", "Object");
@@ -1834,6 +1893,13 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_get_scaleZ,"float","scaleZ");
     QUERY->add_mfun(QUERY,model3d_set_scaleZ,"float","scaleZ");
     QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,model3d_project_triangles,"int","projectTriangles");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"float","verticalSpan");
+    QUERY->add_arg(QUERY,"int","rgb");
+    QUERY->add_arg(QUERY,"float[]","triangles");
     QUERY->add_mfun(QUERY,model3d_render_orthographic,"int","renderOrthographic");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"int","width");
