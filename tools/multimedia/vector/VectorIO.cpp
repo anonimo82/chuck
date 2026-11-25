@@ -482,6 +482,34 @@ CK_DLL_MFUN(vector_image_import_pixels) {
         if(p->replaceShapes(w,h,std::move(shapes))) { p->reset(); RETURN->v_int=1; }
     } catch(...) {}
 }
+CK_DLL_MFUN(vector_image_import_triangles) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!a||w<1||h<1||w>4096||h>4096) return;
+        auto n=API->object->array_float_size(a);
+        if(n<7||n>4096*7||n%7) return;
+        std::vector<std::string> shapes;
+        for(t_CKINT i=0;i<n;i+=7) {
+            double v[6];
+            for(int k=0;k<6;++k) {
+                v[k]=API->object->array_float_get_idx(a,i+k);
+                if(!coord(v[k])) return;
+            }
+            double rgb=API->object->array_float_get_idx(a,i+6);
+            if(!std::isfinite(rgb)||rgb<0||rgb>0xffffff||std::floor(rgb)!=rgb) return;
+            double area=(v[2]-v[0])*(v[5]-v[1])-(v[3]-v[1])*(v[4]-v[0]);
+            if(area==0) continue;
+            auto o=svgStream(); o<<"<polygon points=\"";
+            for(int k=0;k<6;k+=2) o<<v[k]<<','<<v[k+1]<<' ';
+            o<<"\""<<style(static_cast<t_CKINT>(rgb),1.0,false)<<"/>";
+            shapes.push_back(o.str());
+        }
+        if(p->replaceShapes(w,h,std::move(shapes))) { p->reset(); RETURN->v_int=1; }
+    } catch(...) {}
+}
 CK_DLL_QUERY(VectorIO) {
     QUERY->setname(QUERY, "VectorIO");
     QUERY->begin_class(QUERY, "VectorIO", "Object");
@@ -569,6 +597,10 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,vector_image_save,"int","save");
     QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,vector_image_import_triangles,"int","importTriangles");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"float[]","triangles");
     QUERY->add_mfun(QUERY,vector_image_import_pixels,"int","importPixels");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
