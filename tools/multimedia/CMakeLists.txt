@@ -110,7 +110,9 @@ chugin(KeyframeIO keyframe/KeyframeIO.cpp)
 chugin(TextIO text/TextIO.cpp)
 target_link_libraries(TextIO PRIVATE PkgConfig::TEXT PkgConfig::GLIB)
 
+find_package(PNG REQUIRED)
 chugin(MediaTransport transport/MediaTransport.cpp)
+target_link_libraries(MediaTransport PRIVATE PNG::PNG)
 
 if(WIN32)
   target_link_libraries(MediaTransport PRIVATE ws2_32)
