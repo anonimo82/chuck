@@ -42,12 +42,22 @@ The separate Multimedia CI workflow runs on relevant pull requests, pushes to ma
 
 The Windows build-and-test script now invokes run_smoke_tests.py, which runs the existing raster, audio and multimedia Python suites and prints one MULTIMEDIA SUMMARY line with expected ChucK checks for batches actually started, observed PASS/FAIL tokens, missing checks within reported batches, unreported checks (started batches that never returned counts), extra checks, completed suites and overall status. Each batch announces its expected count before launching ChucK, so repeated batches and optional encoder checks are counted correctly. On early failure, later batches that never start are not included in expected; incomplete suites still fail overall. Python fixture assertions, FFmpeg errors and other suite errors affect overall status but are not counted as ChucK checks. A compilation/probe failure before the suites start produces no test summary. The full transcript remains available for diagnosis. No additional manual test invocation is required.
 
-### Incremental validation (local Windows builds)
+### Local and global validation manifests
 
-The existing command defaults to Full for backward compatibility and unchanged CI behavior. Use -Mode Incremental for ordinary five-feature-PR cycles, -Mode Full every twenty feature PRs or after structural changes, and -Mode Failed to retry the last unsuccessful selection (including its fixture dependencies and any changes since that attempt). The full cadence is a development policy, not an automatic counter.
+The repository maintains two versioned lists: global-tests.json (all registered groups) and local-tests.json (current cycle's new groups and explicitly selected regression groups). A group is an independently executable collection of tests and its fixture dependencies. Every new group must be registered in the runner and test dispatcher, added to both manifests in the same PR, and retained in global-tests.json permanently. Existing tests must not be copied or removed to change selection.
 
-The runner stores the last successful clean commit and pending selection in build/multimedia-windows/smoke-state.json. A first incremental run without a baseline, divergent history, dirty tracked files, shared code or unclassified changes conservatively select all suites. Text implementation changes select text-core and text-recent. Changes within the grouped test file select modified groups; shared harness changes select all. The initial migration can use -Since 92933d3894d2c844178e04e2540e1e4524750c9f explicitly, corresponding to the previously reported 3153-check baseline. Do not use -Since with an unvalidated commit.
+Use -Mode Local (or its compatibility alias -Mode Incremental) every five functional PRs, -Mode Full every twenty functional PRs instead of Local, and -Mode Full after structural/shared changes when appropriate. The cadence is a development policy, not an automatic counter. The default remains Full for compatibility and unchanged CI. The old -Since option remains accepted with Incremental and conservatively selects Full rather than inferring tests from a Git diff.
 
-For a narrowly scoped diagnostic run, use -Mode Incremental -Group text-recent (177 checks at PR #135). This does not advance the validated baseline. Available groups: raster, audio, legacy, text-core, text-recent. The latter contains native persistence, TXT, SVG and PDF tests, including shared fixture producers. Future cycles should introduce independent groups and update the selector and group registry rather than indefinitely extending this group.
+Use -Mode Failed to retry the previously attempted group selection plus the current local manifest. A diagnostic -Group selection does not certify the cycle. The runner records attempts and successful clean commits in the existing local build state file. An empty local manifest reports SKIP (zero tests), not PASS. The runner never edits tracked manifests: after a successful cycle validation is reported and checked against the selected commit and expected count, the next infrastructure/functional PR clears the local list; on failure it remains intact. This keeps the working tree clean and avoids silently clearing tests on other developers' machines. Full validation can also close the current local cycle.
 
-Each selected group runs in a fresh temporary directory; full mode still runs all three suites. Summary expected counts cover selected started batches only; suite denominator covers selected suites. Build and chugin probes remain unchanged. A passing incremental run is not proof of full regression coverage. Native validation of the new grouping is pending.
+Baseline at introduction: 3330 native checks, all three suites passed, local list empty. Verify manifest selection without building or launching ChucK:
+
+    python tools/multimedia/run_smoke_tests.py --mode Full --list
+    python tools/multimedia/run_smoke_tests.py --mode Local --list
+
+Windows execution:
+
+    powershell -ExecutionPolicy Bypass -File tools/multimedia/build-and-test.ps1 -Mode Local
+    powershell -ExecutionPolicy Bypass -File tools/multimedia/build-and-test.ps1 -Mode Full
+
+Build and chugin probes are unchanged. Full mode runs all three suites. The summary counts selected started batches and selected suites only. No new native tests are introduced by the manifest infrastructure.
