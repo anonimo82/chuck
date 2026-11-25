@@ -3,6 +3,7 @@
   "groups": [
     "transport-pcm",
     "transport-pcm-stream",
-    "transport-pcm-buffer"
+    "transport-pcm-buffer",
+    "transport-midi"
   ]
 }
