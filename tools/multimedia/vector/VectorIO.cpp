@@ -447,6 +447,41 @@ CK_DLL_MFUN(vector_image_alpha) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(vector_image_import_pixels) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!a||w<1||w>4096||h<1||h>4096||w*h>4194304||
+           API->object->array_int_size(a)!=w*h*4) return;
+        std::vector<uint32_t> pixels(w*h);
+        for(size_t i=0;i<pixels.size();++i) {
+            uint32_t packed=0;
+            for(int c=0;c<4;++c) {
+                auto v=API->object->array_int_get_idx(a,4*i+c);
+                if(v<0||v>255) return;
+                packed=(packed<<8)|static_cast<uint32_t>(v);
+            }
+            pixels[i]=packed;
+        }
+        std::vector<std::string> shapes;
+        for(int y=0;y<h;++y) for(int x=0;x<w;) {
+            uint32_t v=pixels[y*w+x];
+            int end=x+1;
+            while(end<w&&pixels[y*w+end]==v) ++end;
+            if(v&255u) {
+                if(shapes.size()>=4096) return;
+                auto o=svgStream();
+                o<<"<rect x=\""<<x<<"\" y=\""<<y<<"\" width=\""<<end-x
+                 <<"\" height=\"1\""<<style(v>>8,(v&255u)/255.0,false)<<"/>";
+                shapes.push_back(o.str());
+            }
+            x=end;
+        }
+        if(p->replaceShapes(w,h,std::move(shapes))) { p->reset(); RETURN->v_int=1; }
+    } catch(...) {}
+}
 CK_DLL_QUERY(VectorIO) {
     QUERY->setname(QUERY, "VectorIO");
     QUERY->begin_class(QUERY, "VectorIO", "Object");
@@ -534,6 +569,10 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,vector_image_save,"int","save");
     QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,vector_image_import_pixels,"int","importPixels");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int[]","pixels");
     QUERY->add_mfun(QUERY,vector_image_alpha,"int","exportAlpha");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");

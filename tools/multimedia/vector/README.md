@@ -44,3 +44,7 @@ importWaveform(width,height,float[] bounds,rgb,alpha) creates a new editable can
 ## Vector-to-3D silhouette
 
 exportAlpha(width,height,int[] alpha) renders the current SVG with all global controls and writes row-major alpha values 0–255 into an exactly sized width*height array. Dimensions 1–4096; failure preserves output. For a 3D extrusion pass the mask (at most 256 per axis) to Model3D.createSilhouette. Works for imported and generated SVG, including holes and disconnected shapes. No new native dependency. This is raster-based approximation, not exact SVG curve tessellation.
+
+## Raster-to-vector conversion
+
+importPixels(width,height,int[] pixels) converts straight row-major RGBA8 pixels to editable SVG rectangles, merging horizontally adjacent pixels of identical RGBA and omitting fully transparent runs. Dimensions 1–4096, at most 4194304 pixels and 4096 nontransparent runs; exact array size width*height*4, components 0–255. Invalid input or excess complexity preserves the previous document and controls. Success replaces the document and resets controls. This is pixel-art vectorization, not contour tracing or photographic simplification. Compatible with RasterImage.exportPixels, including its current color controls. Rendering at original dimensions preserves opaque colors and alpha, subject to Cairo premultiplication rounding for translucent colors. No new dependency; native validation pending.

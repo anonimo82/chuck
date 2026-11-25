@@ -3042,3 +3042,28 @@ check(alpha[0]==255 && alpha[1]==0);
 check(image.exportAlpha(2,2,alpha));
 check(alpha[0]==0 && alpha[2]==0);
 """,9,p)
+
+    run("vector", """
+VectorImage image;
+check(!image.importPixels(0,2,[0,0,0,255]));
+check(image.importPixels(3,2,[255,0,0,255,255,0,0,255,0,0,255,255,0,0,0,0,0,255,0,255,0,255,0,255]));
+check(image.shapes()==3);
+int rgba[24];
+check(image.exportPixels(3,2,rgba));
+check(rgba[0]==255 && rgba[4]==255 && rgba[8]==0 && rgba[10]==255);
+check(rgba[15]==0 && rgba[17]==255 && rgba[21]==255);
+2.0=>image.x;
+check(!image.importPixels(3,2,[0,0,0,255]));
+check(!image.importPixels(1,1,[256,0,0,255]));
+check(!image.importPixels(1,1,[0,0,0,-1]));
+check(image.x()==2.0 && image.shapes()==3);
+check(image.importPixels(1,1,[255,0,0,128]));
+check(image.x()==0.0 && image.shapes()==1);
+int one[4];
+check(image.exportPixels(1,1,one));
+check(one[0]==255 && one[3]==128);
+check(image.importPixels(1,1,[255,0,0,0]));
+check(image.loaded() && image.shapes()==0);
+check(image.exportPixels(1,1,one));
+check(one[0]==0 && one[3]==0);
+""",18,p)
