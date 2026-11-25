@@ -12,6 +12,7 @@
     "text-split-paragraphs",
     "text-split-tables",
     "text-frame-foundation",
-    "text-frame-flow"
+    "text-frame-flow",
+    "text-frame-mixed"
   ]
 }
