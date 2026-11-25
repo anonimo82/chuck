@@ -1621,6 +1621,80 @@ CK_DLL_MFUN(text_doc_save_page) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+namespace {
+constexpr size_t nativeLimit=32*1024*1024;
+struct NativeWriter {
+    std::vector<unsigned char> data;
+    void u32(uint32_t v) { for(int i=0;i<4;i++) data.push_back(static_cast<unsigned char>(v>>(8*i))); }
+    void real(double v) {
+        static_assert(sizeof(double)==8&&std::numeric_limits<double>::is_iec559,"binary64 required");
+        uint64_t bits; std::memcpy(&bits,&v,8);
+        for(int i=0;i<8;i++) data.push_back(static_cast<unsigned char>(bits>>(8*i)));
+    }
+    void str(const std::string &v) { u32(static_cast<uint32_t>(v.size())); data.insert(data.end(),v.begin(),v.end()); }
+    void style(const Style &v) {
+        str(v.font); real(v.size); u32(v.weight); u32(v.italic); u32(v.underline); u32(v.strikethrough); u32(v.script);
+        u32(static_cast<uint32_t>(v.rgb)); u32(static_cast<uint32_t>(v.background));
+        real(v.spacing); real(v.rise); real(v.opacity);
+    }
+    void paragraph(const Paragraph &v) {
+        str(v.text); u32(static_cast<uint32_t>(v.baseBytes)); style(v.style);
+        u32(static_cast<uint32_t>(v.runs.size()));
+        for(const auto &run:v.runs) { str(run.text); style(run.style); }
+        const auto &f=v.layout;
+        u32(f.alignment); u32(f.wrapMode); u32(f.direction);
+        real(f.lineSpacing); real(f.indent); real(f.marginLeft); real(f.marginRight); real(f.marginTop); real(f.marginBottom);
+        const auto &b=v.box;
+        real(b.paddingLeft); real(b.paddingRight); real(b.paddingTop); real(b.paddingBottom); real(b.borderWidth);
+        u32(static_cast<uint32_t>(b.borderColor)); u32(static_cast<uint32_t>(b.backgroundColor)); real(b.opacity);
+        const auto &l=v.list;
+        str(l.marker); u32(l.mode); u32(l.number); u32(l.level); real(l.levelIndent); real(l.markerWidth);
+    }
+    void table(const Table &v) {
+        u32(v.grid?1:0); u32(v.rows); u32(v.cols); u32(v.columnGap); u32(v.rowGap);
+        for(double w:v.weights) real(w);
+        for(const auto &cell:v.cells) paragraph(cell);
+    }
+    void node(const Node &v) {
+        u32(v.kind); paragraph(v.paragraph); real(v.gap); u32(v.columnGap); u32(v.rowGap); u32(v.rows); u32(v.cols);
+        u32(static_cast<uint32_t>(v.weights.size())); for(double w:v.weights) real(w);
+        u32(static_cast<uint32_t>(v.children.size())); for(const auto &child:v.children) node(child);
+    }
+};
+bool encodeNative(const Document &d,NativeWriter &w) {
+    const unsigned char magic[]={'C','K','T','X','T','D','O','C'};
+    w.data.insert(w.data.end(),magic,magic+8); w.u32(1);
+    w.u32(static_cast<uint32_t>(d.paragraphs.size())); w.u32(static_cast<uint32_t>(d.tables.size())); w.u32(static_cast<uint32_t>(d.nodes.size()));
+    for(const auto &p:d.paragraphs) w.paragraph(p);
+    // Canonical ranks replace internal insertion counters, which may contain gaps after deletion.
+    std::vector<std::pair<size_t,size_t>> ranks;
+    for(size_t i=0;i<d.tables.size();i++) ranks.emplace_back(d.tables[i].order,i);
+    for(size_t i=0;i<d.nodes.size();i++) ranks.emplace_back(d.nodes[i].order,d.tables.size()+i);
+    std::sort(ranks.begin(),ranks.end());
+    std::vector<size_t> order(ranks.size());
+    for(size_t i=0;i<ranks.size();i++) order[ranks[i].second]=i;
+    for(size_t i=0;i<d.tables.size();i++) {
+        const auto &b=d.tables[i]; w.u32(static_cast<uint32_t>(b.after)); w.u32(static_cast<uint32_t>(order[i])); w.table(b.table);
+    }
+    for(size_t i=0;i<d.nodes.size();i++) {
+        const auto &b=d.nodes[i]; w.u32(static_cast<uint32_t>(b.after)); w.u32(static_cast<uint32_t>(order[d.tables.size()+i])); w.node(b.node);
+    }
+    return w.data.size()<=nativeLimit;
+}
+}
+CK_DLL_MFUN(text_doc_save_native) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(!d||path.size()<6||path.substr(path.size()-6)!=".cktxt"||path.find('\0')!=std::string::npos) return;
+        NativeWriter w; if(!encodeNative(*d,w)) return;
+        FILE *f=mediaio::openNew(path.c_str()); if(!f) return;
+        bool ok=std::fwrite(w.data.data(),1,w.data.size(),f)==w.data.size();
+        if(std::fclose(f)!=0) ok=false;
+        if(!ok) { std::remove(path.c_str()); return; }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(TextIO) {
     QUERY->setname(QUERY,"TextIO");
     QUERY->begin_class(QUERY,"TextIO","Object");
@@ -2046,6 +2120,8 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"TextNode","destination");
     QUERY->add_mfun(QUERY,text_doc_remove_node,"int","removeNode");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_doc_save_native,"int","saveNative");
+    QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,text_doc_measure_document,"int","measureDocument");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int[]","dimensions");
