@@ -104,8 +104,6 @@ try {
             throw "Chugin probe did not confirm $module"
         }
     }
-    Run-Native "$bin/python.exe" @("$PSScriptRoot/raster/test_raster.py")
-    Run-Native "$bin/python.exe" @("$PSScriptRoot/audio/test_audio.py")
-    Run-Native "$bin/python.exe" @("$PSScriptRoot/test_multimedia.py")
+    Run-Native "$bin/python.exe" @("$PSScriptRoot/run_smoke_tests.py")
     Write-Host "All multimedia smoke tests passed."
 } finally { Stop-Transcript }

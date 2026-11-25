@@ -24,6 +24,7 @@ check(AudioIO.channels("missing.wav") == -1);
     r = subprocess.run([os.environ.get("CHUCK_EXE", str(ROOT / "src/chuck")), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE)), "test.ck"], cwd=p, capture_output=True, text=True, timeout=30)
     log = r.stdout + r.stderr
     print(log)
+    print(f"SMOKE_COUNTS {7} {log.count('PASS')} {log.count('FAIL')}", flush=True)
     if r.returncode or "FAIL" in log or log.count("PASS") != 7:
         raise SystemExit("AudioIO smoke test failed")
     if (p / "output.flac").read_bytes()[:4] != b"fLaC":
