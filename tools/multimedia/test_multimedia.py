@@ -2608,3 +2608,52 @@ check(imported.sampleAnimation(0,2.0,0));
 check(imported.exportPosedGeometry(0,xyz,nrm));
 check(Math.fabs(xyz[0]-3.0)<0.00001 && Math.fabs(nrm[1]+1.0)<0.00001);
 """,21,p)
+
+
+    run("model", """
+Model3D model;
+float localMat[16];
+float worldMat[16];
+float shortMat[3];
+check(model.nodes()==-1);
+check(model.nodeParent(0)==-2);
+check(model.nodeMeshes(0)==-1);
+check(!model.exportNodeWorldMatrix(0,worldMat));
+check(model.createMesh([0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0],[0,1,2]));
+check(model.nodes()==1);
+check(model.nodeParent(0)==-1);
+check(model.nodeMeshes(0)==1);
+check(model.nodeMeshAt(0,0)==0);
+check(model.nodeMeshAt(0,1)==-1);
+check(model.exportNodeLocalMatrix(0,localMat));
+check(localMat[0]==1.0 && localMat[5]==1.0 && localMat[10]==1.0 && localMat[15]==1.0);
+check(!model.exportNodeWorldMatrix(0,shortMat));
+check(model.setSkin(0,2,[1.0,0.0,0.5,0.5,0.0,1.0]));
+check(model.nodes()==3);
+check(model.setBoneParent(0,1,0));
+check(model.nodeParent(1)==0 && model.nodeParent(2)==1);
+check(model.nodeMeshes(2)==0);
+check(model.setBonePose(0,0,2.0,0.0,0.0,0.0,0.0,0.0));
+check(model.setBonePose(0,1,0.0,3.0,0.0,0.0,0.0,0.0));
+check(model.exportNodeLocalMatrix(2,localMat));
+check(Math.fabs(localMat[3])<0.00001 && Math.fabs(localMat[7]-3.0)<0.00001);
+check(model.exportNodeWorldMatrix(2,worldMat));
+check(Math.fabs(worldMat[3]-2.0)<0.00001 && Math.fabs(worldMat[7]-3.0)<0.00001);
+check(!model.exportNodeWorldMatrix(3,worldMat));
+check(Math.fabs(worldMat[3]-2.0)<0.00001);
+check(model.resetPose(0));
+check(model.save("scenehierarchy/model.gltf"));
+Model3D imported;
+check(imported.load("scenehierarchy/model.gltf"));
+check(imported.nodes()>=3);
+0 => int attached;
+for(0 => int i; i<imported.nodes(); i++) {
+    for(0 => int j; j<imported.nodeMeshes(i); j++) {
+        if(imported.nodeMeshAt(i,j)==0) attached++;
+    }
+}
+check(attached==1);
+check(imported.exportNodeWorldMatrix(0,worldMat));
+imported.clear();
+check(imported.nodes()==-1);
+""",33,p)
