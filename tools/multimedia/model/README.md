@@ -124,3 +124,7 @@ exportAudioSamples(mesh,axis,float[] samples) reads rest mesh-local vertices in 
 ## Geometry-to-MIDI sonification
 
 exportPitches(mesh,axis,lowPitch,highPitch,int[] pitches) maps the selected rest mesh-local coordinate (0=X, 1=Y, 2=Z) to the inclusive MIDI range 0–127, normalized over the mesh's coordinate range. Constant coordinates map to the rounded midpoint pitch. The caller-sized array (1–100000 entries) uniformly samples stored vertex order by linear interpolation, including both endpoints (one entry uses the first vertex). Up to one million vertices. No rests are generated; use MidiSequence.importPitches for tempo, duration and velocity. Adjacent equal pitches merge in that importer. No topology traversal, posed geometry or global transformations. Invalid inputs preserve output. This is creative sonification, not acoustic simulation. No new dependency. Native validation pending.
+
+## Orthographic animation to video
+
+renderOrthographic(mesh,width,height,verticalSpan,rgb,backgroundRGB,int[] pixels) uses the existing orthographic renderer with opaque RGB background and alpha 255 everywhere, compatible with VideoWriter.appendFrame. Same geometry, controls, depth buffer, flat lighting, dimensions and resource limits as the transparent overload. The background must be 0–0xffffff. Invalid input preserves output. Example turntable_video.ck renders a rotating procedural box to lossless MKV at 25 fps. The renderer uses one rest mesh, not posed skeletal animation, textures or scene-node transforms. No new dependencies. Native validation pending.
