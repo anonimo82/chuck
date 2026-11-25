@@ -4,6 +4,7 @@
 #include <chrono>
 #include <memory>
 #include <algorithm>
+#include <cerrno>
 #if defined(MEDIA_CAPTURE_AVDEVICE)
 extern "C" {
 #include <libavdevice/avdevice.h>
@@ -35,8 +36,11 @@ inline bool cameraSupported() {
 inline std::string cameraAddress(const std::string &name) {
     if(name.empty()||name.size()>1024||name.find('\0')!=std::string::npos) return {};
 #if defined(_WIN32)
+    // DirectShow uses colon to delimit video and audio source names.
+    if(name.find(':')!=std::string::npos) return {};
     return "video="+name;
 #elif defined(__APPLE__)
+    if(name.find(':')!=std::string::npos||name=="default"||name=="none"||name.find("Capture screen")==0) return {};
     return name+":none";
 #elif defined(__linux__)
     if(name.compare(0,10,"/dev/video")!=0||name.size()==10||
@@ -45,6 +49,25 @@ inline std::string cameraAddress(const std::string &name) {
 #else
     return {};
 #endif
+}
+inline int cameraDevices(std::vector<std::string> &names) {
+    names.clear();
+#if defined(MEDIA_CAPTURE_AVDEVICE)
+    if(!cameraSupported()) return 0;
+    AVDeviceInfoList *raw=nullptr;
+    int count=avdevice_list_input_sources(av_find_input_format(cameraFormat()),nullptr,nullptr,&raw);
+    auto release=[](AVDeviceInfoList *p){avdevice_free_list_devices(&p);};
+    std::unique_ptr<AVDeviceInfoList,decltype(release)> list(raw,release);
+    if(count<0||!list) return -1;
+    for(int i=0;i<list->nb_devices&&i<1024;++i) {
+        auto *d=list->devices[i];
+        if(!d||!d->device_name) continue;
+        bool video=d->nb_media_types==0;
+        for(int k=0;k<d->nb_media_types;++k) if(d->media_types[k]==AVMEDIA_TYPE_VIDEO) video=true;
+        if(video&&!cameraAddress(d->device_name).empty()) names.emplace_back(d->device_name);
+    }
+#endif
+    return static_cast<int>(names.size());
 }
 inline bool cameraSnapshot(const std::string &name,int w,int h,Frame &result) {
 #if defined(MEDIA_CAPTURE_AVDEVICE)
