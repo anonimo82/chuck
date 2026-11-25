@@ -128,3 +128,7 @@ exportPitches(mesh,axis,lowPitch,highPitch,int[] pitches) maps the selected rest
 ## Orthographic animation to video
 
 renderOrthographic(mesh,width,height,verticalSpan,rgb,backgroundRGB,int[] pixels) uses the existing orthographic renderer with opaque RGB background and alpha 255 everywhere, compatible with VideoWriter.appendFrame. Same geometry, controls, depth buffer, flat lighting, dimensions and resource limits as the transparent overload. The background must be 0–0xffffff. Invalid input preserves output. Example turntable_video.ck renders a rotating procedural box to lossless MKV at 25 fps. The renderer uses one rest mesh, not posed skeletal animation, textures or scene-node transforms. No new dependencies. Native validation pending.
+
+## Batch box geometry
+
+createBoxes(float[] boxes) takes 1–4096 axis-aligned boxes, six values each (xmin,ymin,zmin,xmax,ymax,zmax), finite coordinates within +/-1e9 and strictly positive dimensions even after conversion to Assimp coordinate precision. Produces one mesh with independent closed boxes, 24 face-local vertices, 12 outward-wound triangles per box, flat face normals and per-face UVs. Success replaces scene and resets controls; failure preserves scene. Intersections are not Boolean-unioned. Compatible with MidiSequence.exportNoteBoxes. No new dependencies; native validation pending.
