@@ -901,6 +901,66 @@ CK_DLL_MFUN(model3d_export_posed) {
     } catch(...) {}
 }
 
+CK_DLL_MFUN(model3d_export_posed_normals) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto *m=meshAt(p,mesh);
+        if(!m||!m->HasBones()||!m->HasNormals()||!a||API->object->array_float_size(a)!=static_cast<int64_t>(m->mNumVertices)*3) return;
+        aiMatrix4x4 inverseMesh;
+        if(!p->generated) {
+            if(!importedWorld(p,uniqueMeshNode(p->scene->mRootNode,static_cast<unsigned>(mesh)),inverseMesh)) return;
+            auto det=inverseMesh.Determinant();
+            if(!std::isfinite(det)||det==0) return;
+            inverseMesh.Inverse();
+            if(!finiteMatrix(inverseMesh)) return;
+        }
+        struct Sum { double x=0,y=0,z=0,w=0; };
+        std::vector<Sum> next(m->mNumVertices);
+        for(unsigned b=0;b<m->mNumBones;++b) {
+            aiMatrix4x4 world;
+            if(p->generated) {
+                if(!skinWorld(p,skinNode(p,mesh,b),world)) return;
+            } else {
+                if(!importedWorld(p,uniqueNode(p->scene->mRootNode,m->mBones[b]->mName),world)) return;
+                world=inverseMesh*world;
+            }
+            world=world*m->mBones[b]->mOffsetMatrix;
+            if(!finiteMatrix(world)) return;
+            // A normal is a covector: translation is irrelevant and nonuniform
+            // scaling requires the inverse transpose of the linear transform.
+            aiMatrix3x3 normalMatrix(world);
+            auto det=normalMatrix.Determinant();
+            if(!std::isfinite(det)||det==0) return;
+            normalMatrix.Inverse().Transpose();
+            for(unsigned j=0;j<m->mBones[b]->mNumWeights;++j) {
+                auto weight=m->mBones[b]->mWeights[j];
+                if(weight.mVertexId>=m->mNumVertices||!unit(weight.mWeight)) return;
+                auto v=normalMatrix*m->mNormals[weight.mVertexId];
+                auto &q=next[weight.mVertexId];
+                q.x+=double(v.x)*weight.mWeight; q.y+=double(v.y)*weight.mWeight;
+                q.z+=double(v.z)*weight.mWeight; q.w+=weight.mWeight;
+            }
+        }
+        for(unsigned i=0;i<next.size();++i) {
+            auto &q=next[i];
+            if(q.w==0&&!p->generated) { auto v=m->mNormals[i]; q={v.x,v.y,v.z,1}; }
+            if(q.w<=0) return;
+            double len=std::hypot(q.x,q.y,q.z);
+            if(!std::isfinite(len)||len<=1e-12) return;
+            q.x/=len; q.y/=len; q.z/=len; q.w=1;
+        }
+        for(unsigned i=0;i<m->mNumVertices;++i) {
+            auto q=next[i];
+            API->object->array_float_set_idx(a,3*i,q.x/q.w);
+            API->object->array_float_set_idx(a,3*i+1,q.y/q.w);
+            API->object->array_float_set_idx(a,3*i+2,q.z/q.w);
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+
 
 namespace {
 const aiAnimation *animationAt(ModelState *p,t_CKINT index) {
@@ -1270,6 +1330,9 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_export_posed,"int","exportPosedVertices");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"float[]","xyz");
+    QUERY->add_mfun(QUERY,model3d_export_posed_normals,"int","exportPosedNormals");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"float[]","xyz");
     QUERY->add_mfun(QUERY,model3d_add_animation,"int","addAnimation");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"string","name");
@@ -1279,9 +1342,9 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_animation_duration,"float","animationDuration");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,model3d_blend_animations,"int","blendAnimations");
-    QUERY->add_arg(QUERY,"int","first");
+    QUERY->add_arg(QUERY,"int","clipA");
     QUERY->add_arg(QUERY,"float","firstSeconds");
-    QUERY->add_arg(QUERY,"int","second");
+    QUERY->add_arg(QUERY,"int","clipB");
     QUERY->add_arg(QUERY,"float","secondSeconds");
     QUERY->add_arg(QUERY,"float","weight");
     QUERY->add_arg(QUERY,"int","loop");

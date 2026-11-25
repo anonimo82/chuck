@@ -2528,3 +2528,46 @@ check(Math.fabs(out[0]-2.0)<0.00001 && Math.fabs(out[3]-2.70710678)<0.00001);
 check(imported.resetAnimation());
 check(imported.exportPosedVertices(0,out) && Math.fabs(out[0])<0.00001);
 """,27,p)
+
+
+    run("model", """
+Model3D model;
+[0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0] @=> float xyz[];
+[0,1,2] @=> int tris[];
+[1.0,0.0,0.5,0.5,0.0,1.0] @=> float weights[];
+[0.0,2.0] @=> float times[];
+[0.0,0.0,0.0,0.0,0.0,0.0, 0.0,0.0,0.0,0.0,0.0,0.0,
+ 3.0,0.0,0.0,90.0,0.0,0.0, 0.0,0.0,0.0,0.0,0.0,0.0] @=> float poses[];
+float out[9];
+float rest[9];
+float small[3];
+check(!model.exportPosedNormals(0,out));
+check(model.createMesh(xyz,tris));
+check(!model.exportPosedNormals(0,out));
+check(model.setSkin(0,2,weights));
+check(!model.exportPosedNormals(0,out));
+check(model.computeNormals(0));
+check(model.exportPosedNormals(0,out));
+check(Math.fabs(out[2]-1.0)<0.00001 && Math.fabs(out[5]-1.0)<0.00001);
+check(!model.exportPosedNormals(0,small));
+check(model.setBonePose(0,0,3.0,0.0,0.0,90.0,0.0,0.0));
+check(model.exportPosedNormals(0,out));
+check(Math.fabs(out[1]+1.0)<0.00001 && Math.fabs(out[2])<0.00001);
+check(Math.fabs(out[4]+0.70710678)<0.00001 && Math.fabs(out[5]-0.70710678)<0.00001);
+check(Math.fabs(out[8]-1.0)<0.00001);
+check(model.exportNormals(0,rest));
+check(Math.fabs(rest[2]-1.0)<0.00001);
+check(model.resetPose(0));
+check(model.addAnimation(0,"tilt",times,poses)==0);
+check(model.sampleAnimation(0,2.0,0));
+check(model.exportPosedNormals(0,out) && Math.fabs(out[1]+1.0)<0.00001);
+check(model.resetPose(0));
+check(model.save("posednormals/model.gltf"));
+Model3D imported;
+check(imported.load("posednormals/model.gltf"));
+check(imported.sampleAnimation(0,2.0,0));
+check(imported.exportPosedNormals(0,out));
+check(Math.fabs(out[1]+1.0)<0.00001 && Math.fabs(out[5]-0.70710678)<0.00001);
+check(imported.resetAnimation());
+check(imported.exportPosedNormals(0,out) && Math.fabs(out[2]-1.0)<0.00001);
+""",28,p)
