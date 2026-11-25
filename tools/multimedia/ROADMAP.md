@@ -153,3 +153,7 @@ User-reported Windows Local: expected=277, PASS=277, FAIL=0, missing=0, unreport
 ## Validation checkpoint after #181
 
 User-reported Windows Local: expected=174, PASS=174, FAIL=0, missing=0, unreported=0, extra=0, suites=1/1, status=PASS. Five raster capture groups validated. Cumulative validated checks 5033; last Full baseline remains 4282 after #161; functional cadence 15/20, local cycle resets to 0/5. Clear validated local groups; retain global manifest unchanged. Promote raster capture to O under foundational rubric; physical camera/desktop validation remains pending and macOS/native Wayland desktop backends are not implemented. Coverage 87.04% (46 O, 2 P, 6 M, 2 N/A). Next five functional milestones: sequential camera capture, screen recording, synchronized audio acquisition, VideoWriter audiovisual integration, capture consolidation and Full validation. No workflow changes.
+
+## Capture cycle 3 — Video and synchronized audio
+
+#183: persistent optional camera session in VideoIO, bounded RGBA8 sequential frames, monotonic host timestamps, explicit synthetic input and lifecycle, 65 headless checks; global 5098, local 65, cadence 16/20. Native compilation and live camera validation pending. Blocking/cooperative timeout; no guaranteed real-time scheduling, audio or recording integration yet. No workflow changes.

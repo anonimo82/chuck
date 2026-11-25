@@ -7977,8 +7977,90 @@ check(image.pixelAt(0,0,0)==255);
         for name in ("empty.png", "invalid.xyz", "cleared.png"):
             assert not (p / name).exists()
 
+def video_camera_session():
+    with tempfile.TemporaryDirectory() as directory:
+        run("video", """
+VideoCapture cap;
+VideoCapture other;
+[1,2,3,255,4,5,6,128] @=> int data[];
+int out[8];
+[99] @=> int wrong[];
+check(!cap.active());
+check(!cap.ready());
+check(cap.frames()==0);
+check(cap.width()==-1);
+check(cap.height()==-1);
+check(cap.timestamp()==-1);
+check(!cap.next());
+check(!cap.exportPixels(out));
+check(!cap.ingestFrame(0,data));
+check(cap.cameraSupported()==0 || cap.cameraSupported()==1);
+check(cap.cameraName(-1)=="");
+check(!cap.openCamera("",2,1,30));
+check(!cap.openCamera("invalid",2,1,0));
+check(!cap.openCamera("invalid",0,1,30));
+check(!cap.openSynthetic(0,1));
+check(!cap.openSynthetic(8192,8192));
+check(cap.openSynthetic(2,1));
+check(cap.active());
+check(!cap.ready());
+check(cap.width()==2);
+check(cap.height()==1);
+check(!cap.openSynthetic(1,1));
+check(!cap.openCamera("",2,1,30));
+check(!cap.next());
+check(!cap.ingestFrame(-1,data));
+check(!cap.ingestFrame(0,wrong));
+check(cap.ingestFrame(0,data));
+check(cap.frames()==1);
+check(cap.ready());
+check(cap.timestamp()==0);
+check(cap.exportPixels(out));
+check(out[0]==1 && out[7]==128);
+check(!cap.exportPixels(wrong));
+check(wrong[0]==99);
+check(!other.ready());
+99 => data[0];
+check(cap.exportPixels(out));
+check(out[0]==1);
+256 => data[1];
+check(!cap.ingestFrame(1,data));
+check(cap.frames()==1);
+2 => data[1];
+check(cap.ingestFrame(1,data));
+check(cap.frames()==2);
+check(cap.timestamp()==1);
+check(!cap.ingestFrame(0.5,data));
+check(cap.timestamp()==1);
+check(cap.exportPixels(out));
+check(out[0]==99);
+check(cap.ingestFrame(1,data));
+check(cap.frames()==3);
+cap.close();
+check(!cap.active());
+check(cap.ready());
+check(cap.frames()==3);
+check(!cap.ingestFrame(2,data));
+check(cap.exportPixels(out));
+cap.close();
+check(cap.openSynthetic(1,1));
+check(cap.frames()==0);
+check(!cap.ready());
+check(cap.timestamp()==-1);
+check(cap.width()==1 && cap.height()==1);
+check(cap.ingestFrame(0,[8,9,10,255]));
+check(cap.frames()==1);
+cap.close();
+check(other.openSynthetic(2,1));
+check(other.frames()==0);
+check(other.ingestFrame(0,data));
+check(other.frames()==1);
+check(cap.frames()==1);
+other.close();
+""",65,pathlib.Path(directory))
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")

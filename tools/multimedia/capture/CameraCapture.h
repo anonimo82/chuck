@@ -131,4 +131,94 @@ inline bool cameraSnapshot(const std::string &name,int w,int h,Frame &result) {
 #endif
     return false;
 }
+
+ // Persistent camera decoder. A session owns all native resources.
+class CameraSession {
+#if defined(MEDIA_CAPTURE_AVDEVICE)
+    using Clock=std::chrono::steady_clock;
+    Clock::time_point start{},deadline{};
+    AVFormatContext *input=nullptr;
+    AVCodecContext *decoder=nullptr;
+    AVPacket *packet=nullptr;
+    AVFrame *frame=nullptr;
+    int stream=-1;
+    static int interrupted(void *p) {
+        return Clock::now()>=static_cast<CameraSession*>(p)->deadline;
+    }
+#endif
+public:
+    CameraSession()=default;
+    CameraSession(const CameraSession&)=delete;
+    CameraSession& operator=(const CameraSession&)=delete;
+    ~CameraSession() {
+#if defined(MEDIA_CAPTURE_AVDEVICE)
+        av_frame_free(&frame);
+        av_packet_free(&packet);
+        avcodec_free_context(&decoder);
+        if(input) avformat_close_input(&input);
+#endif
+    }
+    bool open(const std::string &name,int w,int h,int fps) {
+#if defined(MEDIA_CAPTURE_AVDEVICE)
+        if(input||!Frame::dimensions(w,h)||fps<1||fps>120||!cameraSupported()) return false;
+        auto address=cameraAddress(name);
+        if(address.empty()) return false;
+        start=Clock::now(); deadline=start+std::chrono::seconds(5);
+        input=avformat_alloc_context();
+        if(!input) return false;
+        input->interrupt_callback={interrupted,this};
+        auto size=std::to_string(w)+"x"+std::to_string(h), rate=std::to_string(fps);
+        AVDictionary *opts=nullptr;
+        av_dict_set(&opts,"video_size",size.c_str(),0);
+        av_dict_set(&opts,"framerate",rate.c_str(),0);
+        int ret=avformat_open_input(&input,address.c_str(),av_find_input_format(cameraFormat()),&opts);
+        av_dict_free(&opts);
+        if(ret<0) return false;
+        for(unsigned i=0;i<input->nb_streams;++i)
+            if(input->streams[i]->codecpar->codec_type==AVMEDIA_TYPE_VIDEO) {stream=static_cast<int>(i);break;}
+        if(stream<0) return false;
+        auto *par=input->streams[stream]->codecpar;
+        auto *codec=avcodec_find_decoder(par->codec_id);
+        if(!codec) return false;
+        decoder=avcodec_alloc_context3(codec);
+        if(!decoder||avcodec_parameters_to_context(decoder,par)<0) return false;
+        decoder->max_pixels=4194304;
+        if(avcodec_open2(decoder,codec,nullptr)<0) return false;
+        packet=av_packet_alloc(); frame=av_frame_alloc();
+        return packet&&frame;
+#else
+        return false;
+#endif
+    }
+    bool next(Frame &result) {
+#if defined(MEDIA_CAPTURE_AVDEVICE)
+        if(!input||!decoder||!packet||!frame) return false;
+        deadline=Clock::now()+std::chrono::seconds(5);
+        for(int i=0;i<256&&Clock::now()<deadline;++i) {
+            int got=avcodec_receive_frame(decoder,frame);
+            if(got==0) {
+                if(!Frame::dimensions(frame->width,frame->height)) return false;
+                Frame next; next.width=frame->width; next.height=frame->height;
+                next.rgba.resize(static_cast<size_t>(next.width)*next.height*4);
+                std::unique_ptr<SwsContext,decltype(&sws_freeContext)> scaler(
+                    sws_getContext(next.width,next.height,static_cast<AVPixelFormat>(frame->format),
+                        next.width,next.height,AV_PIX_FMT_RGBA,SWS_BILINEAR,nullptr,nullptr,nullptr),sws_freeContext);
+                if(!scaler) return false;
+                uint8_t *dest[]={next.rgba.data(),nullptr,nullptr,nullptr};
+                int stride[]={next.width*4,0,0,0};
+                if(sws_scale(scaler.get(),frame->data,frame->linesize,0,next.height,dest,stride)!=next.height) return false;
+                next.seconds=std::chrono::duration<double>(Clock::now()-start).count();
+                result=std::move(next); return true;
+            }
+            if(got!=AVERROR(EAGAIN)) return false;
+            if(av_read_frame(input,packet)<0) return false;
+            int sent=0;
+            if(packet->stream_index==stream) sent=avcodec_send_packet(decoder,packet);
+            av_packet_unref(packet);
+            if(sent<0) return false;
+        }
+#endif
+        return false;
+    }
+};
 }
