@@ -1,4 +1,4 @@
-param([string]$MsysRoot = "C:\msys64", [string]$ChuckExe = "", [string]$CMakeExe = "", [ValidateSet("Full","Local","Incremental","Failed")][string]$Mode = "Full", [string]$Since = "", [ValidateSet("raster","audio","legacy","text-core","text-recent","text-page-breaks","text-page-furniture","text-page-numbers","text-split-paragraphs","text-split-tables","text-frame-foundation","text-frame-flow","text-frame-mixed")][string[]]$Group = @())
+param([string]$MsysRoot = "C:\msys64", [string]$ChuckExe = "", [string]$CMakeExe = "", [ValidateSet("Full","Local","Incremental","Failed")][string]$Mode = "Full", [string]$Since = "", [ValidateSet("raster","audio","legacy","text-core","text-recent","text-page-breaks","text-page-furniture","text-page-numbers","text-split-paragraphs","text-split-tables","text-frame-foundation","text-frame-flow","text-frame-mixed","text-frame-render")][string[]]$Group = @())
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $build = Join-Path $root "build/multimedia-windows"

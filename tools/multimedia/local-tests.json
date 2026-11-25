@@ -3,6 +3,7 @@
   "groups": [
     "text-frame-foundation",
     "text-frame-flow",
-    "text-frame-mixed"
+    "text-frame-mixed",
+    "text-frame-render"
   ]
 }
