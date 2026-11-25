@@ -3192,3 +3192,42 @@ check(image.shapes()==0 && image.x()==0.0);
 check(image.exportPixels(8,8,pixels));
 check(pixels[3]==0);
 """,17,p)
+
+    run("model", """
+Model3D model;
+float pcm[5];
+check(!model.exportAudioSamples(0,0,pcm));
+check(model.createMesh([-2.0,0.0,5.0,0.0,2.0,5.0,2.0,0.0,5.0],[0,1,2]));
+check(model.exportAudioSamples(0,0,pcm));
+check(pcm[0]==-1.0 && pcm[2]==0.0 && pcm[4]==1.0);
+check(pcm[1]==-0.5 && pcm[3]==0.5);
+check(model.exportAudioSamples(0,1,pcm));
+check(pcm[0]==-1.0 && pcm[1]==0.0 && pcm[2]==1.0 && pcm[3]==0.0 && pcm[4]==-1.0);
+check(model.exportAudioSamples(0,2,pcm));
+check(pcm[0]==0.0 && pcm[2]==0.0 && pcm[4]==0.0);
+check(!model.exportAudioSamples(-1,0,pcm));
+check(!model.exportAudioSamples(0,-1,pcm));
+check(!model.exportAudioSamples(0,3,pcm));
+check(pcm[0]==0.0 && pcm[4]==0.0);
+float exact[3];
+check(model.exportAudioSamples(0,0,exact));
+check(exact[0]==-1.0 && exact[1]==0.0 && exact[2]==1.0);
+float shortPCM[2];
+check(model.exportAudioSamples(0,0,shortPCM));
+check(shortPCM[0]==-1.0 && shortPCM[1]==1.0);
+float one[1];
+check(model.exportAudioSamples(0,0,one));
+check(one[0]==-1.0);
+float empty[0];
+check(!model.exportAudioSamples(0,0,empty));
+30.0=>model.rotationY;
+check(model.exportAudioSamples(0,0,exact));
+check(exact[0]==-1.0 && exact[2]==1.0);
+check(model.vertexAt(0,0,0)==-2.0);
+check(model.load("triangle.obj"));
+check(model.exportAudioSamples(0,0,exact));
+check(exact[0]==-1.0 && exact[1]==1.0 && exact[2]==-1.0);
+model.clear();
+check(!model.exportAudioSamples(0,0,exact));
+check(exact[0]==-1.0 && exact[1]==1.0);
+""",28,p)
