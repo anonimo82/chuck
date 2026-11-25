@@ -2963,6 +2963,65 @@ CK_DLL_MFUN(text_capture_text) {
 CK_DLL_MFUN(text_capture_clear) {
     if(auto *p=textCapture(SELF,API)) { p->text.clear(); p->cursor=0; }
 }
+
+CK_DLL_MFUN(text_capture_input_key) {
+    RETURN->v_int=0;
+    try {
+        auto *p=textCapture(SELF,API); auto key=GET_NEXT_INT(ARGS);
+        if(!p) return;
+        // Portable ASCII terminal key adapter; Unicode text arrives via insert().
+        if(key==8||key==127) {
+            if(!p->cursor) return;
+            size_t start=p->cursor-1;
+            while(start&&(static_cast<unsigned char>(p->text[start])&0xc0)==0x80) --start;
+            p->text.erase(start,p->cursor-start); p->cursor=start; RETURN->v_int=1;
+        } else if(key==13||key==10) RETURN->v_int=captureInsert(p,"\n");
+        else if(key==9||(key>=32&&key<=126)) RETURN->v_int=captureInsert(p,std::string(1,static_cast<char>(key)));
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_flow_import_capture) {
+    RETURN->v_int=0;
+    try {
+        auto *f=flowState(SELF,API); auto *obj=GET_NEXT_OBJECT(ARGS);
+        auto *s=styleState(GET_NEXT_OBJECT(ARGS),API);
+        auto *p=obj?textCapture(obj,API):nullptr;
+        if(!f||!p||!s||!validText(p->text,65536)) return;
+        Paragraph next; next.text=p->text; next.baseBytes=next.text.size(); next.style=*s;
+        f->source=std::move(next); f->selectionAnchor=f->selectionFocus=p->cursor; f->planned=false;
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_import_capture) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto *obj=GET_NEXT_OBJECT(ARGS);
+        auto *s=styleState(GET_NEXT_OBJECT(ARGS),API);
+        auto *p=obj?textCapture(obj,API):nullptr;
+        if(!d||!p||!s) return;
+        std::vector<Paragraph> next;
+        size_t total=0,start=0;
+        auto add=[&](size_t end) {
+            size_t n=end-start;
+            if(n>65536||d->paragraphs.size()+next.size()>=4096||
+               n>1048576-d->bytes-total) return false;
+            Paragraph para; para.text=p->text.substr(start,n); para.baseBytes=n; para.style=*s;
+            next.push_back(std::move(para)); total+=n; return true;
+        };
+        for(size_t i=0;i<p->text.size();++i) {
+            if(p->text[i]=='\r'||p->text[i]=='\n') {
+                if(!add(i)) return;
+                if(p->text[i]=='\r'&&i+1<p->text.size()&&p->text[i+1]=='\n') ++i;
+                start=i+1;
+            }
+        }
+        if(!add(p->text.size())) return;
+        // Reserve before committing; move-only transfer of staged paragraphs.
+        d->paragraphs.reserve(d->paragraphs.size()+next.size());
+        for(auto &para:next) d->paragraphs.push_back(std::move(para));
+        d->bytes+=total; RETURN->v_int=1;
+    } catch(...) {}
+}
+
 CK_DLL_QUERY(TextIO) {
     QUERY->setname(QUERY,"TextIO");
     QUERY->begin_class(QUERY,"TextIO","Object");
@@ -2986,6 +3045,8 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_capture_characters,"int","characters");
     QUERY->add_mfun(QUERY,text_capture_lines,"int","lines");
     QUERY->add_mfun(QUERY,text_capture_text,"string","text");
+    QUERY->add_mfun(QUERY,text_capture_input_key,"int","inputKey");
+    QUERY->add_arg(QUERY,"int","key");
     QUERY->add_mfun(QUERY,text_capture_clear,"void","clear");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextStyle","Object");
@@ -3239,6 +3300,9 @@ CK_DLL_QUERY(TextIO) {
     flowOffset=QUERY->add_mvar(QUERY,"int","@textFlowNative",FALSE);
     if(flowOffset==CK_INVALID_OFFSET) return FALSE;
     QUERY->add_ctor(QUERY,text_flow_ctor); QUERY->add_dtor(QUERY,text_flow_dtor);
+    QUERY->add_mfun(QUERY,text_flow_import_capture,"int","importCapture");
+    QUERY->add_arg(QUERY,"TextCapture","capture");
+    QUERY->add_arg(QUERY,"TextStyle","style");
     QUERY->add_mfun(QUERY,text_flow_set_text,"int","setText");
     QUERY->add_arg(QUERY,"string","text");
     QUERY->add_arg(QUERY,"TextStyle","style");
@@ -3481,6 +3545,9 @@ CK_DLL_QUERY(TextIO) {
     docOffset=QUERY->add_mvar(QUERY,"int","@textDocumentNative",FALSE);
     if(docOffset==CK_INVALID_OFFSET) return FALSE;
     QUERY->add_ctor(QUERY,text_doc_ctor); QUERY->add_dtor(QUERY,text_doc_dtor);
+    QUERY->add_mfun(QUERY,text_doc_import_capture,"int","appendCapture");
+    QUERY->add_arg(QUERY,"TextCapture","capture");
+    QUERY->add_arg(QUERY,"TextStyle","style");
     QUERY->add_mfun(QUERY,text_doc_add,"int","addParagraph");
     QUERY->add_arg(QUERY,"string","text");
     QUERY->add_arg(QUERY,"TextStyle","style");
