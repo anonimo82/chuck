@@ -155,3 +155,7 @@ insertText(position,value), deleteText(start,end), replaceText(start,end,value),
 ## Styled TextFlow editing
 
 Overloads insertText(position,value,style), replaceText(start,end,value,style), and replaceSelection(value,style) copy the explicit TextStyle into inserted content. applyStyle(start,end,style) replaces the complete style on a half-open UTF-8 interval without modifying text or selection; empty ranges are successful no-ops. styleAt(position,result) copies the style of the character beginning at a valid byte boundary into a supplied TextStyle; source-end and invalid offsets fail without changing result. The source base style remains the default for plain insertion. Existing run and byte limits apply; failures preserve state. Styles are value snapshots and use existing native persistence. No partial-property formatting or run coalescing is introduced. Native validation pending.
+
+## Integrated editing workflow
+
+After layout(), hitTest() supplies source byte offsets for setSelection(). Use replaceSelection(value,style) or applyStyle() to edit or format, then call layout() again before hit testing or rendering. saveNative() preserves text, styles and frames but not the transient selection; saveTXT() exports plain source including overflow. appendFlow() copies inline content into TextDocument. The integrated smoke group checks rendering equality after native reload, PNG/TXT/document export and independent edits. No GUI, undo history or grapheme-aware navigation is provided. Native validation pending.
