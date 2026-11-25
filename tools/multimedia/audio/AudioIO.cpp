@@ -642,6 +642,29 @@ CK_DLL_MFUN(audio_buffer_spectrogram) {
         publishImage(rgba,a,API); RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(audio_buffer_envelope) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API);
+        auto channel=GET_NEXT_INT(ARGS),count=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->loaded()||!p->frames()||channel<0||channel>=p->channels||
+           count<1||count>4096||!a||API->object->array_float_size(a)!=count*2) return;
+        std::vector<double> out(count*2);
+        for(size_t x=0;x<static_cast<size_t>(count);++x) {
+            size_t begin=x*uint64_t(p->frames())/count;
+            size_t end=std::max(begin+1,(x+1)*uint64_t(p->frames())/count);
+            double lo=1,hi=-1;
+            for(size_t i=begin;i<end;++i) {
+                double v=p->value(i,channel);
+                lo=std::min(lo,v); hi=std::max(hi,v);
+            }
+            out[2*x]=lo; out[2*x+1]=hi;
+        }
+        for(size_t i=0;i<out.size();++i) API->object->array_float_set_idx(a,i,out[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(AudioIO) {
     QUERY->setname(QUERY, "AudioIO");
     QUERY->begin_class(QUERY, "AudioIO", "Object");
@@ -731,6 +754,10 @@ CK_DLL_QUERY(AudioIO) {
     QUERY->add_arg(QUERY,"float","frequency");
     QUERY->add_mfun(QUERY,audio_buffer_highpass,"int","highPass");
     QUERY->add_arg(QUERY,"float","frequency");
+    QUERY->add_mfun(QUERY,audio_buffer_envelope,"int","exportEnvelope");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","count");
+    QUERY->add_arg(QUERY,"float[]","bounds");
     QUERY->add_mfun(QUERY,audio_buffer_waveform,"int","exportWaveform");
     QUERY->add_arg(QUERY,"int","channel");
     QUERY->add_arg(QUERY,"int","width");

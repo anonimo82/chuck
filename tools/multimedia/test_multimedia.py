@@ -2911,3 +2911,45 @@ check(spec[(16-4)*4]>250);
 check(audio.exportSpectrogram(0,1,32,-80.0,spec));
 check(spec[(16-4)*4]==0);
 """,21,p)
+
+    run("audio", """
+AudioBuffer audio;
+float bounds[4];
+check(!audio.exportEnvelope(0,2,bounds));
+check(audio.importSamples(8000,1,[-1.0,0.5,0.25,1.0]));
+check(audio.exportEnvelope(0,2,bounds));
+check(bounds[0]==-1.0 && bounds[1]==0.5);
+check(bounds[2]==0.25 && bounds[3]==1.0);
+check(!audio.exportEnvelope(1,2,bounds));
+check(!audio.exportEnvelope(0,3,bounds));
+check(!audio.exportEnvelope(0,0,bounds));
+check(bounds[0]==-1.0 && bounds[3]==1.0);
+0.5=>audio.gain;
+check(audio.exportEnvelope(0,2,bounds));
+check(bounds[0]==-0.5 && bounds[3]==0.5);
+float repeated[16];
+check(audio.exportEnvelope(0,8,repeated));
+check(repeated[0]==-0.5 && repeated[3]==-0.5 && repeated[15]==0.5);
+""",13,p)
+
+    run("vector", """
+VectorImage image;
+[-1.0,1.0,0.0,0.0] @=> float bounds[];
+check(image.importWaveform(4,5,bounds,0xff0000,1.0));
+check(image.loaded() && image.shapes()==1);
+int pixels[80];
+check(image.exportPixels(4,5,pixels));
+check(pixels[0]==255 && pixels[3]==255 && pixels[11]==0);
+check(pixels[(2*4+2)*4]==255 && pixels[(2*4+2)*4+3]==255);
+2.0=>image.x;
+check(!image.importWaveform(0,5,bounds,0xff0000,1.0));
+check(!image.importWaveform(4,5,[1.0,-1.0],0xff0000,1.0));
+check(!image.importWaveform(4,5,[-2.0,1.0],0xff0000,1.0));
+check(!image.importWaveform(4,5,[0.0],0xff0000,1.0));
+check(!image.importWaveform(4,5,bounds,-1,1.0));
+check(!image.importWaveform(4,5,bounds,0xff0000,2.0));
+check(image.x()==2.0 && image.shapes()==1);
+check(image.importWaveform(4,5,bounds,0xff0000,1.0));
+check(image.x()==0.0 && image.shapes()==1);
+check(image.removeShape(0) && image.shapes()==0);
+""",15,p)

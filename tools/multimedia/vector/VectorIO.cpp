@@ -402,6 +402,31 @@ CK_DLL_MFUN(vector_image_export) {
     } catch(...) {}
 }
 
+CK_DLL_MFUN(vector_image_waveform) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto rgb=GET_NEXT_INT(ARGS); auto alpha=GET_NEXT_FLOAT(ARGS);
+        if(!p||w<1||w>4096||h<1||h>4096||!a||!color(rgb,alpha)) return;
+        auto n=API->object->array_float_size(a);
+        if(n<2||n>8192||n%2) return;
+        auto o=svgStream(); o<<"<path d=\"";
+        double step=2.0*w/n;
+        for(t_CKINT i=0;i<n;i+=2) {
+            double lo=API->object->array_float_get_idx(a,i);
+            double hi=API->object->array_float_get_idx(a,i+1);
+            if(!std::isfinite(lo)||!std::isfinite(hi)||lo< -1||hi>1||lo>hi) return;
+            double x=(i/2)*step;
+            double top=(1-hi)*0.5*(h-1);
+            double bottom=(1-lo)*0.5*(h-1)+1;
+            o<<"M "<<x<<' '<<top<<" H "<<x+step<<" V "<<bottom<<" H "<<x<<" Z ";
+        }
+        o<<"\""<<style(rgb,alpha,false)<<"/>";
+        if(p->replaceShapes(w,h,{o.str()})) { p->reset(); RETURN->v_int=1; }
+    } catch(...) {}
+}
 CK_DLL_QUERY(VectorIO) {
     QUERY->setname(QUERY, "VectorIO");
     QUERY->begin_class(QUERY, "VectorIO", "Object");
@@ -450,6 +475,12 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_mfun(QUERY,vector_image_get_opacity,"float","opacity");
     QUERY->add_mfun(QUERY,vector_image_set_opacity,"float","opacity");
     QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,vector_image_waveform,"int","importWaveform");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"float[]","bounds");
+    QUERY->add_arg(QUERY,"int","rgb");
+    QUERY->add_arg(QUERY,"float","alpha");
     QUERY->add_mfun(QUERY,vector_image_create,"int","create");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
