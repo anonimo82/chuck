@@ -1,3 +1,4 @@
+#include "MediaRasterAuto.h"
 #include "MediaSession.h"
 #include "MediaPCMBuffer.h"
 #include "MediaAudioMidi.h"
@@ -1464,6 +1465,46 @@ CK_DLL_MFUN(ca_size){auto *p=ca(SELF,API);RETURN->v_int=p?p->size():0;}
 CK_DLL_MFUN(ca_ready){auto *p=ca(SELF,API);RETURN->v_int=p&&p->ready();}
 CK_DLL_MFUN(ca_push){RETURN->v_int=0;try{auto *p=ca(SELF,API);auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire;if(p&&read(a,API,mediawire::headerSize+mediawire::maxPayload,wire))RETURN->v_int=p->push(wire);}catch(...){}}
 CK_DLL_MFUN(ca_pixels){RETURN->v_int=0;auto *p=ca(SELF,API);auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));if(p&&p->ready()&&exact(a,API,p->size())){write(a,API,p->pixels());RETURN->v_int=1;}}
+CK_DLL_SFUN(ra_select){
+    RETURN->v_int=0;try{
+        auto s=GET_NEXT_INT(ARGS),q=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),limit=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto n=mediawire::imagePixels(w,h);mediawire::Bytes pixels,wire;
+        if(s<=0||s>=0xffffffffull||q<0||q>0xffffffffull||t<0||w<=0||h<=0||!n||limit<=0||
+           !exact(src,API,4*n)||!read(src,API,4*n,pixels))return;
+        int k=mediawire::chooseRasterPacket({1,static_cast<uint32_t>(s),static_cast<uint32_t>(q),static_cast<uint64_t>(t)},
+            {static_cast<uint32_t>(w),static_cast<uint32_t>(h)},pixels,limit,wire);
+        if(k&&exact(dst,API,wire.size())){write(dst,API,wire);RETURN->v_int=k;}
+    }catch(...){}
+}
+CK_DLL_SFUN(ra_size){
+    RETURN->v_int=0;try{
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),limit=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));auto n=mediawire::imagePixels(w,h);mediawire::Bytes pixels,wire;
+        if(w>0&&h>0&&n&&limit>0&&exact(src,API,4*n)&&read(src,API,4*n,pixels)&&
+            mediawire::chooseRasterPacket({1,1,0,0},{static_cast<uint32_t>(w),static_cast<uint32_t>(h)},pixels,limit,wire))RETURN->v_int=wire.size();
+    }catch(...){}
+}
+namespace {t_CKUINT rsSenderOffset=0;
+mediawire::RasterStripSender *rsSender(Chuck_Object *self,CK_DL_API API){return reinterpret_cast<mediawire::RasterStripSender*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,rsSenderOffset)));}}
+CK_DLL_CTOR(rss_ctor){OBJ_MEMBER_UINT(SELF,rsSenderOffset)=0;try{OBJ_MEMBER_UINT(SELF,rsSenderOffset)=reinterpret_cast<uintptr_t>(new mediawire::RasterStripSender);}catch(...){}}
+CK_DLL_DTOR(rss_dtor){delete rsSender(SELF,API);OBJ_MEMBER_UINT(SELF,rsSenderOffset)=0;}
+CK_DLL_MFUN(rss_clear){if(auto *p=rsSender(SELF,API))p->clear();}
+CK_DLL_MFUN(rss_configure){
+    RETURN->v_int=0;try{
+        auto s=GET_NEXT_INT(ARGS),q=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS),image=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),codec=GET_NEXT_INT(ARGS),quality=GET_NEXT_INT(ARGS),limit=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));auto *p=rsSender(SELF,API);auto n=mediawire::imagePixels(w,h);mediawire::Bytes pixels;
+        if(p&&s>0&&q>=0&&t>=0&&image>=0&&w>0&&h>0&&codec>0&&quality>0&&limit>0&&n&&exact(src,API,4*n)&&read(src,API,4*n,pixels))
+            RETURN->v_int=p->configure(s,q,t,image,w,h,codec,quality,limit,pixels);
+    }catch(...){}
+}
+CK_DLL_MFUN(rss_prepare){RETURN->v_int=0;try{if(auto *p=rsSender(SELF,API))RETURN->v_int=p->prepare();}catch(...){}}
+CK_DLL_MFUN(rss_commit){auto *p=rsSender(SELF,API);RETURN->v_int=p&&p->commit();}
+CK_DLL_MFUN(rss_done){auto *p=rsSender(SELF,API);RETURN->v_int=p&&p->done();}
+CK_DLL_MFUN(rss_row){auto *p=rsSender(SELF,API);RETURN->v_int=p?p->row():0;}
+CK_DLL_MFUN(rss_next){auto *p=rsSender(SELF,API);RETURN->v_int=p?p->nextSequence():0;}
+CK_DLL_MFUN(rss_size){auto *p=rsSender(SELF,API);RETURN->v_int=p?p->packetSize():0;}
+CK_DLL_MFUN(rss_peek){RETURN->v_int=0;auto *p=rsSender(SELF,API);auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));if(p&&p->packetSize()&&exact(dst,API,p->packetSize())){write(dst,API,p->packet());RETURN->v_int=1;}}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -2196,6 +2237,48 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_mfun(QUERY,ca_pixels,"int","pixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaRasterAuto","Object");
+    QUERY->add_sfun(QUERY,ra_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","payloadLimit");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_sfun(QUERY,ra_select,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","payloadLimit");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaRasterStripSender","Object");
+    rsSenderOffset=QUERY->add_mvar(QUERY,"int","@rasterStripSenderNative",FALSE);
+    if(rsSenderOffset==CK_INVALID_OFFSET)return FALSE;
+    QUERY->add_ctor(QUERY,rss_ctor);
+    QUERY->add_dtor(QUERY,rss_dtor);
+    QUERY->add_mfun(QUERY,rss_clear,"void","clear");
+    QUERY->add_mfun(QUERY,rss_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","image");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","codec");
+    QUERY->add_arg(QUERY,"int","quality");
+    QUERY->add_arg(QUERY,"int","payloadLimit");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,rss_prepare,"int","prepare");
+    QUERY->add_mfun(QUERY,rss_commit,"int","commit");
+    QUERY->add_mfun(QUERY,rss_done,"int","done");
+    QUERY->add_mfun(QUERY,rss_row,"int","row");
+    QUERY->add_mfun(QUERY,rss_next,"int","nextSequence");
+    QUERY->add_mfun(QUERY,rss_size,"int","packetSize");
+    QUERY->add_mfun(QUERY,rss_peek,"int","peek");
+    QUERY->add_arg(QUERY,"int[]","packet");
     if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaGraphics","Object");
     QUERY->add_sfun(QUERY,gr_inspect,"int","inspect");
