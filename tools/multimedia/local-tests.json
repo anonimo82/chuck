@@ -1,10 +1,4 @@
 {
   "version": 1,
-  "groups": [
-    "transport-raster",
-    "transport-raster-stream",
-    "transport-vector",
-    "transport-model",
-    "transport-graphics"
-  ]
+  "groups": []
 }
