@@ -60,8 +60,21 @@ std::string listLabel(const ListStyle &p) {
 }
 double listSpace(const ListStyle &p) { return p.mode?p.level*p.levelIndent+p.markerWidth:0; }
 struct Paragraph { std::string text; Style style; size_t baseBytes=0; std::vector<Run> runs; ParagraphStyle layout; Container box; ListStyle list; };
-struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; };
-t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0;
+struct Table {
+    int rows=0,cols=0;
+    std::vector<Paragraph> cells;
+    std::vector<double> weights;
+    size_t bytes=0;
+};
+bool cellOK(Table *t,t_CKINT row,t_CKINT col) {
+    return t&&row>=0&&col>=0&&row<t->rows&&col<t->cols;
+}
+struct TableBlock { size_t after=0; Table table; };
+struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; };
+t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0;
+Table *tableState(Chuck_Object *self,CK_DL_API API) {
+    return self?reinterpret_cast<Table *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,tableOffset))):nullptr;
+}
 ListStyle *listState(Chuck_Object *self,CK_DL_API API) {
     return self?reinterpret_cast<ListStyle *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,listOffset))):nullptr;
 }
@@ -212,10 +225,10 @@ CK_DLL_MFUN(text_doc_style) {
 }
 CK_DLL_MFUN(text_doc_remove) {
     auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); RETURN->v_int=0;
-    if(indexOK(d,i)) { d->bytes-=d->paragraphs[i].text.size(); d->runs-=d->paragraphs[i].runs.size(); d->paragraphs.erase(d->paragraphs.begin()+i); RETURN->v_int=1; }
+    if(indexOK(d,i)) { d->bytes-=d->paragraphs[i].text.size(); d->runs-=d->paragraphs[i].runs.size(); d->paragraphs.erase(d->paragraphs.begin()+i); for(auto &b:d->tables) if(b.after>static_cast<size_t>(i)) --b.after; RETURN->v_int=1; }
 }
 CK_DLL_MFUN(text_doc_clear) {
-    if(auto *d=docState(SELF,API)) { d->paragraphs.clear(); d->bytes=0; d->runs=0; }
+    if(auto *d=docState(SELF,API)) { d->paragraphs.clear(); d->bytes=0; d->runs=0; d->tables.clear(); d->tableCells=0; d->tableBytes=0; }
 }
 CK_DLL_CTOR(text_run_ctor) {
     OBJ_MEMBER_UINT(SELF,runOffset)=0;
@@ -523,6 +536,86 @@ CK_DLL_MFUN(text_list_markerWidth_set) {
     auto *p=listState(SELF,API); auto v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
     if(p&&std::isfinite(v)&&v>=1&&v<=512) RETURN->v_float=p->markerWidth=v;
 }
+CK_DLL_CTOR(text_table_ctor) {
+    OBJ_MEMBER_UINT(SELF,tableOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,tableOffset)=reinterpret_cast<uintptr_t>(new Table); } catch(...) {}
+}
+CK_DLL_DTOR(text_table_dtor) { delete tableState(SELF,API); OBJ_MEMBER_UINT(SELF,tableOffset)=0; }
+CK_DLL_MFUN(text_table_create) {
+    RETURN->v_int=0;
+    try {
+        auto *t=tableState(SELF,API); auto r=GET_NEXT_INT(ARGS),c=GET_NEXT_INT(ARGS);
+        if(!t||r<1||r>256||c<1||c>32||r*c>1024) return;
+        Table next; next.rows=r; next.cols=c;
+        next.cells.resize(r*c); next.weights.assign(c,1.0);
+        for(auto &p:next.cells) { p.box.borderWidth=1; p.box.paddingLeft=4; p.box.paddingRight=4; p.box.paddingTop=4; p.box.paddingBottom=4; }
+        *t=std::move(next); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_table_rows) { auto *t=tableState(SELF,API); RETURN->v_int=t?t->rows:0; }
+CK_DLL_MFUN(text_table_cols) { auto *t=tableState(SELF,API); RETURN->v_int=t?t->cols:0; }
+CK_DLL_MFUN(text_table_set_cell) {
+    RETURN->v_int=0;
+    try {
+        auto *t=tableState(SELF,API); auto r=GET_NEXT_INT(ARGS),c=GET_NEXT_INT(ARGS);
+        auto text=GET_NEXT_STRING_SAFE(ARGS); auto *st=styleState(GET_NEXT_OBJECT(ARGS),API);
+        if(!cellOK(t,r,c)||!st||!validText(text,65536)) return;
+        auto &p=t->cells[r*t->cols+c]; size_t next=t->bytes-p.text.size()+text.size();
+        if(next>1048576) return;
+        Paragraph copy=p; copy.text=std::move(text); copy.baseBytes=copy.text.size(); copy.style=*st;
+        p=std::move(copy); t->bytes=next; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_table_cell_text) {
+    auto *t=tableState(SELF,API); auto r=GET_NEXT_INT(ARGS),c=GET_NEXT_INT(ARGS);
+    RETURN->v_string=API->object->create_string(VM,cellOK(t,r,c)?t->cells[r*t->cols+c].text.c_str():"",FALSE);
+}
+CK_DLL_MFUN(text_table_layout) {
+    RETURN->v_int=0;
+    auto *t=tableState(SELF,API); auto r=GET_NEXT_INT(ARGS),c=GET_NEXT_INT(ARGS); auto *p=paragraphStyleState(GET_NEXT_OBJECT(ARGS),API);
+    if(cellOK(t,r,c)&&p) { t->cells[r*t->cols+c].layout=*p; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_table_box) {
+    RETURN->v_int=0;
+    auto *t=tableState(SELF,API); auto r=GET_NEXT_INT(ARGS),c=GET_NEXT_INT(ARGS); auto *p=containerState(GET_NEXT_OBJECT(ARGS),API);
+    if(cellOK(t,r,c)&&p) { t->cells[r*t->cols+c].box=*p; RETURN->v_int=1; }
+}
+CK_DLL_MFUN(text_table_weight_get) {
+    auto *t=tableState(SELF,API); auto c=GET_NEXT_INT(ARGS);
+    RETURN->v_float=t&&c>=0&&c<t->cols?t->weights[c]:-1;
+}
+CK_DLL_MFUN(text_table_weight_set) {
+    auto *t=tableState(SELF,API); auto c=GET_NEXT_INT(ARGS); double w=GET_NEXT_FLOAT(ARGS);
+    RETURN->v_float=-1;
+    if(t&&c>=0&&c<t->cols&&std::isfinite(w)&&w>=0.01&&w<=100) RETURN->v_float=t->weights[c]=w;
+}
+CK_DLL_MFUN(text_doc_append_table) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto *t=tableState(GET_NEXT_OBJECT(ARGS),API);
+        if(!d||!t||!t->rows||d->tables.size()>=256||d->tableCells+t->cells.size()>4096||d->tableBytes+t->bytes>1048576) return;
+        d->tables.push_back({d->paragraphs.size(),*t});
+        d->tableCells+=t->cells.size(); d->tableBytes+=t->bytes; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_table_count) { auto *d=docState(SELF,API); RETURN->v_int=d?d->tables.size():0; }
+CK_DLL_MFUN(text_doc_set_table) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *t=tableState(GET_NEXT_OBJECT(ARGS),API);
+        if(!d||!t||!t->rows||i<0||static_cast<size_t>(i)>=d->tables.size()) return;
+        auto &old=d->tables[i].table;
+        auto cells=d->tableCells-old.cells.size()+t->cells.size(),bytes=d->tableBytes-old.bytes+t->bytes;
+        if(cells>4096||bytes>1048576) return;
+        Table next=*t; old=std::move(next); d->tableCells=cells; d->tableBytes=bytes; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_remove_table) {
+    RETURN->v_int=0; auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    if(!d||i<0||static_cast<size_t>(i)>=d->tables.size()) return;
+    d->tableCells-=d->tables[i].table.cells.size(); d->tableBytes-=d->tables[i].table.bytes;
+    d->tables.erase(d->tables.begin()+i); RETURN->v_int=1;
+}
 namespace {
 using LayoutPtr=std::unique_ptr<PangoLayout,decltype(&g_object_unref)>;
 LayoutPtr makeLayout(cairo_t *cr,const Paragraph &p,int width) {
@@ -600,6 +693,51 @@ bool paragraphDimensions(cairo_t *cr,const Paragraph &p,int width,int &w,int &h)
     if(totalW<0||totalH<0||totalW>100000000||totalH>100000000) return false;
     w=static_cast<int>(std::ceil(totalW)); h=static_cast<int>(std::ceil(totalH)); return true;
 }
+bool tableGeometry(cairo_t *cr,const Table &t,int width,std::vector<int> &xs,std::vector<int> &heights,int &height) {
+    xs.assign(t.cols+1,0); heights.assign(t.rows,0); height=0;
+    double sum=0,partial=0; for(double w:t.weights) sum+=w;
+    for(int c=0;c<t.cols;c++) { partial+=t.weights[c]; xs[c+1]=c+1==t.cols?width:static_cast<int>(std::lround(width*partial/sum)); }
+    for(int r=0;r<t.rows;r++) {
+        for(int c=0;c<t.cols;c++) {
+            int w=0,h=0,cw=xs[c+1]-xs[c];
+            if(cw<1||!paragraphDimensions(cr,t.cells[r*t.cols+c],cw,w,h)) return false;
+            heights[r]=std::max(heights[r],h);
+        }
+        if(heights[r]>100000000-height) return false;
+        height+=heights[r];
+    }
+    return true;
+}
+bool drawTable(cairo_t *cr,const Table &t,int width,int canvasHeight,int64_t &y,bool draw) {
+    std::vector<int> xs,heights; int height=0;
+    if(!tableGeometry(cr,t,width,xs,heights,height)||height>100000000-y) return false;
+    for(int r=0;r<t.rows;r++) {
+        if(draw&&y<canvasHeight) for(int c=0;c<t.cols;c++) {
+            const auto &p=t.cells[r*t.cols+c]; const auto &b=p.box;
+            if(b.opacity==0) continue;
+            int cw=xs[c+1]-xs[c];
+            auto l=makeLayout(cr,p,cw); if(!l) return false;
+            double x=xs[c]+p.layout.marginLeft,top=y+p.layout.marginTop;
+            double bw=cw-p.layout.marginLeft-p.layout.marginRight,bh=heights[r]-p.layout.marginTop-p.layout.marginBottom;
+            auto color=[&](t_CKINT rgb){cairo_set_source_rgb(cr,((rgb>>16)&255)/255.0,((rgb>>8)&255)/255.0,(rgb&255)/255.0);};
+            cairo_save(cr); cairo_rectangle(cr,x,top,bw,bh); cairo_clip(cr);
+            if(b.opacity<1) cairo_push_group(cr);
+            if(b.backgroundColor>=0) { color(b.backgroundColor); cairo_paint(cr); }
+            if(b.borderWidth>0) {
+                color(b.borderColor); cairo_set_line_width(cr,b.borderWidth);
+                double half=b.borderWidth/2;
+                cairo_rectangle(cr,x+half,top+half,bw-b.borderWidth,bh-b.borderWidth); cairo_stroke(cr);
+            }
+            double tx=x+b.borderWidth+b.paddingLeft,ty=top+b.borderWidth+b.paddingTop;
+            cairo_save(cr); cairo_rectangle(cr,tx,ty,bw-2*b.borderWidth-b.paddingLeft-b.paddingRight,bh-2*b.borderWidth-b.paddingTop-b.paddingBottom); cairo_clip(cr);
+            cairo_set_source_rgb(cr,0,0,0); cairo_move_to(cr,tx,ty); pango_cairo_show_layout(cr,l.get()); cairo_restore(cr);
+            if(b.opacity<1) { cairo_pop_group_to_source(cr); cairo_paint_with_alpha(cr,b.opacity); }
+            cairo_restore(cr);
+        }
+        y+=heights[r];
+    }
+    return cairo_status(cr)==CAIRO_STATUS_SUCCESS;
+}
 }
 CK_DLL_MFUN(text_doc_measure) {
     RETURN->v_int=0;
@@ -631,6 +769,10 @@ CK_DLL_MFUN(text_doc_measure_document) {
             if(w>maxW) maxW=w;
             totalH+=h; if(totalH>100000000) return;
         }
+        for(const auto &b:d->tables) {
+            if(!drawTable(cr.get(),b.table,width,0,totalH,false)) return;
+            maxW=std::max(maxW,static_cast<int>(width));
+        }
         API->object->array_int_set_idx(a,0,maxW); API->object->array_int_set_idx(a,1,totalH); RETURN->v_int=1;
     } catch(...) {}
 }
@@ -650,8 +792,14 @@ SurfacePtr renderDocument(const Document &d,int w,int h,t_CKINT bg) {
     cairo_paint(cr.get());
     cairo_set_operator(cr.get(),CAIRO_OPERATOR_OVER);
     // Validate all paragraphs, including those beyond the visible canvas.
-    int64_t y=0;
-    for(const auto &p:d.paragraphs) {
+    int64_t y=0; size_t block=0;
+    for(size_t pi=0;pi<=d.paragraphs.size();++pi) {
+        while(block<d.tables.size()&&d.tables[block].after==pi) {
+            if(!drawTable(cr.get(),d.tables[block].table,w,h,y,true)) return SurfacePtr(nullptr,cairo_surface_destroy);
+            ++block;
+        }
+        if(pi==d.paragraphs.size()) break;
+        const auto &p=d.paragraphs[pi];
         auto layout=makeLayout(cr.get(),p,w);
         if(!layout) return SurfacePtr(nullptr,cairo_surface_destroy);
         int contentW=0,contentH=0;
@@ -910,6 +1058,37 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_list_markerWidth_set,"float","markerWidth");
     QUERY->add_arg(QUERY,"float","value");
     if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"TextTable","Object");
+    tableOffset=QUERY->add_mvar(QUERY,"int","@textTableNative",FALSE);
+    if(tableOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,text_table_ctor); QUERY->add_dtor(QUERY,text_table_dtor);
+    QUERY->add_mfun(QUERY,text_table_create,"int","create");
+    QUERY->add_arg(QUERY,"int","rows");
+    QUERY->add_arg(QUERY,"int","columns");
+    QUERY->add_mfun(QUERY,text_table_rows,"int","rows");
+    QUERY->add_mfun(QUERY,text_table_cols,"int","columns");
+    QUERY->add_mfun(QUERY,text_table_set_cell,"int","setCell");
+    QUERY->add_arg(QUERY,"int","row");
+    QUERY->add_arg(QUERY,"int","column");
+    QUERY->add_arg(QUERY,"string","text");
+    QUERY->add_arg(QUERY,"TextStyle","style");
+    QUERY->add_mfun(QUERY,text_table_cell_text,"string","cellText");
+    QUERY->add_arg(QUERY,"int","row");
+    QUERY->add_arg(QUERY,"int","column");
+    QUERY->add_mfun(QUERY,text_table_layout,"int","setCellLayout");
+    QUERY->add_arg(QUERY,"int","row");
+    QUERY->add_arg(QUERY,"int","column");
+    QUERY->add_arg(QUERY,"TextParagraphStyle","style");
+    QUERY->add_mfun(QUERY,text_table_box,"int","setCellContainer");
+    QUERY->add_arg(QUERY,"int","row");
+    QUERY->add_arg(QUERY,"int","column");
+    QUERY->add_arg(QUERY,"TextContainer","container");
+    QUERY->add_mfun(QUERY,text_table_weight_get,"float","columnWeight");
+    QUERY->add_arg(QUERY,"int","column");
+    QUERY->add_mfun(QUERY,text_table_weight_set,"float","columnWeight");
+    QUERY->add_arg(QUERY,"int","column");
+    QUERY->add_arg(QUERY,"float","value");
+    if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextDocument","Object");
     docOffset=QUERY->add_mvar(QUERY,"int","@textDocumentNative",FALSE);
     if(docOffset==CK_INVALID_OFFSET) return FALSE;
@@ -967,6 +1146,14 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"TextList","list");
     QUERY->add_mfun(QUERY,text_doc_list_label,"string","paragraphListLabel");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_doc_append_table,"int","appendTable");
+    QUERY->add_arg(QUERY,"TextTable","table");
+    QUERY->add_mfun(QUERY,text_doc_table_count,"int","tableCount");
+    QUERY->add_mfun(QUERY,text_doc_set_table,"int","setTable");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextTable","table");
+    QUERY->add_mfun(QUERY,text_doc_remove_table,"int","removeTable");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_doc_measure_document,"int","measureDocument");
     QUERY->add_arg(QUERY,"int","width");
