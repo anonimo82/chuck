@@ -1279,9 +1279,9 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_animation_duration,"float","animationDuration");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,model3d_blend_animations,"int","blendAnimations");
-    QUERY->add_arg(QUERY,"int","first");
+    QUERY->add_arg(QUERY,"int","clipA");
     QUERY->add_arg(QUERY,"float","firstSeconds");
-    QUERY->add_arg(QUERY,"int","second");
+    QUERY->add_arg(QUERY,"int","clipB");
     QUERY->add_arg(QUERY,"float","secondSeconds");
     QUERY->add_arg(QUERY,"float","weight");
     QUERY->add_arg(QUERY,"int","loop");
