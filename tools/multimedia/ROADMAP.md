@@ -105,3 +105,7 @@ The next functional PR is proposed to address a matrix gap rather than additiona
 ### Scope decision after #163
 
 User explicitly excluded vector and 3D capture and chose not to support point clouds. Both cells are N/A and excluded from the coverage denominator; the other six processes for these types remain unchanged, as does transmission. The matrix retains 56 positions, 54 applicable. This supersedes any earlier suggestion to implement live vector/3D capture. Documentation only; baseline 4282, local empty, cadence 0/20.
+
+## Vector manipulation cycle 1
+
+User prioritized vector manipulation before transmission and capture. #165: generated-shape inspection and geometry editing. Proposed next milestones: individual transforms, individual style, grouping/order, and persistence/integration. New checks: 57; global: 4339; local: 57; functional cadence: 1/20. Native validation pending. Vector manipulation remains partial until the supported editable SVG scope and integration are complete. The unmerged transmission experiment is deferred.

@@ -6984,8 +6984,90 @@ check(flow.sourceText()=="café\\nWorld!");
         assert (p / "edit.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
         assert (p / "edit.cktxt").read_bytes().startswith(b"CKTXTDOC")
 
+
+def vector_shape_edit():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("vector", """
+VectorImage image;
+check(image.shapeType(0)=="");
+check(image.shapeGeometrySize(0)==-1);
+check(image.create(16,16));
+check(image.addRect(0,0,4,4,16711680,1));
+check(image.addCircle(10,10,2,65280,1));
+check(image.addLine(0,12,5,12,2,255,1));
+[1.0,8.0,4.0,8.0,4.0,10.0] @=> float points[];
+check(image.addPolygon(points,16777215,1));
+check(image.shapes()==4);
+check(image.shapeType(0)=="rect");
+check(image.shapeType(1)=="circle");
+check(image.shapeType(2)=="line");
+check(image.shapeType(3)=="polygon");
+check(image.shapeGeometrySize(0)==4);
+check(image.shapeGeometrySize(1)==3);
+check(image.shapeGeometrySize(2)==5);
+check(image.shapeGeometrySize(3)==6);
+float rect[4];
+float circle[3];
+float lineValues[5];
+float polygon[6];
+check(image.getShapeGeometry(0,rect));
+check(rect[0]==0 && rect[1]==0 && rect[2]==4 && rect[3]==4);
+check(image.getShapeGeometry(1,circle));
+check(circle[0]==10 && circle[1]==10 && circle[2]==2);
+check(image.getShapeGeometry(2,lineValues));
+check(lineValues[0]==0 && lineValues[1]==12 && lineValues[2]==5 && lineValues[3]==12 && lineValues[4]==2);
+check(image.getShapeGeometry(3,polygon));
+check(polygon[0]==1 && polygon[5]==10);
+check(!image.getShapeGeometry(0,circle));
+check(circle[0]==10);
+check(!image.setShapeGeometry(0,circle));
+-1.0=>rect[2];
+check(!image.setShapeGeometry(0,rect));
+check(image.getShapeGeometry(0,rect));
+check(rect[2]==4);
+int pixels[1024];
+check(image.exportPixels(16,16,pixels));
+check(pixels[0]==255 && pixels[3]==255);
+5.0=>rect[0];
+check(image.setShapeGeometry(0,rect));
+check(image.exportPixels(16,16,pixels));
+check(pixels[3]==0);
+check(pixels[20]==255 && pixels[23]==255);
+3.0=>circle[2];
+check(image.setShapeGeometry(1,circle));
+check(image.getShapeGeometry(1,circle));
+check(circle[2]==3);
+3.0=>lineValues[4];
+check(image.setShapeGeometry(2,lineValues));
+check(image.getShapeGeometry(2,lineValues));
+check(lineValues[4]==3);
+[1.0,8.0,4.0,8.0,4.0,10.0,1.0,10.0] @=> float quad[];
+check(image.setShapeGeometry(3,quad));
+check(image.shapeGeometrySize(3)==8);
+check(image.removeShape(0));
+check(image.shapeType(0)=="circle");
+check(image.shapes()==3);
+check(image.save("edited.svg"));
+check(image.load("edited.svg"));
+check(image.shapes()==-1);
+check(image.shapeType(0)=="");
+check(!image.setShapeGeometry(0,circle));
+check(image.exportPixels(16,16,pixels));
+[0.0,1.0] @=> float bounds[];
+check(image.importWaveform(16,16,bounds,255,1));
+check(image.shapeType(0)=="path");
+check(image.shapeGeometrySize(0)==-1);
+check(!image.setShapeGeometry(0,rect));
+""",57,p)
+        import xml.etree.ElementTree as ET
+        root = ET.parse(p / "edited.svg").getroot()
+        assert [e.tag.split("}")[-1] for e in root] == ["circle", "line", "polygon"]
+        assert float(root[0].get("r")) == 3
+        assert float(root[1].get("stroke-width")) == 3
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
