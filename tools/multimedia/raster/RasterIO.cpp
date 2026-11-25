@@ -24,11 +24,33 @@
 #include <new>
 
 namespace {
+void rasterTrace(const char *stage) {
+    const char *flag=std::getenv("CHUCK_RASTER_TRACE");
+    if(flag && flag[0]=='1' && flag[1]=='\0') {
+        std::fprintf(stderr,"[RasterIO native] %s\n",stage);
+        std::fflush(stderr);
+    }
+}
+MagickWand *destroyTracedWand(MagickWand *w) {
+    rasterTrace("DestroyMagickWand begin");
+    auto *result=DestroyMagickWand(w);
+    rasterTrace("DestroyMagickWand end");
+    return result;
+}
 using Wand = std::unique_ptr<MagickWand, decltype(&DestroyMagickWand)>;
 Wand makeWand() {
     static std::once_flag once;
-    std::call_once(once, [] { MagickWandGenesis(); });
-    return Wand(NewMagickWand(), DestroyMagickWand);
+    rasterTrace("call_once begin");
+    std::call_once(once, [] {
+        rasterTrace("MagickWandGenesis begin");
+        MagickWandGenesis();
+        rasterTrace("MagickWandGenesis end");
+    });
+    rasterTrace("call_once end");
+    rasterTrace("NewMagickWand begin");
+    auto *w=NewMagickWand();
+    rasterTrace("NewMagickWand end");
+    return Wand(w, destroyTracedWand);
 }
 std::string format(const std::string &path) {
     auto pos = path.find_last_of('.');
@@ -55,11 +77,19 @@ bool read(MagickWand *w, const std::string &path) {
     const auto fmt = format(path);
     if(fmt.empty() || !w) return false;
     // Explicit format and FILE* avoid ImageMagick filename pseudo-protocols.
+    rasterTrace("fopen begin");
     std::unique_ptr<FILE, decltype(&fclose)> f(fopen(path.c_str(), "rb"), fclose);
+    rasterTrace("fopen end");
     if(!f) { std::fprintf(stderr, "[RasterIO] cannot open %s\n", path.c_str()); return false; }
+    rasterTrace("MagickSetFormat begin");
     if(MagickSetFormat(w, fmt.c_str()) == MagickFalse) { report(w, "set format"); return false; }
+    rasterTrace("MagickSetFormat end; MagickReadImageFile begin");
     if(MagickReadImageFile(w, f.get()) == MagickFalse) { report(w, "decode"); return false; }
+    rasterTrace("MagickReadImageFile end; MagickSetIteratorIndex begin");
     if(MagickSetIteratorIndex(w, 0) == MagickFalse) { report(w, "select frame"); return false; }
+    rasterTrace("MagickSetIteratorIndex end; fclose begin");
+    f.reset();
+    rasterTrace("fclose end");
     return true;
 }
 }
@@ -68,7 +98,11 @@ CK_DLL_SFUN(raster_width) {
     try {
         auto path = GET_NEXT_STRING_SAFE(ARGS);
         auto w = makeWand();
-        if(read(w.get(), path)) RETURN->v_int = MagickGetImageWidth(w.get());
+        if(read(w.get(), path)) {
+            rasterTrace("MagickGetImageWidth begin");
+            RETURN->v_int = MagickGetImageWidth(w.get());
+            rasterTrace("MagickGetImageWidth end");
+        }
     } catch(...) {}
 }
 CK_DLL_SFUN(raster_height) {
@@ -76,7 +110,11 @@ CK_DLL_SFUN(raster_height) {
     try {
         auto path = GET_NEXT_STRING_SAFE(ARGS);
         auto w = makeWand();
-        if(read(w.get(), path)) RETURN->v_int = MagickGetImageHeight(w.get());
+        if(read(w.get(), path)) {
+            rasterTrace("MagickGetImageHeight begin");
+            RETURN->v_int = MagickGetImageHeight(w.get());
+            rasterTrace("MagickGetImageHeight end");
+        }
     } catch(...) {}
 }
 CK_DLL_SFUN(raster_convert) {
