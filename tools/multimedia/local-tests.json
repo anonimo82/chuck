@@ -3,6 +3,7 @@
   "groups": [
     "transport-framing",
     "transport-loopback",
-    "transport-session"
+    "transport-session",
+    "transport-endpoints"
   ]
 }
