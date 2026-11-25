@@ -11,7 +11,16 @@ def run(module, script, expected, directory):
     name = {"audio": "AudioIO", "vector": "VectorIO", "model": "ModelIO", "midi": "MidiFileIO", "video": "VideoIO", "subtitle": "SubtitleIO", "keyframe": "KeyframeIO", "raster": "RasterIO", "text": "TextIO", "transport": "MediaTransport"}[module]
     path.write_text(f'@import "{name}";\n' + '0 => int smokeCheckIndex;\nfun void check(int ok) { smokeCheckIndex++; if(ok) <<< "PASS", smokeCheckIndex >>>; else <<< "FAIL", smokeCheckIndex >>>; }\n' + script, encoding="utf-8")
     print(f"SMOKE_EXPECTED {expected}", flush=True)
-    r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
+    try:
+        r = subprocess.run([os.environ.get("CHUCK_EXE", str(CHUCK)), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE / module)), path.name], cwd=directory, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired as exc:
+        def decoded(value):
+            return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else (value or "")
+        log = decoded(exc.stdout) + decoded(exc.stderr)
+        print(module, log, flush=True)
+        print(f"SMOKE_COUNTS {expected} {log.count('PASS')} {log.count('FAIL')}", flush=True)
+        print(f"SMOKE_TIMEOUT module={module} seconds={exc.timeout}", flush=True)
+        raise
     log = r.stdout + r.stderr
     print(module, log)
     print(f"SMOKE_COUNTS {expected} {log.count('PASS')} {log.count('FAIL')}", flush=True)

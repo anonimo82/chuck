@@ -222,10 +222,14 @@ struct RasterPixels {
         if(!read(input.get(),path)) return false;
         size_t w=MagickGetImageWidth(input.get()),h=MagickGetImageHeight(input.get());
         if(!w || !h || w>8192 || h>8192 || w*h>16777216) return false;
+        rasterTrace("MagickTransformImageColorspace begin");
         if(MagickTransformImageColorspace(input.get(),sRGBColorspace)==MagickFalse) return false;
+        rasterTrace("MagickTransformImageColorspace end");
         std::vector<unsigned char> data(w*h*4);
+        rasterTrace("MagickExportImagePixels begin");
         if(MagickExportImagePixels(input.get(),0,0,w,h,"RGBA",CharPixel,data.data())==MagickFalse)
             return false;
+        rasterTrace("MagickExportImagePixels end");
         width=w; height=h; rgba=std::move(data);
         return true;
     }
@@ -242,15 +246,26 @@ struct RasterPixels {
             pixels[j+3]=static_cast<unsigned char>(std::lround(rgba[j+3]*v[3]));
         }
         auto frame=makeWand();
-        if(!frame || MagickConstituteImage(frame.get(),width,height,"RGBA",CharPixel,pixels.data())==MagickFalse ||
-           MagickSetImageDepth(frame.get(),8)==MagickFalse ||
-           MagickSetFormat(frame.get(),fmt.c_str())==MagickFalse ||
-           MagickSetImageFormat(frame.get(),fmt.c_str())==MagickFalse) return false;
+        if(!frame) return false;
+        rasterTrace("MagickConstituteImage begin");
+        if(MagickConstituteImage(frame.get(),width,height,"RGBA",CharPixel,pixels.data())==MagickFalse) return false;
+        rasterTrace("MagickConstituteImage end; MagickSetImageDepth begin");
+        if(MagickSetImageDepth(frame.get(),8)==MagickFalse) return false;
+        rasterTrace("MagickSetImageDepth end; MagickSetFormat begin");
+        if(MagickSetFormat(frame.get(),fmt.c_str())==MagickFalse) return false;
+        rasterTrace("MagickSetFormat end; MagickSetImageFormat begin");
+        if(MagickSetImageFormat(frame.get(),fmt.c_str())==MagickFalse) return false;
+        rasterTrace("MagickSetImageFormat end");
         size_t size=0;
+        rasterTrace("MagickGetImageBlob begin");
         auto *blob=MagickGetImageBlob(frame.get(),&size);
+        rasterTrace("MagickGetImageBlob end");
         if(!blob) return false;
         std::unique_ptr<unsigned char,decltype(&MagickRelinquishMemory)> data(blob,MagickRelinquishMemory);
-        return outputs.write(path,blob,size);
+        rasterTrace("SequenceOutput write begin");
+        bool ok=outputs.write(path,blob,size);
+        rasterTrace("SequenceOutput write end");
+        return ok;
     }
 };
 
