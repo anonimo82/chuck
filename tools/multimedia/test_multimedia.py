@@ -7921,8 +7921,64 @@ check(capture.ready());
         assert (p / "snapshot.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
         assert (p / "edited.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
+
+def raster_capture_consolidation():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("raster", """
+RasterCapture cap;
+RasterImage image;
+check(!cap.save("empty.png"));
+[20,40,60,255,100,120,140,128,160,180,200,255,220,230,240,64] @=> int data[];
+check(cap.ingestFrame(2,2,2.5,data));
+check(!cap.save("invalid.xyz"));
+check(cap.save("original.png"));
+check(!cap.save("original.png"));
+check(cap.ready());
+check(cap.timestamp()==2.5);
+check(image.load("original.png"));
+check(image.width()==2);
+check(image.height()==2);
+check(image.pixelAt(0,0,0)==20);
+check(image.pixelAt(1,0,1)==120);
+check(image.pixelAt(1,0,3)==128);
+check(image.pixelAt(0,1,2)==200);
+check(image.pixelAt(1,1,3)==64);
+check(image.importCapture(cap));
+check(image.setPixel(0,0,255,255,255,255));
+check(image.save("changed.png"));
+check(cap.save("copy.png"));
+RasterImage copy;
+check(copy.load("copy.png"));
+check(copy.pixelAt(0,0,0)==20);
+check(copy.pixelAt(1,1,3)==64);
+check(cap.timestamp()==2.5);
+check(!cap.captureScreen(-1,0,2,2));
+check(!cap.captureCamera("",2,2));
+check(cap.ready());
+check(cap.save("preserved.png"));
+check(cap.ingestFrame(1,1,3,[1,2,3,255]));
+check(cap.save("next.png"));
+check(copy.load("next.png"));
+check(copy.width()==1 && copy.height()==1);
+check(copy.pixelAt(0,0,0)==1);
+check(copy.pixelAt(0,0,1)==2);
+check(copy.pixelAt(0,0,2)==3);
+check(cap.timestamp()==3);
+cap.clear();
+check(!cap.save("cleared.png"));
+check(!cap.ready());
+check(image.loaded());
+check(image.width()==2 && image.height()==2);
+check(image.pixelAt(0,0,0)==255);
+""",40,p)
+        for name in ("original.png", "changed.png", "copy.png", "preserved.png", "next.png"):
+            assert (p / name).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        for name in ("empty.png", "invalid.xyz", "cleared.png"):
+            assert not (p / name).exists()
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
