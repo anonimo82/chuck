@@ -582,6 +582,34 @@ CK_DLL_MFUN(raster_image_heightmap) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(raster_image_export_pitches) {
+    RETURN->v_int=0;
+    try {
+        auto *p=imageState(SELF,API);
+        auto low=GET_NEXT_INT(ARGS),high=GET_NEXT_INT(ARGS),threshold=GET_NEXT_INT(ARGS),scan=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->input.loaded()||!a||low<0||high>127||low>high||
+           threshold<1||threshold>255||scan<0||scan>2) return;
+        size_t w=p->input.width,h=p->input.height,n=w*h;
+        if(n>100000||API->object->array_int_size(a)!=static_cast<t_CKINT>(n)) return;
+        for(size_t i=0;i<n;++i) {
+            size_t x=scan==1?i/h:i%w,y=scan==1?i%h:i/w;
+            if(scan==2&&y%2) x=w-1-x;
+            size_t pos=(y*w+x)*4;
+            auto component=[&](int c) {
+                double v=p->input.rgba[pos+c]*p->controls[c]+(c<3?255*p->controls[4]:0);
+                return std::lround(std::clamp(v,0.0,255.0));
+            };
+            t_CKINT pitch=-1;
+            if(component(3)>=threshold) {
+                double lum=(0.2126*component(0)+0.7152*component(1)+0.0722*component(2))/255.0;
+                pitch=low+std::lround(std::clamp(lum,0.0,1.0)*(high-low));
+            }
+            API->object->array_int_set_idx(a,i,pitch);
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(RasterIO) {
     QUERY->setname(QUERY, "RasterIO");
     QUERY->begin_class(QUERY, "RasterIO", "Object");
@@ -635,6 +663,12 @@ CK_DLL_QUERY(RasterIO) {
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,raster_image_export_pitches,"int","exportPitches");
+    QUERY->add_arg(QUERY,"int","lowPitch");
+    QUERY->add_arg(QUERY,"int","highPitch");
+    QUERY->add_arg(QUERY,"int","alphaThreshold");
+    QUERY->add_arg(QUERY,"int","scan");
+    QUERY->add_arg(QUERY,"int[]","pitches");
     QUERY->add_mfun(QUERY,raster_image_heightmap,"int","exportHeightmap");
     QUERY->add_arg(QUERY,"float[]","heights");
     QUERY->add_mfun(QUERY,raster_image_audio_samples,"int","exportAudioSamples");
