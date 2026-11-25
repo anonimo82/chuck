@@ -67,6 +67,7 @@
     "transport-model",
     "transport-graphics",
     "transport-video-frame",
-    "transport-video-stream"
+    "transport-video-stream",
+    "transport-video-buffer"
   ]
 }

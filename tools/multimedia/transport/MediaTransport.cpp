@@ -4,6 +4,7 @@
 #include "MediaGraphics.h"
 #include "MediaVideoFrame.h"
 #include "MediaVideoStream.h"
+#include "MediaVideoBuffer.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -864,6 +865,60 @@ CK_DLL_MFUN(vs_width) { auto *p=vsState(SELF,API);RETURN->v_int=p?p->width():0; 
 CK_DLL_MFUN(vs_height) { auto *p=vsState(SELF,API);RETURN->v_int=p?p->height():0; }
 CK_DLL_MFUN(vs_pixelBytes) { auto *p=vsState(SELF,API);RETURN->v_int=p?p->pixelBytes():0; }
 CK_DLL_MFUN(vs_error) { auto *p=vsState(SELF,API);RETURN->v_int=p?p->error():0; }
+namespace {
+t_CKUINT vbOffset=0;
+mediawire::VideoBuffer *vbState(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<mediawire::VideoBuffer*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,vbOffset)));
+}
+}
+CK_DLL_CTOR(vb_ctor) { OBJ_MEMBER_UINT(SELF,vbOffset)=0;try { OBJ_MEMBER_UINT(SELF,vbOffset)=reinterpret_cast<uintptr_t>(new mediawire::VideoBuffer); } catch(...) {} }
+CK_DLL_DTOR(vb_dtor) { delete vbState(SELF,API);OBJ_MEMBER_UINT(SELF,vbOffset)=0; }
+CK_DLL_MFUN(vb_configure) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vbState(SELF,API);uint64_t a[7];for(auto &v:a)v=GET_NEXT_INT(ARGS);
+        if(p)RETURN->v_int=p->configure(a[0],a[1],a[2],a[3],a[4],a[5],a[6]);
+    } catch(...) {}
+}
+CK_DLL_MFUN(vb_clear) { if(auto *p=vbState(SELF,API))p->clear(); }
+CK_DLL_MFUN(vb_push) {
+    RETURN->v_int=0;auto *p=vbState(SELF,API);if(!p)return;
+    try {
+        auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire;
+        if(!p->configured()){p->reject(1);return;}
+        if(!read(a,API,mediawire::headerSize+mediawire::maxPayload,wire)){p->reject(2);return;}
+        RETURN->v_int=p->push(wire);
+    } catch(...) {p->reject(2);}
+}
+CK_DLL_MFUN(vb_pull) {
+    RETURN->v_int=0;auto *p=vbState(SELF,API);if(!p)return;
+    try {
+        auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes pixels;
+        if(!a){p->reject(2);return;}
+        if(p->pull(API->object->array_int_size(a),pixels)){write(a,API,pixels);RETURN->v_int=1;}
+    } catch(...) {p->reject(2);}
+}
+CK_DLL_MFUN(vb_configured) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->configured():0; }
+CK_DLL_MFUN(vb_capacity) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->capacity():0; }
+CK_DLL_MFUN(vb_threshold) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->threshold():0; }
+CK_DLL_MFUN(vb_available) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->available():0; }
+CK_DLL_MFUN(vb_freeFrames) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->freeFrames():0; }
+CK_DLL_MFUN(vb_budget) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->budget():0; }
+CK_DLL_MFUN(vb_bufferedBytes) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->bufferedBytes():0; }
+CK_DLL_MFUN(vb_reservedBytes) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->reservedBytes():0; }
+CK_DLL_MFUN(vb_ready) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->ready():0; }
+CK_DLL_MFUN(vb_receivedFrames) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->receivedFrames():0; }
+CK_DLL_MFUN(vb_consumedFrames) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->consumedFrames():0; }
+CK_DLL_MFUN(vb_nextSequence) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->nextSequence():0; }
+CK_DLL_MFUN(vb_nextFrame) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->nextFrame():0; }
+CK_DLL_MFUN(vb_underruns) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->underruns():0; }
+CK_DLL_MFUN(vb_overruns) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->overruns():0; }
+CK_DLL_MFUN(vb_error) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->error():0; }
+CK_DLL_MFUN(vb_pixelBytes) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->pixelBytes():0; }
+CK_DLL_MFUN(vb_width) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->width():0; }
+CK_DLL_MFUN(vb_height) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->height():0; }
+CK_DLL_MFUN(vb_timestamp) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->timestamp():0; }
+CK_DLL_MFUN(vb_frameIndex) { auto *p=vbState(SELF,API);RETURN->v_int=p?p->frameIndex():0; }
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -1276,6 +1331,46 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_mfun(QUERY,vs_height,"int","height");
     QUERY->add_mfun(QUERY,vs_pixelBytes,"int","pixelBytes");
     QUERY->add_mfun(QUERY,vs_error,"int","error");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaVideoBuffer","Object");
+    vbOffset=QUERY->add_mvar(QUERY,"int","@videoBufferNative",FALSE);
+    if(vbOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,vb_ctor);
+    QUERY->add_dtor(QUERY,vb_dtor);
+    QUERY->add_mfun(QUERY,vb_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","firstSequence");
+    QUERY->add_arg(QUERY,"int","firstFrame");
+    QUERY->add_arg(QUERY,"int","originUs");
+    QUERY->add_arg(QUERY,"int","capacityFrames");
+    QUERY->add_arg(QUERY,"int","prebufferFrames");
+    QUERY->add_arg(QUERY,"int","byteBudget");
+    QUERY->add_mfun(QUERY,vb_clear,"void","clear");
+    QUERY->add_mfun(QUERY,vb_push,"int","push");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,vb_pull,"int","pull");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,vb_configured,"int","configured");
+    QUERY->add_mfun(QUERY,vb_capacity,"int","capacity");
+    QUERY->add_mfun(QUERY,vb_threshold,"int","threshold");
+    QUERY->add_mfun(QUERY,vb_available,"int","available");
+    QUERY->add_mfun(QUERY,vb_freeFrames,"int","freeFrames");
+    QUERY->add_mfun(QUERY,vb_budget,"int","budget");
+    QUERY->add_mfun(QUERY,vb_bufferedBytes,"int","bufferedBytes");
+    QUERY->add_mfun(QUERY,vb_reservedBytes,"int","reservedBytes");
+    QUERY->add_mfun(QUERY,vb_ready,"int","ready");
+    QUERY->add_mfun(QUERY,vb_receivedFrames,"int","receivedFrames");
+    QUERY->add_mfun(QUERY,vb_consumedFrames,"int","consumedFrames");
+    QUERY->add_mfun(QUERY,vb_nextSequence,"int","nextSequence");
+    QUERY->add_mfun(QUERY,vb_nextFrame,"int","nextFrame");
+    QUERY->add_mfun(QUERY,vb_underruns,"int","underruns");
+    QUERY->add_mfun(QUERY,vb_overruns,"int","overruns");
+    QUERY->add_mfun(QUERY,vb_error,"int","error");
+    QUERY->add_mfun(QUERY,vb_pixelBytes,"int","pixelBytes");
+    QUERY->add_mfun(QUERY,vb_width,"int","width");
+    QUERY->add_mfun(QUERY,vb_height,"int","height");
+    QUERY->add_mfun(QUERY,vb_timestamp,"int","timestamp");
+    QUERY->add_mfun(QUERY,vb_frameIndex,"int","frameIndex");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"MediaGraphics","Object");
     QUERY->add_sfun(QUERY,gr_inspect,"int","inspect");
