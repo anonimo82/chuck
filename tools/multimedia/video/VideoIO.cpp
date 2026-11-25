@@ -3043,6 +3043,34 @@ CK_DLL_MFUN(video_clip_export_pixels) {
     } catch(...) {}
 }
 
+CK_DLL_MFUN(video_clip_export_pixels_scaled) {
+    RETURN->v_int=0;
+    try {
+        auto *p=clipState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p || !p->reader || !a) return;
+        if(w<1||h<1||w>8192||h>8192||w*h>16777216 ||
+           API->object->array_int_size(a)!=static_cast<t_CKINT>(static_cast<int64_t>(w)*h*4)) return;
+        Frame image;
+        if(!image.p) return;
+        image.p->width=w; image.p->height=h; image.p->format=AV_PIX_FMT_BGR0;
+        if(av_frame_get_buffer(image.p,32)<0 || !p->reader->render(image.p)) return;
+        for(int y=0;y<h;++y) {
+            auto *row=image.p->data[0]+static_cast<size_t>(y)*image.p->linesize[0];
+            for(int x=0;x<w;++x) {
+                size_t i=(static_cast<size_t>(y)*w+x)*4;
+                for(int c=0;c<3;++c) {
+                    double v=row[x*4+2-c]*p->controls[c]+255*p->controls[3];
+                    API->object->array_int_set_idx(a,i+c,static_cast<t_CKINT>(std::lround(std::max(0.0,std::min(255.0,v)))));
+                }
+                API->object->array_int_set_idx(a,i+3,255);
+            }
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+
 
 namespace {
 struct VideoWriterState {
@@ -3573,6 +3601,10 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_mfun(QUERY,video_clip_set_brightness,"float","brightness");
     QUERY->add_arg(QUERY,"float","value");
     QUERY->add_mfun(QUERY,video_clip_export_pixels,"int","exportPixels");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,video_clip_export_pixels_scaled,"int","exportPixels");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"VideoWriter","Object");
