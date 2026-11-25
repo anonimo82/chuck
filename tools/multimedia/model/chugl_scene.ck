@@ -9,12 +9,14 @@ ModelSceneBridge sceneBridge;
 if(!sceneBridge.bind(model)) { <<< "Scene requires triangle meshes, normals and decomposable transforms" >>>; me.exit(); }
 sceneBridge.root --> GG.scene();
 GG.windowTitle("ModelIO / ChuGL scene");
-now => time start;
+if(model.animations()>0 && !model.playAnimation(0,1)) { <<< "Animation start failed" >>>; me.exit(); }
+now => time previous;
 while(true) {
     GG.nextFrame() => now;
-    if(model.animations()>0) {
-        if(!model.sampleAnimation(0,(now-start)/second,1) || !sceneBridge.refresh()) {
+    if(model.playbackClip()>=0) {
+        if(!model.advanceAnimation((now-previous)/second) || !sceneBridge.refresh()) {
             <<< "Scene animation failed" >>>; me.exit();
         }
     }
+    now => previous;
 }
