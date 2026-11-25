@@ -8380,8 +8380,77 @@ check(cap.sourceMode()==0);
 """,71,p)
         assert (p / "rolling.mkv").is_file()
 
+def video_opengl_framebuffer():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("video", """
+VideoCapture cap;
+VideoClip clip;
+[1,2,3,4,5,6,7,8,11,12,13,14,15,16,17,18] @=> int data[];
+int out[16];
+int wrong[4];
+check(cap.openGLSupported()==0 || cap.openGLSupported()==1);
+check(!cap.openGLCurrent());
+check(!cap.openGL(2,2));
+check(!cap.openGL(0,2));
+check(!cap.readGL(0,0,0));
+check(!cap.ingestGLPixels(0,data));
+check(cap.openSynthetic(2,2));
+check(!cap.openGL(2,2));
+check(!cap.readGL(0,0,0));
+check(!cap.ingestGLPixels(-1,data));
+check(!cap.ingestGLPixels(0,wrong));
+check(cap.ingestGLPixels(0,data));
+check(cap.sourceMode()==2);
+check(cap.ready());
+check(cap.frames()==1);
+check(cap.timestamp()==0);
+check(cap.exportPixels(out));
+check(out[0]==11 && out[1]==12 && out[2]==13 && out[3]==255);
+check(out[4]==15 && out[5]==16 && out[6]==17 && out[7]==255);
+check(out[8]==1 && out[9]==2 && out[10]==3 && out[11]==255);
+check(out[12]==5 && out[13]==6 && out[14]==7 && out[15]==255);
+check(data[3]==4 && data[15]==18);
+256=>data[15];
+check(!cap.ingestGLPixels(1,data));
+check(cap.frames()==1);
+18=>data[15];
+check(cap.startRecording("graphics.mkv",25));
+check(cap.recordFrame());
+check(!cap.recordFrame());
+99=>data[8];
+check(cap.ingestGLPixels(0.04,data));
+check(!cap.ingestGLPixels(0.01,data));
+check(cap.recordFrame());
+check(cap.recordedFrames()==2);
+cap.close();
+check(cap.finishRecording());
+check(clip.load("graphics.mkv"));
+check(clip.exportPixels(out));
+check(out[0]==11 && out[8]==1);
+check(clip.next()==1);
+check(clip.exportPixels(out));
+check(out[0]==99 && out[8]==1);
+check(clip.next()==0);
+check(cap.clear());
+check(cap.openSynthetic(1,3));
+check(cap.ingestGLPixels(0,[1,2,3,0,4,5,6,0,7,8,9,0]));
+int odd[12];
+check(cap.exportPixels(odd));
+check(odd[0]==7 && odd[4]==4 && odd[8]==1);
+check(odd[3]==255 && odd[7]==255 && odd[11]==255);
+cap.close();
+check(cap.clear());
+check(cap.openSynthetic(1,1));
+check(cap.ingestGLPixels(0,[3,4,5,0]));
+check(cap.exportPixels(wrong));
+check(wrong[0]==3 && wrong[3]==255);
+cap.close();
+""",50,p)
+        assert (p / "graphics.mkv").is_file()
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
