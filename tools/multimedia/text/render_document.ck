@@ -1,0 +1,10 @@
+@import "TextIO";
+@import "RasterIO";
+TextDocument doc; TextStyle normal; TextStyle heading; TextRun run; TextParagraphStyle flow;
+20.0=>normal.fontSize; heading.inherit(normal); 36.0=>heading.fontSize; 700=>heading.weight; 0x204080=>heading.color;
+24.0=>flow.marginLeft; 24.0=>flow.marginRight; 16.0=>flow.marginTop;
+doc.addParagraph("ChucK Multimedia",heading); doc.setParagraphLayout(0,flow);
+doc.addParagraph("Text without markup. ",normal); run.set("Procedurally formatted.",heading); doc.appendRun(1,run); doc.setParagraphLayout(1,flow);
+640=>int w; 240=>int h; int rgba[w*h*4]; RasterImage image;
+if(doc.exportPixels(w,h,0xffffff,rgba)&&image.importPixels(w,h,rgba)) <<< "Raster conversion complete" >>>;
+if(!doc.savePNG("document.png",w,h,0xffffff)) <<< "PNG save failed" >>>;

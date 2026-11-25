@@ -1,5 +1,9 @@
 // Procedural text foundation; offline Pango/Cairo layout, no markup parser.
 #include "chuck_dl.h"
+#include "../file_compat.h"
+#include <algorithm>
+#include <cstring>
+#include <cstdio>
 #include <pango/pangocairo.h>
 #include <string>
 #include <vector>
@@ -452,6 +456,90 @@ CK_DLL_MFUN(text_doc_measure_document) {
         API->object->array_int_set_idx(a,0,maxW); API->object->array_int_set_idx(a,1,totalH); RETURN->v_int=1;
     } catch(...) {}
 }
+namespace {
+using SurfacePtr=std::unique_ptr<cairo_surface_t,decltype(&cairo_surface_destroy)>;
+bool validCanvas(t_CKINT w,t_CKINT h,t_CKINT bg) {
+    return w>=1&&w<=4096&&h>=1&&h<=4096&&w*h<=4194304&&bg>=-1&&bg<=0xffffff;
+}
+SurfacePtr renderDocument(const Document &d,int w,int h,t_CKINT bg) {
+    SurfacePtr surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,w,h),cairo_surface_destroy);
+    if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
+    std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
+    if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
+    cairo_set_operator(cr.get(),CAIRO_OPERATOR_SOURCE);
+    if(bg<0) cairo_set_source_rgba(cr.get(),0,0,0,0);
+    else cairo_set_source_rgb(cr.get(),((bg>>16)&255)/255.0,((bg>>8)&255)/255.0,(bg&255)/255.0);
+    cairo_paint(cr.get());
+    cairo_set_operator(cr.get(),CAIRO_OPERATOR_OVER);
+    // Validate all paragraphs, including those beyond the visible canvas.
+    int64_t y=0;
+    for(const auto &p:d.paragraphs) {
+        auto layout=makeLayout(cr.get(),p,w);
+        if(!layout) return SurfacePtr(nullptr,cairo_surface_destroy);
+        int contentW=0,contentH=0;
+        pango_layout_get_pixel_size(layout.get(),&contentW,&contentH);
+        double totalW=contentW+p.layout.marginLeft+p.layout.marginRight;
+        double totalH=contentH+p.layout.marginTop+p.layout.marginBottom;
+        if(totalW<0||totalH<0||totalW>100000000||totalH>100000000) return SurfacePtr(nullptr,cairo_surface_destroy);
+        if(y<h) {
+            cairo_save(cr.get());
+            cairo_rectangle(cr.get(),p.layout.marginLeft,0,w-p.layout.marginLeft-p.layout.marginRight,h);
+            cairo_clip(cr.get());
+            cairo_move_to(cr.get(),p.layout.marginLeft,y+p.layout.marginTop);
+            cairo_set_source_rgb(cr.get(),0,0,0);
+            pango_cairo_show_layout(cr.get(),layout.get());
+            cairo_restore(cr.get());
+        }
+        y+=static_cast<int64_t>(std::ceil(totalH));
+        if(y>100000000||cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
+    }
+    cairo_surface_flush(surface.get());
+    if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return SurfacePtr(nullptr,cairo_surface_destroy);
+    return surface;
+}
+cairo_status_t textWritePng(void *closure,const unsigned char *data,unsigned int size) {
+    return std::fwrite(data,1,size,static_cast<FILE *>(closure))==size?CAIRO_STATUS_SUCCESS:CAIRO_STATUS_WRITE_ERROR;
+}
+}
+CK_DLL_MFUN(text_doc_export_pixels) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),bg=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!d||!validCanvas(w,h,bg)||!a||API->object->array_int_size(a)!=w*h*4) return;
+        auto surface=renderDocument(*d,w,h,bg);
+        if(!surface) return;
+        auto *data=cairo_image_surface_get_data(surface.get());
+        int stride=cairo_image_surface_get_stride(surface.get());
+        if(!data) return;
+        for(int y=0;y<h;++y) for(int x=0;x<w;++x) {
+            uint32_t v; std::memcpy(&v,data+static_cast<size_t>(y)*stride+x*4,4);
+            unsigned alpha=v>>24; size_t i=(static_cast<size_t>(y)*w+x)*4;
+            for(int c=0;c<3;++c) {
+                unsigned q=(v>>(16-8*c))&255;
+                API->object->array_int_set_idx(a,i+c,alpha?std::min(255u,(q*255+alpha/2)/alpha):0);
+            }
+            API->object->array_int_set_idx(a,i+3,alpha);
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_save_png) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),bg=GET_NEXT_INT(ARGS);
+        if(!d||!validCanvas(w,h,bg)||path.size()<4||path.substr(path.size()-4)!=".png") return;
+        auto surface=renderDocument(*d,w,h,bg);
+        if(!surface) return;
+        FILE *f=mediaio::openNew(path.c_str());
+        if(!f) return;
+        bool ok=cairo_surface_write_to_png_stream(surface.get(),textWritePng,f)==CAIRO_STATUS_SUCCESS;
+        if(std::fclose(f)!=0) ok=false;
+        if(!ok) { std::remove(path.c_str()); return; }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(TextIO) {
     QUERY->setname(QUERY,"TextIO");
     QUERY->begin_class(QUERY,"TextIO","Object");
@@ -596,6 +684,16 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_doc_measure_document,"int","measureDocument");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int[]","dimensions");
+    QUERY->add_mfun(QUERY,text_doc_export_pixels,"int","exportPixels");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","backgroundRGB");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,text_doc_save_png,"int","savePNG");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","backgroundRGB");
     QUERY->add_mfun(QUERY,text_doc_measure,"int","measureParagraph");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"int","width");
