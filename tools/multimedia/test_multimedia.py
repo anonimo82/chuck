@@ -2953,3 +2953,32 @@ check(image.importWaveform(4,5,bounds,0xff0000,1.0));
 check(image.x()==0.0 && image.shapes()==1);
 check(image.removeShape(0) && image.shapes()==0);
 """,15,p)
+
+    run("raster", """
+RasterImage image;
+float mono[4];
+float stereo[8];
+check(!image.exportAudioSamples(1,mono));
+check(image.importPixels(2,2,[0,0,0,255,255,255,255,255,255,0,0,255,0,255,0,0]));
+check(image.exportAudioSamples(1,mono));
+check(Math.fabs(mono[0]+1.0)<0.00001 && Math.fabs(mono[1]-1.0)<0.00001);
+check(Math.fabs(mono[2]+0.5748)<0.00001 && mono[3]==0.0);
+check(image.exportAudioSamples(2,stereo));
+check(stereo[0]==-1.0 && stereo[1]==-1.0 && stereo[2]==1.0 && stereo[3]==1.0);
+check(stereo[4]==0.0 && stereo[5]==-1.0 && stereo[6]==0.0 && stereo[7]==0.0);
+check(!image.exportAudioSamples(0,mono));
+check(!image.exportAudioSamples(3,mono));
+check(!image.exportAudioSamples(2,mono));
+check(mono[0]==-1.0 && mono[1]==1.0);
+0.0=>image.opacity;
+check(image.exportAudioSamples(1,mono));
+check(mono[0]==0.0 && mono[1]==0.0 && mono[2]==0.0 && mono[3]==0.0);
+image.reset();
+0.0=>image.red;
+check(image.exportAudioSamples(1,mono));
+check(Math.fabs(mono[2]+1.0)<0.00001);
+check(image.pixelAt(0,1,0)==255);
+image.clear();
+check(!image.exportAudioSamples(1,mono));
+check(Math.fabs(mono[2]+1.0)<0.00001);
+""",19,p)
