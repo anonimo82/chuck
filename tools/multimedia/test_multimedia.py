@@ -2982,3 +2982,46 @@ image.clear();
 check(!image.exportAudioSamples(1,mono));
 check(Math.fabs(mono[2]+1.0)<0.00001);
 """,19,p)
+
+    run("model", """
+Model3D model;
+check(!model.createSilhouette(0,1,[255],128,2.0));
+check(!model.createSilhouette(1,1,[0],128,2.0));
+check(!model.createSilhouette(1,1,[256],128,2.0));
+check(!model.createSilhouette(1,1,[255],0,2.0));
+check(!model.createSilhouette(1,1,[255],256,2.0));
+check(!model.createSilhouette(1,1,[255],128,0.0));
+check(!model.createSilhouette(2,1,[255],128,2.0));
+check(model.createSilhouette(1,1,[255],128,2.0));
+check(model.loaded() && model.meshVertices(0)==24 && model.faces(0)==12);
+check(model.hasNormals(0));
+check(model.vertexAt(0,0,0)==-0.5 && model.vertexAt(0,0,1)==-0.5);
+check(model.vertexAt(0,0,2)==1.0);
+float normals[72];
+check(model.exportNormals(0,normals));
+check(normals[0]==0.0 && normals[1]==0.0 && normals[2]==1.0);
+check(normals[12]==0.0 && normals[13]==0.0 && normals[14]==-1.0);
+check(!model.createSilhouette(1,1,[127],128,1.0));
+check(model.meshVertices(0)==24 && model.faces(0)==12);
+check(model.createSilhouette(2,1,[128,255],128,1.0));
+check(model.meshVertices(0)==40 && model.faces(0)==20);
+check(model.createSilhouette(3,3,[255,255,255,255,0,255,255,255,255],128,1.0));
+check(model.faces(0)==64 && model.meshVertices(0)==128);
+check(model.createSilhouette(2,2,[255,0,0,255],128,1.0));
+check(model.faces(0)==24);
+""",23,p)
+
+    run("vector", """
+VectorImage image;
+int alpha[4];
+check(!image.exportAlpha(2,2,alpha));
+check(image.create(2,2));
+check(image.addRect(0.0,0.0,1.0,2.0,0xffffff,1.0));
+check(image.exportAlpha(2,2,alpha));
+check(alpha[0]==255 && alpha[1]==0 && alpha[2]==255 && alpha[3]==0);
+check(!image.exportAlpha(1,2,alpha));
+check(alpha[0]==255 && alpha[1]==0);
+0.0=>image.opacity;
+check(image.exportAlpha(2,2,alpha));
+check(alpha[0]==0 && alpha[2]==0);
+""",9,p)
