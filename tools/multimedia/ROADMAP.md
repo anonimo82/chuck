@@ -51,3 +51,5 @@ Update this checkpoint at each validated cycle, with the last full baseline, fun
 #159: transactional insertion/deletion/replacement; 60 new checks, global 4151, local 152; cadence 18/20, native validation pending.
 
 #160: explicit styled insertion/replacement, range formatting and style lookup; 75 new checks, global 4226, local 227; cadence 19/20, native validation pending.
+
+#161: integrated editing regression and documentation; 56 new checks, global 4282, local 283; eighth text cycle implementation 5/5, cadence 20/20. Full native validation required before next functional cycle. Last confirmed cumulative total 3999. Keep all pending groups until success.

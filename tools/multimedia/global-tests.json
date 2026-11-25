@@ -24,6 +24,7 @@
     "text-flow-hit-test",
     "text-flow-selection",
     "text-flow-edit",
-    "text-flow-styled-edit"
+    "text-flow-styled-edit",
+    "text-flow-edit-consolidation"
   ]
 }
