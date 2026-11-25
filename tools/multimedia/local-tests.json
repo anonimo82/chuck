@@ -2,6 +2,7 @@
   "version": 1,
   "groups": [
     "video-opengl-framebuffer",
-    "video-chugl-texture"
+    "video-chugl-texture",
+    "video-offscreen-render"
   ]
 }
