@@ -1,5 +1,5 @@
 #include "MediaSession.h"
-#include "MediaPCM.h"
+#include "MediaPCMStream.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -276,6 +276,65 @@ CK_DLL_SFUN(pcm_decode) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+namespace {
+t_CKUINT pcmStreamOffset=0;
+mediawire::PcmStream *pcmStream(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<mediawire::PcmStream*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,pcmStreamOffset)));
+}
+}
+CK_DLL_CTOR(ps_ctor) {
+    OBJ_MEMBER_UINT(SELF,pcmStreamOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,pcmStreamOffset)=reinterpret_cast<uintptr_t>(new mediawire::PcmStream); } catch(...) {}
+}
+CK_DLL_DTOR(ps_dtor) { delete pcmStream(SELF,API); OBJ_MEMBER_UINT(SELF,pcmStreamOffset)=0; }
+CK_DLL_MFUN(ps_configure) {
+    auto *p=pcmStream(SELF,API);
+    auto stream=GET_NEXT_INT(ARGS),rate=GET_NEXT_INT(ARGS),channels=GET_NEXT_INT(ARGS),origin=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS);
+    RETURN->v_int=p&&p->configure(stream,rate,channels,origin,seq);
+}
+CK_DLL_MFUN(ps_clear) { if(auto *p=pcmStream(SELF,API)) p->clear(); }
+CK_DLL_MFUN(ps_size) { auto *p=pcmStream(SELF,API); auto n=GET_NEXT_INT(ARGS); RETURN->v_int=p?p->packetSize(n):0; }
+CK_DLL_MFUN(ps_encode) {
+    RETURN->v_int=0;
+    auto *p=pcmStream(SELF,API);
+    if(!p) return;
+    try {
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(!p->configured()) { p->reject(1); return; }
+        if(!a) { p->reject(2); return; }
+        auto n=API->object->array_float_size(a);
+        if(n<=0||n%p->channels()||!p->packetSize(n/p->channels())||!exact(dst,API,p->packetSize(n/p->channels()))) { p->reject(2); return; }
+        std::vector<double> data(static_cast<size_t>(n));
+        for(t_CKINT i=0;i<n;++i) data[i]=API->object->array_float_get_idx(a,i);
+        mediawire::Bytes wire;
+        if(p->encodeBlock(data,wire)) { write(dst,API,wire); RETURN->v_int=1; }
+    } catch(...) { p->reject(2); }
+}
+CK_DLL_MFUN(ps_decode) {
+    RETURN->v_int=0;
+    auto *p=pcmStream(SELF,API);
+    if(!p) return;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p->configured()) { p->reject(1); return; }
+        mediawire::Bytes wire;
+        if(!dst||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)) { p->reject(2); return; }
+        std::vector<double> data;
+        if(!p->decodeBlock(wire,API->object->array_float_size(dst),data)) return;
+        for(size_t i=0;i<data.size();++i) API->object->array_float_set_idx(dst,i,data[i]);
+        RETURN->v_int=1;
+    } catch(...) { p->reject(2); }
+}
+CK_DLL_MFUN(ps_configured) { auto *p=pcmStream(SELF,API); RETURN->v_int=p?p->configured():0; }
+CK_DLL_MFUN(ps_frames) { auto *p=pcmStream(SELF,API); RETURN->v_int=p?p->frames():0; }
+CK_DLL_MFUN(ps_blocks) { auto *p=pcmStream(SELF,API); RETURN->v_int=p?p->blocks():0; }
+CK_DLL_MFUN(ps_nextSequence) { auto *p=pcmStream(SELF,API); RETURN->v_int=p?p->nextSequence():0; }
+CK_DLL_MFUN(ps_nextTimestamp) { auto *p=pcmStream(SELF,API); RETURN->v_int=p?p->nextTimestamp():0; }
+CK_DLL_MFUN(ps_error) { auto *p=pcmStream(SELF,API); RETURN->v_int=p?p->error():0; }
+CK_DLL_MFUN(ps_rate) { auto *p=pcmStream(SELF,API); RETURN->v_int=p?p->rate():0; }
+CK_DLL_MFUN(ps_channels) { auto *p=pcmStream(SELF,API); RETURN->v_int=p?p->channels():0; }
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -397,5 +456,34 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_sfun(QUERY,pcm_decode,"int","decode");
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"float[]","samples");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaPCMStream","Object");
+    pcmStreamOffset=QUERY->add_mvar(QUERY,"int","@pcmStreamNative",FALSE);
+    if(pcmStreamOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,ps_ctor);
+    QUERY->add_dtor(QUERY,ps_dtor);
+    QUERY->add_mfun(QUERY,ps_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_arg(QUERY,"int","originUs");
+    QUERY->add_arg(QUERY,"int","firstSequence");
+    QUERY->add_mfun(QUERY,ps_clear,"void","clear");
+    QUERY->add_mfun(QUERY,ps_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","frames");
+    QUERY->add_mfun(QUERY,ps_encode,"int","encodeBlock");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,ps_decode,"int","decodeBlock");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,ps_configured,"int","configured");
+    QUERY->add_mfun(QUERY,ps_frames,"int","frames");
+    QUERY->add_mfun(QUERY,ps_blocks,"int","blocks");
+    QUERY->add_mfun(QUERY,ps_nextSequence,"int","nextSequence");
+    QUERY->add_mfun(QUERY,ps_nextTimestamp,"int","nextTimestamp");
+    QUERY->add_mfun(QUERY,ps_error,"int","error");
+    QUERY->add_mfun(QUERY,ps_rate,"int","rate");
+    QUERY->add_mfun(QUERY,ps_channels,"int","channels");
     return QUERY->end_class(QUERY);
 }
