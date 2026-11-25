@@ -11040,7 +11040,7 @@ for(0=>int i;i<100000 && !server.packetSize();i++){client.poll();server.poll();}
 int gotA[a.size()];
 check(server.receivePacket(gotA));
 check(rx.push(gotA)==1);
-for(0=>int i;i<100000 && client.busy();i++){client.poll();server.poll();}
+for(0=>int i;i<100000 && client.sendPending();i++){client.poll();server.poll();}
 check(client.sendPacket(b));
 for(0=>int i;i<100000 && !server.packetSize();i++){client.poll();server.poll();}
 int gotB[b.size()];
@@ -11201,7 +11201,7 @@ MediaTextBuffer tb;
 check(tb.configure(7,0,0,4,64));
 for(0=>int j;j<11;j++){
     order[j]=>int k;
-    for(0=>int i;i<100000 && client.busy();i++){client.poll();server.poll();}
+    for(0=>int i;i<100000 && client.sendPending();i++){client.poll();server.poll();}
     check(client.sendPacket(packets[k]));
     for(0=>int i;i<100000 && !server.packetSize();i++){client.poll();server.poll();}
     int got[packets[k].size()];
