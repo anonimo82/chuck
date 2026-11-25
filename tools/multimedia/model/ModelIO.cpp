@@ -372,7 +372,11 @@ CK_DLL_MFUN(model3d_set_vertex) {
     auto x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS),z=GET_NEXT_FLOAT(ARGS);
     if(!p || !p->generated || index<0 || static_cast<uint64_t>(index)>=p->generated->mMeshes[0]->mNumVertices ||
        !coordinate(x)||!coordinate(y)||!coordinate(z)) return;
-    p->generated->mMeshes[0]->mVertices[index]=aiVector3D(x,y,z);
+    auto *mesh=p->generated->mMeshes[0];
+    mesh->mVertices[index]=aiVector3D(x,y,z);
+    delete[] mesh->mNormals; mesh->mNormals=nullptr;
+    delete[] mesh->mTangents; mesh->mTangents=nullptr;
+    delete[] mesh->mBitangents; mesh->mBitangents=nullptr;
     RETURN->v_int=1;
 }
 CK_DLL_MFUN(model3d_export_vertices) {
@@ -398,6 +402,172 @@ CK_DLL_MFUN(model3d_export_triangles) {
     for(unsigned i=0;i<m->mNumFaces;++i) if(m->mFaces[i].mNumIndices!=3) return;
     for(unsigned i=0;i<m->mNumFaces;++i)
         for(int j=0;j<3;++j) API->object->array_int_set_idx(a,static_cast<int64_t>(i)*3+j,m->mFaces[i].mIndices[j]);
+    RETURN->v_int=1;
+}
+
+
+namespace {
+aiMesh *editableMesh(ModelState *p,t_CKINT index) {
+    return p && p->generated && index>=0 && static_cast<uint64_t>(index)<p->generated->mNumMeshes
+        ?p->generated->mMeshes[index]:nullptr;
+}
+void invalidateNormals(aiMesh *m) {
+    delete[] m->mNormals; m->mNormals=nullptr;
+    delete[] m->mTangents; m->mTangents=nullptr;
+    delete[] m->mBitangents; m->mBitangents=nullptr;
+}
+}
+CK_DLL_MFUN(model3d_add_mesh) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=modelState(SELF,API);
+        auto xyz=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto tris=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->generated||!xyz||!tris||p->generated->mNumMeshes>=256) return;
+        auto n=API->object->array_float_size(xyz),k=API->object->array_int_size(tris);
+        if(n<9||n>3000000||n%3||k<3||k>3000000||k%3) return;
+        auto *scene=p->generated.get();
+        uint64_t nv=n/3,nf=k/3;
+        for(unsigned i=0;i<scene->mNumMeshes;++i) {
+            nv+=scene->mMeshes[i]->mNumVertices; nf+=scene->mMeshes[i]->mNumFaces;
+        }
+        if(nv>1000000||nf>1000000) return;
+        std::vector<aiVector3D> vertices; std::vector<unsigned> indices;
+        vertices.reserve(n/3); indices.reserve(k);
+        for(t_CKINT i=0;i<n;i+=3) {
+            double x=API->object->array_float_get_idx(xyz,i),y=API->object->array_float_get_idx(xyz,i+1),
+                   z=API->object->array_float_get_idx(xyz,i+2);
+            if(!coordinate(x)||!coordinate(y)||!coordinate(z)) return;
+            vertices.emplace_back(x,y,z);
+        }
+        for(t_CKINT i=0;i<k;++i) {
+            auto v=API->object->array_int_get_idx(tris,i);
+            if(v<0||v>=n/3) return;
+            indices.push_back(static_cast<unsigned>(v));
+        }
+        ModelState candidate;
+        if(!makeMesh(&candidate,vertices,indices)) return;
+        unsigned count=scene->mNumMeshes;
+        auto meshes=std::make_unique<aiMesh*[]>(count+1);
+        auto refs=std::make_unique<unsigned[]>(count+1);
+        for(unsigned i=0;i<count;++i) { meshes[i]=scene->mMeshes[i]; refs[i]=i; }
+        auto *added=candidate.generated->mMeshes[0];
+        added->mName=aiString(std::string("Mesh_")+std::to_string(count));
+        meshes[count]=added; refs[count]=count;
+        candidate.generated->mMeshes[0]=nullptr;
+        delete[] scene->mMeshes; delete[] scene->mRootNode->mMeshes;
+        scene->mMeshes=meshes.release(); scene->mNumMeshes=count+1;
+        scene->mRootNode->mMeshes=refs.release(); scene->mRootNode->mNumMeshes=count+1;
+        RETURN->v_int=count;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_set_mesh_vertex) {
+    RETURN->v_int=0;
+    auto *p=modelState(SELF,API);
+    auto mesh=GET_NEXT_INT(ARGS),index=GET_NEXT_INT(ARGS);
+    auto x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS),z=GET_NEXT_FLOAT(ARGS);
+    auto *m=editableMesh(p,mesh);
+    if(!m||index<0||static_cast<uint64_t>(index)>=m->mNumVertices||
+       !coordinate(x)||!coordinate(y)||!coordinate(z)) return;
+    m->mVertices[index]=aiVector3D(x,y,z); invalidateNormals(m);
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(model3d_transform_mesh) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API); auto mesh=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto *m=editableMesh(p,mesh);
+        if(!m||!a||API->object->array_float_size(a)!=12) return;
+        double v[12];
+        for(int i=0;i<12;++i) { v[i]=API->object->array_float_get_idx(a,i); if(!coordinate(v[i])) return; }
+        std::vector<aiVector3D> next(m->mNumVertices);
+        for(unsigned i=0;i<m->mNumVertices;++i) {
+            auto q=m->mVertices[i];
+            double x=v[0]*q.x+v[1]*q.y+v[2]*q.z+v[3],
+                   y=v[4]*q.x+v[5]*q.y+v[6]*q.z+v[7],
+                   z=v[8]*q.x+v[9]*q.y+v[10]*q.z+v[11];
+            if(!coordinate(x)||!coordinate(y)||!coordinate(z)) return;
+            next[i]=aiVector3D(x,y,z);
+        }
+        std::copy(next.begin(),next.end(),m->mVertices);
+        invalidateNormals(m); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_compute_normals) {
+    RETURN->v_int=0;
+    try {
+        auto *m=editableMesh(modelState(SELF,API),GET_NEXT_INT(ARGS));
+        if(!m) return;
+        struct V { double x=0,y=0,z=0; };
+        std::vector<V> sums(m->mNumVertices);
+        for(unsigned i=0;i<m->mNumFaces;++i) {
+            auto &f=m->mFaces[i]; if(f.mNumIndices!=3) return;
+            unsigned a=f.mIndices[0],b=f.mIndices[1],c=f.mIndices[2];
+            if(a>=m->mNumVertices||b>=m->mNumVertices||c>=m->mNumVertices) return;
+            auto A=m->mVertices[a],B=m->mVertices[b],C=m->mVertices[c];
+            double ux=double(B.x)-A.x,uy=double(B.y)-A.y,uz=double(B.z)-A.z;
+            double vx=double(C.x)-A.x,vy=double(C.y)-A.y,vz=double(C.z)-A.z;
+            V cross{uy*vz-uz*vy,uz*vx-ux*vz,ux*vy-uy*vx};
+            for(unsigned j:{a,b,c}) { sums[j].x+=cross.x; sums[j].y+=cross.y; sums[j].z+=cross.z; }
+        }
+        auto next=std::make_unique<aiVector3D[]>(m->mNumVertices);
+        for(unsigned i=0;i<m->mNumVertices;++i) {
+            auto v=sums[i]; double len=std::hypot(v.x,v.y,v.z);
+            if(!std::isfinite(len)||len<=0) return;
+            next[i]=aiVector3D(v.x/len,v.y/len,v.z/len);
+        }
+        invalidateNormals(m); m->mNormals=next.release(); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_has_normals) {
+    auto *m=meshAt(modelState(SELF,API),GET_NEXT_INT(ARGS));
+    RETURN->v_int=m && m->HasNormals();
+}
+CK_DLL_MFUN(model3d_export_normals) {
+    RETURN->v_int=0;
+    auto *p=modelState(SELF,API); auto index=GET_NEXT_INT(ARGS);
+    auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+    auto *m=meshAt(p,index);
+    if(!m||!m->HasNormals()||!a||API->object->array_float_size(a)!=static_cast<int64_t>(m->mNumVertices)*3) return;
+    for(unsigned i=0;i<m->mNumVertices;++i) {
+        auto v=m->mNormals[i];
+        API->object->array_float_set_idx(a,3*i,v.x);
+        API->object->array_float_set_idx(a,3*i+1,v.y);
+        API->object->array_float_set_idx(a,3*i+2,v.z);
+    }
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(model3d_set_uv) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API); auto index=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto *m=editableMesh(p,index);
+        if(!m||!a||API->object->array_float_size(a)!=static_cast<int64_t>(m->mNumVertices)*2) return;
+        auto next=std::make_unique<aiVector3D[]>(m->mNumVertices);
+        for(unsigned i=0;i<m->mNumVertices;++i) {
+            double u=API->object->array_float_get_idx(a,2*i),v=API->object->array_float_get_idx(a,2*i+1);
+            if(!coordinate(u)||!coordinate(v)) return;
+            next[i]=aiVector3D(u,v,0);
+        }
+        delete[] m->mTextureCoords[0]; m->mTextureCoords[0]=next.release(); m->mNumUVComponents[0]=2;
+        delete[] m->mTangents; m->mTangents=nullptr;
+        delete[] m->mBitangents; m->mBitangents=nullptr;
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_export_uv) {
+    RETURN->v_int=0;
+    auto *p=modelState(SELF,API); auto index=GET_NEXT_INT(ARGS);
+    auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+    auto *m=meshAt(p,index);
+    if(!m||!m->HasTextureCoords(0)||m->mNumUVComponents[0]!=2||!a||
+       API->object->array_float_size(a)!=static_cast<int64_t>(m->mNumVertices)*2) return;
+    for(unsigned i=0;i<m->mNumVertices;++i) {
+        API->object->array_float_set_idx(a,2*i,m->mTextureCoords[0][i].x);
+        API->object->array_float_set_idx(a,2*i+1,m->mTextureCoords[0][i].y);
+    }
     RETURN->v_int=1;
 }
 
@@ -488,5 +658,30 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_export_triangles,"int","exportTriangles");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"int[]","triangles");
+    QUERY->add_mfun(QUERY,model3d_add_mesh,"int","addMesh");
+    QUERY->add_arg(QUERY,"float[]","xyz");
+    QUERY->add_arg(QUERY,"int[]","triangles");
+    QUERY->add_mfun(QUERY,model3d_set_mesh_vertex,"int","setVertex");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"float","x");
+    QUERY->add_arg(QUERY,"float","y");
+    QUERY->add_arg(QUERY,"float","z");
+    QUERY->add_mfun(QUERY,model3d_transform_mesh,"int","transformMesh");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"float[]","matrix");
+    QUERY->add_mfun(QUERY,model3d_compute_normals,"int","computeNormals");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_mfun(QUERY,model3d_has_normals,"int","hasNormals");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_mfun(QUERY,model3d_export_normals,"int","exportNormals");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"float[]","xyz");
+    QUERY->add_mfun(QUERY,model3d_set_uv,"int","setUV");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"float[]","uv");
+    QUERY->add_mfun(QUERY,model3d_export_uv,"int","exportUV");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"float[]","uv");
     return QUERY->end_class(QUERY);
 }
