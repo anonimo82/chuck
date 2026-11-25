@@ -8209,8 +8209,90 @@ check(!cap.audioActive());
 check(cap.audioFrames()==2);
 """,60,pathlib.Path(directory))
 
+def video_av_recording():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("video", """
+VideoCapture cap;
+VideoClip clip;
+VideoAudio audio;
+[10,20,30,255,40,50,60,255] @=> int pixels[];
+int out[8];
+float block[640];
+float readback[640];
+check(!cap.startRecordingAV("idle.mkv",25,0));
+check(!cap.recordAV());
+check(cap.recordedAudioFrames()==0);
+check(cap.nextRecordingAudioFrames()==0);
+check(cap.openSynthetic(2,1));
+check(!cap.startRecordingAV("noaudio.mkv",25,0));
+check(cap.openAudio(8000,2));
+check(!cap.startRecordingAV("bad.mkv",0,0));
+check(!cap.startRecordingAV("bad.mkv",25,-1));
+check(!cap.startRecordingAV("bad.mp4",25,0));
+check(cap.startRecordingAV("av.mkv",25,0.5));
+check(cap.recording());
+check(cap.nextRecordingAudioFrames()==320);
+check(!cap.startRecordingAV("other.mkv",25,0.5));
+check(!cap.recordAV());
+check(cap.ingestFrame(0.5,pixels));
+check(!cap.recordFrame());
+check(!cap.recordAV());
+check(cap.recordedFrames()==0);
+check(cap.recordedAudioFrames()==0);
+for(0=>int i;i<640;i++) 0.25=>block[i];
+check(cap.ingestAudio(0.5,block));
+check(cap.recordAV());
+check(cap.recordedFrames()==1);
+check(cap.recordedAudioFrames()==320);
+check(!cap.recordAV());
+check(cap.nextRecordingAudioFrames()==320);
+90=>pixels[0];
+check(cap.ingestFrame(0.51,pixels));
+check(!cap.recordAV());
+for(0=>int i;i<640;i++) -0.5=>block[i];
+check(cap.ingestAudio(0.54,block));
+check(cap.ingestFrame(0.54,pixels));
+check(cap.recordAV());
+check(cap.recordedFrames()==2);
+check(cap.recordedAudioFrames()==640);
+cap.close();
+check(cap.recording());
+check(cap.finishRecording());
+check(!cap.recording());
+check(cap.recordedAudioFrames()==640);
+check(cap.nextRecordingAudioFrames()==0);
+check(clip.load("av.mkv"));
+check(clip.exportPixels(out));
+check(out[0]==10 && out[3]==255);
+check(clip.next()==1);
+check(clip.exportPixels(out));
+check(out[0]==90);
+check(clip.next()==0);
+check(audio.load("av.mkv",0));
+check(audio.sampleRate()==8000);
+check(audio.channels()==2);
+check(audio.frames()==640);
+check(audio.readSamples(0,readback));
+check(Math.fabs(readback[0]-0.25)<0.0001);
+check(audio.readSamples(320,readback));
+check(Math.fabs(readback[639]+0.5)<0.0001);
+check(cap.openSynthetic(2,1));
+check(cap.recordedAudioFrames()==0);
+check(cap.openAudio(8000,2));
+check(!cap.startRecordingAV("av.mkv",25,0));
+check(cap.startRecordingAV("abort.mkv",25,0));
+cap.abortRecording();
+check(!cap.recording());
+check(!cap.finishRecording());
+cap.close();
+""",60,p)
+        assert (p / "av.mkv").is_file()
+        for name in ("idle.mkv", "noaudio.mkv", "bad.mkv", "bad.mp4", "other.mkv", "abort.mkv"):
+            assert not (p / name).exists()
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
