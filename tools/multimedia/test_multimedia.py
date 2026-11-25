@@ -2853,3 +2853,32 @@ check(model.exportPosedVertices(0,out) && Math.fabs(out[0]-2.0)<0.00001);
 check(model.playAnimation(1,0));
 check(model.load("triangle.obj") && model.playbackClip()==-1);
 """,35,p)
+
+    run("midi", """
+MidiSequence seq;
+float small[2];
+check(seq.renderFrames(8000)==-1);
+check(!seq.renderSamples(8000,small));
+check(seq.create(480,120.0));
+check(seq.addNote(0,0,480,0,69,127));
+check(seq.renderFrames(8000)==4000);
+float pcm[4000];
+check(seq.renderSamples(8000,pcm));
+check(pcm[0]==0.0 && pcm[3999]==0.0);
+check(Math.fabs(pcm[100])<0.00001);
+check(Math.fabs(pcm[105]-0.25*Math.sin(2.0*Math.pi*440.0*105.0/8000.0))<0.00001);
+check(!seq.renderSamples(8000,small));
+check(seq.renderFrames(7999)==-1);
+check(seq.addTempo(240,60.0));
+check(seq.renderFrames(8000)==6000);
+float slow[6000];
+check(seq.renderSamples(8000,slow));
+check(seq.addNote(0,480,480,0,69,64));
+check(seq.renderFrames(8000)==14000);
+float combined[14000];
+check(seq.renderSamples(8000,combined));
+check(Math.fabs(combined[6105]-0.25*64.0/127.0*Math.sin(2.0*Math.pi*440.0*105.0/8000.0))<0.00001);
+check(seq.addNote(0,960,480,9,36,100));
+check(seq.renderFrames(8000)==-1);
+check(!seq.renderSamples(8000,combined));
+""",21,p)
