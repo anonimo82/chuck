@@ -44,9 +44,27 @@ struct Container {
     t_CKINT backgroundColor=-1;
     double opacity=1;
 };
-struct Paragraph { std::string text; Style style; size_t baseBytes=0; std::vector<Run> runs; ParagraphStyle layout; Container box; };
+struct ListStyle {
+    std::string marker="*";
+    t_CKINT mode=0;
+    t_CKINT number=1;
+    t_CKINT level=0;
+    double levelIndent=20;
+    double markerWidth=32;
+};
+std::string listLabel(const ListStyle &p) {
+    if(p.mode==1) return "\xe2\x80\xa2";
+    if(p.mode==2) return std::to_string(p.number)+".";
+    if(p.mode==3) return p.marker;
+    return "";
+}
+double listSpace(const ListStyle &p) { return p.mode?p.level*p.levelIndent+p.markerWidth:0; }
+struct Paragraph { std::string text; Style style; size_t baseBytes=0; std::vector<Run> runs; ParagraphStyle layout; Container box; ListStyle list; };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; };
-t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0;
+t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0;
+ListStyle *listState(Chuck_Object *self,CK_DL_API API) {
+    return self?reinterpret_cast<ListStyle *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,listOffset))):nullptr;
+}
 Container *containerState(Chuck_Object *self,CK_DL_API API) {
     return self?reinterpret_cast<Container *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,containerOffset))):nullptr;
 }
@@ -443,10 +461,72 @@ CK_DLL_MFUN(text_container_opacity_set) {
     auto *p=containerState(SELF,API); double v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
     if(p&&std::isfinite(v)&&v>=0&&v<=1) RETURN->v_float=p->opacity=v;
 }
+CK_DLL_CTOR(text_list_ctor) {
+    OBJ_MEMBER_UINT(SELF,listOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,listOffset)=reinterpret_cast<uintptr_t>(new ListStyle); } catch(...) {}
+}
+CK_DLL_DTOR(text_list_dtor) { delete listState(SELF,API); OBJ_MEMBER_UINT(SELF,listOffset)=0; }
+CK_DLL_MFUN(text_list_marker_get) {
+    auto *p=listState(SELF,API);
+    RETURN->v_string=API->object->create_string(VM,p?p->marker.c_str():"",FALSE);
+}
+CK_DLL_MFUN(text_list_marker_set) {
+    RETURN->v_string=API->object->create_string(VM,"",FALSE);
+    try {
+        auto *p=listState(SELF,API); auto v=GET_NEXT_STRING_SAFE(ARGS);
+        if(p&&!v.empty()&&validText(v,64)&&v.find_first_of("\r\n\t")==std::string::npos) {
+            p->marker=v; RETURN->v_string=API->object->create_string(VM,v.c_str(),FALSE);
+        }
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_set_list) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *p=listState(GET_NEXT_OBJECT(ARGS),API);
+        if(indexOK(d,i)&&p) { ListStyle copy=*p; d->paragraphs[i].list=std::move(copy); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_get_list) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *p=listState(GET_NEXT_OBJECT(ARGS),API);
+        if(indexOK(d,i)&&p) { ListStyle copy=d->paragraphs[i].list; *p=std::move(copy); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_list_label) {
+    std::string label;
+    try { auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); if(indexOK(d,i)) label=listLabel(d->paragraphs[i].list); } catch(...) {}
+    RETURN->v_string=API->object->create_string(VM,label.c_str(),FALSE);
+}
+CK_DLL_MFUN(text_list_mode_get) { auto *p=listState(SELF,API); RETURN->v_int=p?p->mode:-1; }
+CK_DLL_MFUN(text_list_mode_set) {
+    auto *p=listState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=0&&v<=3) RETURN->v_int=p->mode=v;
+}
+CK_DLL_MFUN(text_list_number_get) { auto *p=listState(SELF,API); RETURN->v_int=p?p->number:-1; }
+CK_DLL_MFUN(text_list_number_set) {
+    auto *p=listState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=1&&v<=999999) RETURN->v_int=p->number=v;
+}
+CK_DLL_MFUN(text_list_level_get) { auto *p=listState(SELF,API); RETURN->v_int=p?p->level:-1; }
+CK_DLL_MFUN(text_list_level_set) {
+    auto *p=listState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&v>=0&&v<=16) RETURN->v_int=p->level=v;
+}
+CK_DLL_MFUN(text_list_levelIndent_get) { auto *p=listState(SELF,API); RETURN->v_float=p?p->levelIndent:std::numeric_limits<double>::quiet_NaN(); }
+CK_DLL_MFUN(text_list_levelIndent_set) {
+    auto *p=listState(SELF,API); auto v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=0&&v<=128) RETURN->v_float=p->levelIndent=v;
+}
+CK_DLL_MFUN(text_list_markerWidth_get) { auto *p=listState(SELF,API); RETURN->v_float=p?p->markerWidth:std::numeric_limits<double>::quiet_NaN(); }
+CK_DLL_MFUN(text_list_markerWidth_set) {
+    auto *p=listState(SELF,API); auto v=GET_NEXT_FLOAT(ARGS); RETURN->v_float=std::numeric_limits<double>::quiet_NaN();
+    if(p&&std::isfinite(v)&&v>=1&&v<=512) RETURN->v_float=p->markerWidth=v;
+}
 namespace {
 using LayoutPtr=std::unique_ptr<PangoLayout,decltype(&g_object_unref)>;
 LayoutPtr makeLayout(cairo_t *cr,const Paragraph &p,int width) {
-    double inner=width-p.layout.marginLeft-p.layout.marginRight-p.box.paddingLeft-p.box.paddingRight-2*p.box.borderWidth;
+    double inner=width-p.layout.marginLeft-p.layout.marginRight-p.box.paddingLeft-p.box.paddingRight-2*p.box.borderWidth-listSpace(p.list);
     if(inner<1||std::abs(p.layout.indent)>=inner) return LayoutPtr(nullptr,g_object_unref);
         std::unique_ptr<PangoLayout,decltype(&g_object_unref)> layout(pango_cairo_create_layout(cr),g_object_unref);
         if(!layout) return LayoutPtr(nullptr,g_object_unref);
@@ -502,11 +582,20 @@ LayoutPtr makeLayout(cairo_t *cr,const Paragraph &p,int width) {
 
     return layout;
 }
+LayoutPtr makeMarker(cairo_t *cr,const Paragraph &p) {
+    Paragraph marker;
+    marker.text=listLabel(p.list);
+    marker.baseBytes=marker.text.size();
+    marker.style=p.style;
+    marker.layout.wrapMode=2;
+    return makeLayout(cr,marker,static_cast<int>(std::ceil(p.list.markerWidth)));
+}
 bool paragraphDimensions(cairo_t *cr,const Paragraph &p,int width,int &w,int &h) {
     auto layout=makeLayout(cr,p,width);
     if(!layout) return false;
     int contentW=0,contentH=0; pango_layout_get_pixel_size(layout.get(),&contentW,&contentH);
-    double totalW=contentW+p.layout.marginLeft+p.layout.marginRight+p.box.paddingLeft+p.box.paddingRight+2*p.box.borderWidth;
+    if(p.list.mode) { auto marker=makeMarker(cr,p); if(!marker) return false; int mw=0,mh=0; pango_layout_get_pixel_size(marker.get(),&mw,&mh); contentH=std::max(contentH,mh); }
+    double totalW=contentW+p.layout.marginLeft+p.layout.marginRight+p.box.paddingLeft+p.box.paddingRight+2*p.box.borderWidth+listSpace(p.list);
     double totalH=contentH+p.layout.marginTop+p.layout.marginBottom+p.box.paddingTop+p.box.paddingBottom+2*p.box.borderWidth;
     if(totalW<0||totalH<0||totalW>100000000||totalH>100000000) return false;
     w=static_cast<int>(std::ceil(totalW)); h=static_cast<int>(std::ceil(totalH)); return true;
@@ -567,10 +656,12 @@ SurfacePtr renderDocument(const Document &d,int w,int h,t_CKINT bg) {
         if(!layout) return SurfacePtr(nullptr,cairo_surface_destroy);
         int contentW=0,contentH=0;
         pango_layout_get_pixel_size(layout.get(),&contentW,&contentH);
-        double totalW=contentW+p.layout.marginLeft+p.layout.marginRight+p.box.paddingLeft+p.box.paddingRight+2*p.box.borderWidth;
+        LayoutPtr marker(nullptr,g_object_unref);
+        if(p.list.mode) { marker=makeMarker(cr.get(),p); if(!marker) return SurfacePtr(nullptr,cairo_surface_destroy); int mw=0,mh=0; pango_layout_get_pixel_size(marker.get(),&mw,&mh); contentH=std::max(contentH,mh); }
+        double totalW=contentW+p.layout.marginLeft+p.layout.marginRight+p.box.paddingLeft+p.box.paddingRight+2*p.box.borderWidth+listSpace(p.list);
         double totalH=contentH+p.layout.marginTop+p.layout.marginBottom+p.box.paddingTop+p.box.paddingBottom+2*p.box.borderWidth;
         if(totalW<0||totalH<0||totalW>100000000||totalH>100000000) return SurfacePtr(nullptr,cairo_surface_destroy);
-        if(y<h&&p.box.opacity==1&&p.box.borderWidth==0&&p.box.backgroundColor<0&&p.box.paddingLeft==0&&p.box.paddingRight==0&&p.box.paddingTop==0&&p.box.paddingBottom==0) {
+        if(y<h&&!p.list.mode&&p.box.opacity==1&&p.box.borderWidth==0&&p.box.backgroundColor<0&&p.box.paddingLeft==0&&p.box.paddingRight==0&&p.box.paddingTop==0&&p.box.paddingBottom==0) {
             cairo_save(cr.get());
             cairo_rectangle(cr.get(),p.layout.marginLeft,0,w-p.layout.marginLeft-p.layout.marginRight,h);
             cairo_clip(cr.get());
@@ -602,8 +693,17 @@ SurfacePtr renderDocument(const Document &d,int w,int h,t_CKINT bg) {
             double tx=x+box.borderWidth+box.paddingLeft,ty=top+box.borderWidth+box.paddingTop;
             cairo_rectangle(cr.get(),tx,ty,bw-2*box.borderWidth-box.paddingLeft-box.paddingRight,contentH);
             cairo_clip(cr.get());
-            cairo_move_to(cr.get(),tx,ty);
             cairo_set_source_rgb(cr.get(),0,0,0);
+            if(marker) {
+                double mx=tx+p.list.level*p.list.levelIndent;
+                cairo_save(cr.get());
+                cairo_rectangle(cr.get(),mx,ty,p.list.markerWidth,contentH); cairo_clip(cr.get());
+                cairo_move_to(cr.get(),mx,ty); pango_cairo_show_layout(cr.get(),marker.get());
+                cairo_restore(cr.get());
+            }
+            cairo_rectangle(cr.get(),tx+listSpace(p.list),ty,bw-2*box.borderWidth-box.paddingLeft-box.paddingRight-listSpace(p.list),contentH);
+            cairo_clip(cr.get());
+            cairo_move_to(cr.get(),tx+listSpace(p.list),ty);
             pango_cairo_show_layout(cr.get(),layout.get());
             cairo_restore(cr.get());
             if(box.opacity<1) { cairo_pop_group_to_source(cr.get()); cairo_paint_with_alpha(cr.get(),box.opacity); }
@@ -787,6 +887,29 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_container_inherit,"int","inherit");
     QUERY->add_arg(QUERY,"TextContainer","source");
     if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"TextList","Object");
+    listOffset=QUERY->add_mvar(QUERY,"int","@textListNative",FALSE);
+    if(listOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,text_list_ctor); QUERY->add_dtor(QUERY,text_list_dtor);
+    QUERY->add_mfun(QUERY,text_list_marker_get,"string","marker");
+    QUERY->add_mfun(QUERY,text_list_marker_set,"string","marker");
+    QUERY->add_arg(QUERY,"string","value");
+    QUERY->add_mfun(QUERY,text_list_mode_get,"int","mode");
+    QUERY->add_mfun(QUERY,text_list_mode_set,"int","mode");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_list_number_get,"int","number");
+    QUERY->add_mfun(QUERY,text_list_number_set,"int","number");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_list_level_get,"int","level");
+    QUERY->add_mfun(QUERY,text_list_level_set,"int","level");
+    QUERY->add_arg(QUERY,"int","value");
+    QUERY->add_mfun(QUERY,text_list_levelIndent_get,"float","levelIndent");
+    QUERY->add_mfun(QUERY,text_list_levelIndent_set,"float","levelIndent");
+    QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,text_list_markerWidth_get,"float","markerWidth");
+    QUERY->add_mfun(QUERY,text_list_markerWidth_set,"float","markerWidth");
+    QUERY->add_arg(QUERY,"float","value");
+    if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextDocument","Object");
     docOffset=QUERY->add_mvar(QUERY,"int","@textDocumentNative",FALSE);
     if(docOffset==CK_INVALID_OFFSET) return FALSE;
@@ -837,6 +960,14 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_doc_get_container,"int","getParagraphContainer");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"TextContainer","container");
+    QUERY->add_mfun(QUERY,text_doc_set_list,"int","setParagraphList");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextList","list");
+    QUERY->add_mfun(QUERY,text_doc_get_list,"int","getParagraphList");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextList","list");
+    QUERY->add_mfun(QUERY,text_doc_list_label,"string","paragraphListLabel");
+    QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_doc_measure_document,"int","measureDocument");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int[]","dimensions");
