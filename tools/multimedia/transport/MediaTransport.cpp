@@ -755,6 +755,54 @@ CK_DLL_SFUN(md_decode) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_SFUN(ma_size){
+    auto v=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS),m=GET_NEXT_INT(ARGS);
+    RETURN->v_int=mediawire::meshAttributePacketSize(v,t,m);
+}
+CK_DLL_SFUN(ma_encode){
+    RETURN->v_int=0;try{
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS),v=GET_NEXT_INT(ARGS),mask=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto b=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(!a||!b||stream<=0||stream>=0xffffffffull||seq<0||seq>0xffffffffull||ts<0||v<3||mask<0||mask>31)return;
+        auto m=API->object->array_int_size(b);
+        if(m<3||m%3)return;
+        auto n=mediawire::meshAttributePacketSize(v,m/3,mask);
+        if(!n||!exact(dst,API,n)||API->object->array_float_size(a)!=static_cast<t_CKINT>(v*mediawire::meshAttributeStride(mask)))return;
+        std::vector<double> data(v*mediawire::meshAttributeStride(mask));std::vector<uint32_t> indices(m);
+        for(size_t i=0;i<data.size();++i)data[i]=API->object->array_float_get_idx(a,i);
+        for(size_t i=0;i<indices.size();++i){auto x=API->object->array_int_get_idx(b,i);if(x<0||x>=v)return;indices[i]=static_cast<uint32_t>(x);}
+        mediawire::Bytes wire;
+        if(mediawire::encodeMeshAttributes({3,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},v,mask,data,indices,wire)){
+            write(dst,API,wire);RETURN->v_int=1;
+        }
+    }catch(...){}
+}
+CK_DLL_SFUN(ma_inspect){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;mediawire::Header h;uint64_t v=0,mask=0;std::vector<double> data;std::vector<uint32_t> indices;
+        if(!exact(dst,API,6)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeMeshAttributes(wire,h,v,mask,data,indices))return;
+        const uint64_t fields[]={h.stream,h.sequence,h.timestamp,v,indices.size()/3,mask};
+        for(size_t i=0;i<6;++i)API->object->array_int_set_idx(dst,i,fields[i]);
+        RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(ma_decode){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto b=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;mediawire::Header h;uint64_t v=0,mask=0;std::vector<double> data;std::vector<uint32_t> indices;
+        if(!a||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeMeshAttributes(wire,h,v,mask,data,indices)||!exact(b,API,indices.size())||
+           API->object->array_float_size(a)!=static_cast<t_CKINT>(data.size()))return;
+        for(size_t i=0;i<data.size();++i)API->object->array_float_set_idx(a,i,data[i]);
+        for(size_t i=0;i<indices.size();++i)API->object->array_int_set_idx(b,i,indices[i]);
+        RETURN->v_int=1;
+    }catch(...){}
+}
 CK_DLL_SFUN(gr_inspect) {
     RETURN->v_int=0;
     try {
@@ -1965,6 +2013,28 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"float[]","xyz");
     QUERY->add_arg(QUERY,"int[]","indices");
     if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaMeshAttributes","Object");
+    QUERY->add_sfun(QUERY,ma_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","vertices");
+    QUERY->add_arg(QUERY,"int","triangles");
+    QUERY->add_arg(QUERY,"int","mask");
+    QUERY->add_sfun(QUERY,ma_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","vertices");
+    QUERY->add_arg(QUERY,"int","mask");
+    QUERY->add_arg(QUERY,"float[]","attributes");
+    QUERY->add_arg(QUERY,"int[]","indices");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,ma_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,ma_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"float[]","attributes");
+    QUERY->add_arg(QUERY,"int[]","indices");
+    if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaVideoFrame","Object");
     QUERY->add_sfun(QUERY,vf_size,"int","packetSize");
     QUERY->add_arg(QUERY,"int","width");
