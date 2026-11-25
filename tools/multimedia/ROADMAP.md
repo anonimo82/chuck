@@ -147,3 +147,5 @@ User-reported Windows Local: expected=277, PASS=277, FAIL=0, missing=0, unreport
 #179: primary desktop region snapshot backend (Windows GDI, optional Linux X11 TrueColor), screen dimensions and capability queries. 22 new headless checks, global 4941, local 82; cadence 13/20. Three previous assertions adapted without changing counts. macOS and native Wayland screen capture not implemented. Native and live desktop validation pending. No workflow changes.
 
 #180: direct RasterImage.importCapture snapshot bridge, independent pixel ownership, neutral rendering controls and PNG/edit roundtrip checks. 52 new checks, global 4993, local 134; cadence 14/20. Native and device validation pending. No workflow changes.
+
+#181: direct snapshot save, end-to-end preservation/PNG checks and opt-in device example. 40 new checks, global 5033, local 174; cadence 15/20. Windows Local validation required before closing cycle. Actual camera and desktop capture must be tested separately with consent; unsupported macOS/Wayland desktop backends remain explicit limitations. No workflow changes.
