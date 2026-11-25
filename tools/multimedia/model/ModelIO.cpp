@@ -1648,6 +1648,59 @@ CK_DLL_MFUN(model3d_create_silhouette) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(model3d_create_heightmap) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        double step=GET_NEXT_FLOAT(ARGS),scale=GET_NEXT_FLOAT(ARGS);
+        if(!p||!a||w<2||h<2||w>512||h>512||
+           !std::isfinite(step)||step<0.0001||step>1000000||
+           !std::isfinite(scale)||scale<0||scale>1000000||
+           API->object->array_float_size(a)!=w*h) return;
+        size_t n=w*h;
+        std::vector<aiVector3D> verts;
+        verts.reserve(n);
+        auto uv=std::make_unique<aiVector3D[]>(n);
+        for(int y=0;y<h;++y) for(int x=0;x<w;++x) {
+            size_t i=y*w+x;
+            double v=API->object->array_float_get_idx(a,i);
+            if(!std::isfinite(v)||v<0||v>1) return;
+            verts.emplace_back((x-(w-1)*0.5)*step,((h-1)*0.5-y)*step,v*scale);
+            uv[i]=aiVector3D(double(x)/(w-1),1.0-double(y)/(h-1),0);
+        }
+        std::vector<unsigned> indices;
+        indices.reserve(6*(w-1)*(h-1));
+        for(int y=0;y<h-1;++y) for(int x=0;x<w-1;++x) {
+            unsigned i=y*w+x,j=i+static_cast<unsigned>(w);
+            indices.insert(indices.end(),{i,j,i+1,i+1,j,j+1});
+        }
+        struct Sum { double x=0,y=0,z=0; };
+        std::vector<Sum> sums(n);
+        for(size_t i=0;i<indices.size();i+=3) {
+            auto A=verts[indices[i]],B=verts[indices[i+1]],C=verts[indices[i+2]];
+            double ux=double(B.x)-A.x,uy=double(B.y)-A.y,uz=double(B.z)-A.z;
+            double vx=double(C.x)-A.x,vy=double(C.y)-A.y,vz=double(C.z)-A.z;
+            Sum cross{uy*vz-uz*vy,uz*vx-ux*vz,ux*vy-uy*vx};
+            for(size_t k=i;k<i+3;++k) {
+                auto &s=sums[indices[k]];
+                s.x+=cross.x; s.y+=cross.y; s.z+=cross.z;
+            }
+        }
+        auto normals=std::make_unique<aiVector3D[]>(n);
+        for(size_t i=0;i<n;++i) {
+            auto s=sums[i]; double len=std::hypot(s.x,s.y,s.z);
+            if(!std::isfinite(len)||len<=0) return;
+            normals[i]=aiVector3D(s.x/len,s.y/len,s.z/len);
+        }
+        if(!makeMesh(p,verts,indices)) return;
+        auto *mesh=p->generated->mMeshes[0];
+        mesh->mNormals=normals.release();
+        mesh->mTextureCoords[0]=uv.release(); mesh->mNumUVComponents[0]=2;
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(ModelIO) {
     QUERY->setname(QUERY, "ModelIO");
     QUERY->begin_class(QUERY, "ModelIO", "Object");
@@ -1702,6 +1755,12 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_get_scaleZ,"float","scaleZ");
     QUERY->add_mfun(QUERY,model3d_set_scaleZ,"float","scaleZ");
     QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,model3d_create_heightmap,"int","createHeightmap");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"float[]","heights");
+    QUERY->add_arg(QUERY,"float","spacing");
+    QUERY->add_arg(QUERY,"float","heightScale");
     QUERY->add_mfun(QUERY,model3d_create_silhouette,"int","createSilhouette");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
