@@ -110,7 +110,7 @@ struct PageStyle {
     std::vector<t_CKINT> breaks;
     Paragraph header,footer;
     int headerHeight=0,footerHeight=0;
-    t_CKINT numbering=0,firstNumber=1,splitParagraphs=0;
+    t_CKINT numbering=0,firstNumber=1,splitParagraphs=0,splitTables=0;
 };
 struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; std::vector<NodeBlock> nodes; size_t nextOrder=0; };
 t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0;
@@ -892,6 +892,13 @@ bool expandPageBand(const Paragraph &source,const PageStyle &p,int index,int cou
 }
 }
 
+CK_DLL_MFUN(text_page_split_tables_get) {
+    auto *p=pageState(SELF,API); RETURN->v_int=p?p->splitTables:-1;
+}
+CK_DLL_MFUN(text_page_split_tables_set) {
+    auto *p=pageState(SELF,API); auto v=GET_NEXT_INT(ARGS); RETURN->v_int=-1;
+    if(p&&(v==0||v==1)) RETURN->v_int=p->splitTables=v;
+}
 CK_DLL_MFUN(text_page_split_paragraphs_get) {
     auto *p=pageState(SELF,API); RETURN->v_int=p?p->splitParagraphs:-1;
 }
@@ -1570,7 +1577,7 @@ SurfacePtr renderDocument(const Document &d,int w,int h,t_CKINT bg) {
 bool validPage(const PageStyle &p) {
     return validCanvas(p.width,p.height,p.backgroundColor)&&p.width>p.marginLeft+p.marginRight&&p.height>p.marginTop+p.marginBottom;
 }
-struct PageEntry { int kind=0; size_t index=0; int page=0; int y=0,offset=0,height=0; };
+struct PageEntry { int kind=0; size_t index=0; int page=0; int y=0,offset=0,height=0; int firstRow=0,rowCount=0; };
 // Measure boundaries between shaped lines in the original full-width layout.
 // Integer cuts never slice through the logical extents of adjacent lines.
 bool paragraphCuts(cairo_t *cr,const Paragraph &p,int width,int height,std::vector<int> &cuts) {
@@ -1631,6 +1638,24 @@ bool planPages(const Document &d,const PageStyle &p,std::vector<PageEntry> &entr
         }
         return true;
     };
+    auto splitTable=[&](size_t index,const std::vector<int> &heights) {
+        if(!boundary()) return false;
+        const auto &table=d.tables[index].table;
+        size_t from=0;
+        while(from<heights.size()) {
+            size_t to=from; int n=0;
+            while(to<heights.size()) {
+                int add=heights[to]+(to>from?table.rowGap:0);
+                if(add>height-used-n) break;
+                n+=add; ++to;
+            }
+            if(to==from) { if(!used||!advance()) return false; continue; }
+            entries.push_back({1,index,count-1,used,0,n,static_cast<int>(from),static_cast<int>(to-from)});
+            used+=n; from=to;
+            if(from<heights.size()&&!advance()) return false;
+        }
+        return true;
+    };
     size_t block=0,node=0;
     for(size_t pi=0;pi<=d.paragraphs.size();++pi) {
         while((block<d.tables.size()&&d.tables[block].after==pi)||(node<d.nodes.size()&&d.nodes[node].after==pi)) {
@@ -1638,7 +1663,10 @@ bool planPages(const Document &d,const PageStyle &p,std::vector<PageEntry> &entr
             bool tree=node<d.nodes.size()&&d.nodes[node].after==pi;
             if(table&&(!tree||d.tables[block].order<d.nodes[node].order)) {
                 std::vector<int> xs,hs; int h=0;
-                if(!tableGeometry(cr.get(),d.tables[block].table,width,xs,hs,h)||!place(1,block,h)) return false;
+                if(!tableGeometry(cr.get(),d.tables[block].table,width,xs,hs,h)) return false;
+                if(p.splitTables&&!d.tables[block].table.grid&&h>height-used) {
+                    if(!splitTable(block,hs)) return false;
+                } else if(!place(1,block,h)) return false;
                 ++block;
             } else {
                 NodeGeometry g;
@@ -1681,7 +1709,7 @@ bool drawPageContent(cairo_t *cr,const Document &source,const std::vector<PageEn
     if(!band(p.footer,p.height-p.marginBottom-p.footerHeight,p.footerHeight)) return false;
     cairo_save(cr); cairo_translate(cr,p.marginLeft,p.marginTop+p.headerHeight);
     cairo_rectangle(cr,0,0,w,h); cairo_clip(cr);
-    if(!p.splitParagraphs) {
+    if(!p.splitParagraphs&&!p.splitTables) {
         Document selected;
         for(const auto &e:entries) if(e.page==index) {
             if(e.kind==1) selected.tables.push_back({selected.paragraphs.size(),source.tables[e.index].table,selected.nextOrder++});
@@ -1694,7 +1722,16 @@ bool drawPageContent(cairo_t *cr,const Document &source,const std::vector<PageEn
     bool ok=true;
     for(const auto &e:entries) if(e.page==index) {
         Document selected;
-        if(e.kind==1) selected.tables.push_back({0,source.tables[e.index].table,0});
+        if(e.kind==1) {
+            Table table=source.tables[e.index].table;
+            if(e.rowCount) {
+                const auto &original=source.tables[e.index].table;
+                auto begin=original.cells.begin()+e.firstRow*original.cols;
+                table.cells.assign(begin,begin+e.rowCount*original.cols);
+                table.rows=e.rowCount;
+            }
+            selected.tables.push_back({0,std::move(table),0});
+        }
         else if(e.kind==2) selected.nodes.push_back({0,source.nodes[e.index].node,0});
         else selected.paragraphs.push_back(source.paragraphs[e.index]);
         cairo_save(cr);
@@ -2467,6 +2504,9 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_mfun(QUERY,text_page_clear_footer,"void","clearFooter");
     QUERY->add_mfun(QUERY,text_page_footer_height,"int","footerHeight");
+    QUERY->add_mfun(QUERY,text_page_split_tables_get,"int","splitTables");
+    QUERY->add_mfun(QUERY,text_page_split_tables_set,"int","splitTables");
+    QUERY->add_arg(QUERY,"int","value");
     QUERY->add_mfun(QUERY,text_page_split_paragraphs_get,"int","splitParagraphs");
     QUERY->add_mfun(QUERY,text_page_split_paragraphs_set,"int","splitParagraphs");
     QUERY->add_arg(QUERY,"int","value");
