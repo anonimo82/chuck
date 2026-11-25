@@ -10,6 +10,7 @@
 #include "MediaText.h"
 #include "MediaTextFragment.h"
 #include "MediaTextBuffer.h"
+#include "MediaRouter.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -1147,6 +1148,53 @@ CK_DLL_MFUN(tb_pull){
     RETURN->v_string=API->object->create_string(VM,result.c_str(),FALSE);
     if(p&&!result.empty()&&RETURN->v_string)p->pop();
 }
+namespace {
+t_CKUINT routerOffset=0;
+mediawire::MediaRouter *router(Chuck_Object *self,CK_DL_API API){
+    return reinterpret_cast<mediawire::MediaRouter*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,routerOffset)));
+}
+}
+CK_DLL_SFUN(media_inspect){
+    RETURN->v_int=0;
+    try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;std::array<uint64_t,6> m{};
+        if(!exact(dst,API,6)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire))return;
+        int k=mediawire::inspectMedia(wire,m);if(!k)return;
+        for(size_t i=0;i<m.size();++i)API->object->array_int_set_idx(dst,i,m[i]);
+        RETURN->v_int=k;
+    }catch(...){}
+}
+CK_DLL_CTOR(router_ctor){
+    OBJ_MEMBER_UINT(SELF,routerOffset)=0;
+    try{OBJ_MEMBER_UINT(SELF,routerOffset)=reinterpret_cast<uintptr_t>(new mediawire::MediaRouter);}catch(...){}
+}
+CK_DLL_DTOR(router_dtor){delete router(SELF,API);OBJ_MEMBER_UINT(SELF,routerOffset)=0;}
+CK_DLL_MFUN(router_clear){if(auto *p=router(SELF,API))p->clear();}
+CK_DLL_MFUN(router_configure){
+    auto *p=router(SELF,API);auto m=GET_NEXT_INT(ARGS);RETURN->v_int=p&&m>0&&p->configure(m);
+}
+CK_DLL_MFUN(router_add){
+    RETURN->v_int=0;
+    try{auto *p=router(SELF,API);auto s=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS),q=GET_NEXT_INT(ARGS),o=GET_NEXT_INT(ARGS);
+        if(p&&s>0&&t>0&&q>=0&&o>=0)RETURN->v_int=p->add(s,t,q,o);
+    }catch(...){}
+}
+CK_DLL_MFUN(router_streams){auto *p=router(SELF,API);RETURN->v_int=p?p->streams():0;}
+CK_DLL_MFUN(router_next){auto *p=router(SELF,API);auto s=GET_NEXT_INT(ARGS);RETURN->v_int=p&&s>0?p->next(s):0;}
+CK_DLL_MFUN(router_count){auto *p=router(SELF,API);auto s=GET_NEXT_INT(ARGS);RETURN->v_int=p&&s>0?p->count(s):0;}
+CK_DLL_MFUN(router_route){
+    RETURN->v_int=0;
+    try{
+        auto *p=router(SELF,API);auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire;std::array<uint64_t,6> m{};
+        if(!p||!exact(dst,API,6)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire))return;
+        int k=p->route(wire,m);if(!k)return;
+        for(size_t i=0;i<m.size();++i)API->object->array_int_set_idx(dst,i,m[i]);
+        RETURN->v_int=k;
+    }catch(...){}
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -1717,6 +1765,33 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_mfun(QUERY,tb_sequence,"int","nextSequence");
     QUERY->add_mfun(QUERY,tb_timestamp,"int","timestamp");
     QUERY->add_mfun(QUERY,tb_pull,"string","pull");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaPacket","Object");
+    QUERY->add_sfun(QUERY,media_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaRouter","Object");
+    routerOffset=QUERY->add_mvar(QUERY,"int","@routerNative",FALSE);
+    if(routerOffset==CK_INVALID_OFFSET)return FALSE;
+    QUERY->add_ctor(QUERY,router_ctor);
+    QUERY->add_dtor(QUERY,router_dtor);
+    QUERY->add_mfun(QUERY,router_clear,"void","clear");
+    QUERY->add_mfun(QUERY,router_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","mask");
+    QUERY->add_mfun(QUERY,router_add,"int","addStream");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","type");
+    QUERY->add_arg(QUERY,"int","firstSequence");
+    QUERY->add_arg(QUERY,"int","originUs");
+    QUERY->add_mfun(QUERY,router_streams,"int","streams");
+    QUERY->add_mfun(QUERY,router_next,"int","nextSequence");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_mfun(QUERY,router_count,"int","packets");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_mfun(QUERY,router_route,"int","route");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
     if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaGraphics","Object");
     QUERY->add_sfun(QUERY,gr_inspect,"int","inspect");
