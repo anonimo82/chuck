@@ -325,6 +325,126 @@ CK_DLL_MFUN(audio_buffer_export_samples) {
     RETURN->v_int=1;
 }
 
+
+namespace {
+bool audioRange(AudioBufferState *p,t_CKINT first,t_CKINT count) {
+    return p && p->loaded() && first>=0 && count>0 &&
+        static_cast<uint64_t>(first)<p->frames() &&
+        static_cast<uint64_t>(count)<=p->frames()-static_cast<size_t>(first);
+}
+double clipSample(double v) { return std::max(-1.0,std::min(1.0,v)); }
+}
+CK_DLL_MFUN(audio_buffer_crop) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API);
+        auto first=GET_NEXT_INT(ARGS),count=GET_NEXT_INT(ARGS);
+        if(!audioRange(p,first,count)) return;
+        auto begin=p->samples.begin()+static_cast<size_t>(first)*p->channels;
+        std::vector<double> next(begin,begin+static_cast<size_t>(count)*p->channels);
+        p->samples.swap(next); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(audio_buffer_remove) {
+    RETURN->v_int=0;
+    auto *p=audioState(SELF,API);
+    auto first=GET_NEXT_INT(ARGS),count=GET_NEXT_INT(ARGS);
+    if(!audioRange(p,first,count) || static_cast<size_t>(count)==p->frames()) return;
+    auto begin=p->samples.begin()+static_cast<size_t>(first)*p->channels;
+    p->samples.erase(begin,begin+static_cast<size_t>(count)*p->channels);
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(audio_buffer_append) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p || !p->loaded() || !a) return;
+        auto n=API->object->array_float_size(a);
+        constexpr size_t maxSamples=32*1024*1024;
+        if(n<=0 || n%p->channels || static_cast<uint64_t>(n)>maxSamples-p->samples.size()) return;
+        std::vector<double> next;
+        next.reserve(static_cast<size_t>(n));
+        for(t_CKINT i=0;i<n;++i) {
+            double v=API->object->array_float_get_idx(a,i);
+            if(!std::isfinite(v)||v< -1||v>1) return;
+            next.push_back(v);
+        }
+        p->samples.insert(p->samples.end(),next.begin(),next.end());
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(audio_buffer_reverse) {
+    RETURN->v_int=0;
+    auto *p=audioState(SELF,API);
+    if(!p || !p->loaded()) return;
+    size_t n=p->frames();
+    for(size_t i=0;i<n/2;++i) for(int c=0;c<p->channels;++c)
+        std::swap(p->samples[i*p->channels+c],p->samples[(n-1-i)*p->channels+c]);
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(audio_buffer_peak) {
+    RETURN->v_float=audioNaN();
+    auto *p=audioState(SELF,API);
+    if(!p || !p->loaded()) return;
+    double peak=0;
+    for(double v:p->samples) peak=std::max(peak,std::abs(v));
+    RETURN->v_float=peak;
+}
+CK_DLL_MFUN(audio_buffer_normalize) {
+    RETURN->v_int=0;
+    auto *p=audioState(SELF,API); auto target=GET_NEXT_FLOAT(ARGS);
+    if(!p || !p->loaded() || !std::isfinite(target)||target<0||target>1) return;
+    double peak=0;
+    for(double v:p->samples) peak=std::max(peak,std::abs(v));
+    if(peak>0) for(auto &v:p->samples) v=(v/peak)*target;
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(audio_buffer_fade) {
+    RETURN->v_int=0;
+    auto *p=audioState(SELF,API);
+    auto first=GET_NEXT_INT(ARGS),count=GET_NEXT_INT(ARGS);
+    auto from=GET_NEXT_FLOAT(ARGS),to=GET_NEXT_FLOAT(ARGS);
+    if(!audioRange(p,first,count)||count<2||!std::isfinite(from)||!std::isfinite(to)||
+       from<0||from>1||to<0||to>1) return;
+    for(size_t i=0;i<static_cast<size_t>(count);++i) {
+        double t=static_cast<double>(i)/(count-1);
+        double factor=from+(to-from)*t;
+        for(int c=0;c<p->channels;++c) p->samples[(static_cast<size_t>(first)+i)*p->channels+c]*=factor;
+    }
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(audio_buffer_mix) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API); auto first=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto gain=GET_NEXT_FLOAT(ARGS);
+        if(!p||!p->loaded()||!a||!std::isfinite(gain)||gain<0||gain>16) return;
+        auto n=API->object->array_float_size(a);
+        if(n<=0||n%p->channels||!audioRange(p,first,n/p->channels)) return;
+        for(t_CKINT i=0;i<n;++i) {
+            double v=API->object->array_float_get_idx(a,i);
+            if(!std::isfinite(v)||v< -1||v>1) return;
+        }
+        size_t start=static_cast<size_t>(first)*p->channels;
+        for(t_CKINT i=0;i<n;++i)
+            p->samples[start+i]=clipSample(p->samples[start+i]+gain*API->object->array_float_get_idx(a,i));
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(audio_buffer_read_samples) {
+    RETURN->v_int=0;
+    auto *p=audioState(SELF,API); auto first=GET_NEXT_INT(ARGS);
+    auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+    if(!p||!p->loaded()||!a) return;
+    auto n=API->object->array_float_size(a);
+    if(n<=0||n%p->channels||!audioRange(p,first,n/p->channels)) return;
+    for(t_CKINT i=0;i<n;++i)
+        API->object->array_float_set_idx(a,i,p->value(static_cast<size_t>(first)+i/p->channels,i%p->channels));
+    RETURN->v_int=1;
+}
+
 CK_DLL_QUERY(AudioIO) {
     QUERY->setname(QUERY, "AudioIO");
     QUERY->begin_class(QUERY, "AudioIO", "Object");
@@ -379,6 +499,30 @@ CK_DLL_QUERY(AudioIO) {
     QUERY->add_arg(QUERY,"int","channels");
     QUERY->add_arg(QUERY,"float[]","samples");
     QUERY->add_mfun(QUERY,audio_buffer_export_samples,"int","exportSamples");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,audio_buffer_crop,"int","crop");
+    QUERY->add_arg(QUERY,"int","firstFrame");
+    QUERY->add_arg(QUERY,"int","frameCount");
+    QUERY->add_mfun(QUERY,audio_buffer_remove,"int","remove");
+    QUERY->add_arg(QUERY,"int","firstFrame");
+    QUERY->add_arg(QUERY,"int","frameCount");
+    QUERY->add_mfun(QUERY,audio_buffer_append,"int","appendSamples");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,audio_buffer_reverse,"int","reverse");
+    QUERY->add_mfun(QUERY,audio_buffer_peak,"float","peak");
+    QUERY->add_mfun(QUERY,audio_buffer_normalize,"int","normalize");
+    QUERY->add_arg(QUERY,"float","target");
+    QUERY->add_mfun(QUERY,audio_buffer_fade,"int","fade");
+    QUERY->add_arg(QUERY,"int","firstFrame");
+    QUERY->add_arg(QUERY,"int","frameCount");
+    QUERY->add_arg(QUERY,"float","fromGain");
+    QUERY->add_arg(QUERY,"float","toGain");
+    QUERY->add_mfun(QUERY,audio_buffer_mix,"int","mixSamples");
+    QUERY->add_arg(QUERY,"int","firstFrame");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_arg(QUERY,"float","mixGain");
+    QUERY->add_mfun(QUERY,audio_buffer_read_samples,"int","readSamples");
+    QUERY->add_arg(QUERY,"int","firstFrame");
     QUERY->add_arg(QUERY,"float[]","samples");
     return QUERY->end_class(QUERY);
 }
