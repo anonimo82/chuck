@@ -759,6 +759,20 @@ CK_DLL_MFUN(raster_capture_export) {
 CK_DLL_MFUN(raster_capture_clear) {
     if(auto *p=captureState(SELF,API)) p->frame=media_capture::Frame{};
 }
+CK_DLL_MFUN(raster_capture_save) {
+    RETURN->v_int=0;
+    try {
+        auto *p=captureState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(!p||!p->frame.valid()||format(path).empty()) return;
+        RasterPixels snapshot;
+        snapshot.width=p->frame.width; snapshot.height=p->frame.height;
+        snapshot.rgba=p->frame.rgba;
+        SequenceOutput output;
+        if(snapshot.render({{1,1,1,1,0}},format(path),output,path)) {
+            output.committed=true; RETURN->v_int=1;
+        }
+    } catch(...) {}
+}
 CK_DLL_MFUN(raster_image_import_capture) {
     RETURN->v_int=0;
     try {
@@ -825,6 +839,8 @@ CK_DLL_QUERY(RasterIO) {
     QUERY->add_mfun(QUERY,raster_capture_seconds,"float","timestamp");
     QUERY->add_mfun(QUERY,raster_capture_export,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,raster_capture_save,"int","save");
+    QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,raster_capture_clear,"void","clear");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"RasterImage","Object");

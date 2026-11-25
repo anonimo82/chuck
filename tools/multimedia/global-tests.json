@@ -39,6 +39,7 @@
     "raster-capture-foundation",
     "raster-camera-capture",
     "raster-screen-capture",
-    "raster-capture-image"
+    "raster-capture-image",
+    "raster-capture-consolidation"
   ]
 }
