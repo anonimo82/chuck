@@ -5831,8 +5831,60 @@ check(doc.pageCount(page)==2);
         assert not (p / "invalid-numbered.pdf").exists()
 
 
+
+def text_split_paragraphs():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextDocument doc;
+TextPage page;
+TextStyle style;
+TextRun mixed;
+check(page.width(160)==160);
+check(page.height(48)==48);
+check(page.splitParagraphs()==0);
+check(page.splitParagraphs(2)==-1);
+check(style.fontSize(16)==16);
+check(doc.addParagraph("One\\nTwo\\nThree\\nFour\\nFive\\nSix",style));
+check(style.color(0xff0000)==0xff0000);
+check(mixed.set("\\nSeven\\nEight",style));
+check(doc.appendRun(0,mixed));
+check(doc.pageCount(page)==-1);
+check(page.splitParagraphs(1)==1);
+doc.pageCount(page)=>int count;
+check(count>=3 && count<=8);
+int pixels[160*48*4];
+check(doc.exportPage(page,0,pixels));
+check(doc.exportPage(page,count-1,pixels));
+check(!doc.exportPage(page,count,pixels));
+0=>int redInk;
+for(0=>int i;i<160*48;i++) {
+    if(pixels[i*4]>200 && pixels[i*4+1]<100 && pixels[i*4+2]<100) redInk++;
+}
+check(redInk>0);
+check(doc.savePDF("split.pdf",page));
+check(doc.savePagePNG("split-last.png",page,count-1));
+check(doc.paragraphCount()==1);
+check(doc.paragraphText(0)=="One\\nTwo\\nThree\\nFour\\nFive\\nSix\\nSeven\\nEight");
+check(doc.addParagraph("Next",style));
+check(page.addBreak(1));
+check(doc.pageCount(page)==count+1);
+check(page.removeBreak(1));
+check(doc.pageCount(page)>=count);
+check(page.height(1)==1);
+check(doc.pageCount(page)==-1);
+check(!doc.savePDF("bad-split.pdf",page));
+check(page.height(48)==48);
+check(page.splitParagraphs(0)==0);
+check(doc.pageCount(page)==-1);
+""",31,p)
+        assert (p / "split.pdf").read_bytes().startswith(b"%PDF-")
+        assert (p / "split-last.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert not (p / "bad-split.pdf").exists()
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")

@@ -4,6 +4,7 @@
     "text-page-breaks",
     "text-recent",
     "text-page-furniture",
-    "text-page-numbers"
+    "text-page-numbers",
+    "text-split-paragraphs"
   ]
 }
