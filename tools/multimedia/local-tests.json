@@ -2,6 +2,7 @@
   "version": 1,
   "groups": [
     "video-camera-session",
-    "video-screen-recording"
+    "video-screen-recording",
+    "video-audio-capture"
   ]
 }
