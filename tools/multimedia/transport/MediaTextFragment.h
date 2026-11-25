@@ -38,6 +38,7 @@ public:
     size_t size()const{return data_.size();}
     bool ready()const{return total_&&data_.size()==total_;}
     const Bytes &data()const{return data_;}
+    bool take(Bytes &out){if(!ready())return false;out.swap(data_);reset();return true;}
     // 0 rejected (state unchanged), 1 accepted, 2 complete. Explicit reset between messages.
     int push(const Bytes &wire){
         if(ready())return 0;
