@@ -3592,6 +3592,8 @@ struct VideoCaptureState {
     t_CKINT recorded=0,lastRecorded=0;
     int64_t recordedAudio=0,recordOrigin=0;
     int recordFPS=0;
+    bool indexedRecording=false;
+    t_CKINT indexedBase=0;
     int audioRate=0,audioChannels=0;
     bool audioActive=false,audioStarted=false;
     int64_t audioFirst=0;
@@ -3606,6 +3608,7 @@ struct VideoCaptureState {
     void reset(int m,int width,int height) {
         frame=media_capture::Frame{}; count=0; mode=m; w=width; h=height;
         recorded=lastRecorded=0; recordedAudio=recordOrigin=0; recordFPS=0;
+        indexedRecording=false;indexedBase=0;
         audioRate=audioChannels=0; audioActive=false; audioStarted=false; audioFirst=0;
         std::vector<double>().swap(audioSamples);
     }
@@ -3720,7 +3723,7 @@ CK_DLL_MFUN(video_capture_record_start) {
         if(!p||!p->mode||p->recording||fps<1||fps>120) return;
         auto writer=std::make_unique<VideoWriterState>(path);
         if(!writer->open(p->w,p->h,fps)) return;
-        p->recording=std::move(writer);p->recorded=0;p->lastRecorded=0;p->recordedAudio=0;p->recordFPS=0;p->recordOrigin=0;RETURN->v_int=1;
+        p->recording=std::move(writer);p->recorded=0;p->lastRecorded=0;p->recordedAudio=0;p->recordFPS=0;p->recordOrigin=0;p->indexedRecording=false;RETURN->v_int=1;
     } catch(...) {}
 }
 CK_DLL_MFUN(video_capture_record_frame) {
@@ -3812,7 +3815,7 @@ CK_DLL_MFUN(video_capture_record_av_start) {
         auto writer=std::make_unique<VideoWriterState>(path);
         if(!writer->open(p->w,p->h,fps,p->audioRate,p->audioChannels)) return;
         p->recordOrigin=std::llround(origin*p->audioRate);p->recordFPS=static_cast<int>(fps);
-        p->recording=std::move(writer);p->recorded=p->lastRecorded=0;p->recordedAudio=0;
+        p->recording=std::move(writer);p->recorded=p->lastRecorded=0;p->recordedAudio=0;p->indexedRecording=false;
         RETURN->v_int=1;
     } catch(...) {}
 }
@@ -3823,7 +3826,7 @@ CK_DLL_MFUN(video_capture_record_av_frame) {
     try {
         auto &w=*p->recording;
         int64_t n=w.nextSamples();
-        if(n<=0||p->frame.seconds>86400) return;
+        if(n<=0||p->indexedRecording||p->frame.seconds>86400) return;
         int64_t first=p->recordOrigin+w.samples;
         // Nearest output frame slot, relative to explicit session origin.
         double slot=(p->frame.seconds-static_cast<double>(p->recordOrigin)/p->audioRate)*p->recordFPS;
@@ -3953,6 +3956,76 @@ CK_DLL_MFUN(video_capture_offscreen_render) {
            (p->count&&seconds<p->frame.seconds)||r<0||r>255||g<0||g>255||b<0||b>255) return;
         media_capture::Frame next;
         if(p->offscreen->render(seconds,r,g,b,next)) RETURN->v_int=p->accept(std::move(next));
+    } catch(...) {}
+}
+
+
+CK_DLL_MFUN(video_capture_indexed_start) {
+    RETURN->v_int=0;
+    try {
+        auto *p=videoCaptureState(SELF,API);auto path=GET_NEXT_STRING_SAFE(ARGS);
+        auto fps=GET_NEXT_INT(ARGS),origin=GET_NEXT_INT(ARGS);
+        if(!p||p->recording||!p->audioRate||fps<1||fps>120||origin<0||
+           origin>static_cast<int64_t>(86400)*p->audioRate||
+           (p->mode!=2&&p->mode!=4&&p->mode!=5&&p->mode!=6)) return;
+        if(p->audioStarted&&origin<p->audioFirst) return;
+        auto writer=std::make_unique<VideoWriterState>(path);
+        if(!writer->open(p->w,p->h,fps,p->audioRate,p->audioChannels)) return;
+        p->recordOrigin=origin;p->recordFPS=static_cast<int>(fps);
+        p->indexedBase=p->count;p->lastRecorded=p->count;
+        p->recorded=0;p->recordedAudio=0;p->indexedRecording=true;
+        p->recording=std::move(writer);RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_capture_indexed_active) {
+    auto *p=videoCaptureState(SELF,API);RETURN->v_int=p&&p->recording&&p->indexedRecording;
+}
+CK_DLL_MFUN(video_capture_indexed_next) {
+    auto *p=videoCaptureState(SELF,API);
+    RETURN->v_int=p&&p->recording&&p->indexedRecording&&p->recorded<1000000?p->recorded:-1;
+}
+CK_DLL_MFUN(video_capture_indexed_audio_start) {
+    auto *p=videoCaptureState(SELF,API);
+    RETURN->v_int=p&&p->recording&&p->indexedRecording?p->recordOrigin+p->recording->samples:-1;
+}
+CK_DLL_MFUN(video_capture_indexed_append) {
+    RETURN->v_int=0;
+    auto *p=videoCaptureState(SELF,API);auto index=GET_NEXT_INT(ARGS);
+    if(!p||!p->recording||!p->indexedRecording||!p->frame.valid()||
+       index<0||index!=p->recorded||p->count!=p->indexedBase+index+1||
+       p->count<=p->lastRecorded) return;
+    try {
+        auto &w=*p->recording;
+        int64_t n=w.nextSamples(),first=p->recordOrigin+w.samples;
+        if(n<=0||!p->audioStarted||first<p->audioFirst||
+           first-p->audioFirst>p->audioFrames()||
+           n>p->audioFrames()-(first-p->audioFirst)) return;
+        size_t offset=static_cast<size_t>(first-p->audioFirst)*p->audioChannels;
+        int ret=w.appendCapturedAV(p->frame.rgba,p->audioSamples.data()+offset,n);
+        if(ret==1) {++p->recorded;p->lastRecorded=p->count;p->recordedAudio=w.samples;RETURN->v_int=1;}
+        if(ret<0) p->recording.reset();
+    } catch(...) {p->recording.reset();}
+}
+CK_DLL_MFUN(video_capture_indexed_ingest_audio) {
+    RETURN->v_int=0;
+    try {
+        auto *p=videoCaptureState(SELF,API);auto first=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->mode||!p->audioActive||!a||first<0||
+           first>static_cast<int64_t>(86400)*p->audioRate) return;
+        auto n=API->object->array_float_size(a);
+        constexpr size_t limit=8*1024*1024;
+        if(n<=0||n%p->audioChannels||static_cast<uint64_t>(n)>limit-p->audioSamples.size()||
+           (p->audioStarted&&first!=p->audioFirst+p->audioFrames())) return;
+        std::vector<double> block(static_cast<size_t>(n));
+        for(t_CKINT k=0;k<n;++k) {
+            double x=API->object->array_float_get_idx(a,k);
+            if(!std::isfinite(x)||x< -1||x>1) return;
+            block[k]=x;
+        }
+        p->audioSamples.insert(p->audioSamples.end(),block.begin(),block.end());
+        if(!p->audioStarted) {p->audioFirst=first;p->audioStarted=true;}
+        RETURN->v_int=1;
     } catch(...) {}
 }
 
@@ -4319,6 +4392,18 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_arg(QUERY,"int","red");
     QUERY->add_arg(QUERY,"int","green");
     QUERY->add_arg(QUERY,"int","blue");
+    QUERY->add_mfun(QUERY,video_capture_indexed_start,"int","startRecordingIndexed");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_arg(QUERY,"int","fps");
+    QUERY->add_arg(QUERY,"int","originSample");
+    QUERY->add_mfun(QUERY,video_capture_indexed_active,"int","indexedRecording");
+    QUERY->add_mfun(QUERY,video_capture_indexed_next,"int","nextRecordingIndex");
+    QUERY->add_mfun(QUERY,video_capture_indexed_audio_start,"int","nextRecordingAudioStart");
+    QUERY->add_mfun(QUERY,video_capture_indexed_append,"int","recordIndexed");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,video_capture_indexed_ingest_audio,"int","ingestAudioAt");
+    QUERY->add_arg(QUERY,"int","firstSample");
+    QUERY->add_arg(QUERY,"float[]","samples");
     QUERY->add_mfun(QUERY,video_capture_export,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY)) return FALSE;
