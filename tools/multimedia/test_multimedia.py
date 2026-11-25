@@ -3483,3 +3483,70 @@ check(soundtrack.frames()==8000 && soundtrack.sampleRate()==8000);
 check(soundtrack.exportSamples(source));
 check(source[0]==0.5 && source[7999]==-0.5);
 """,20,p)
+
+    run("midi", """
+MidiSequence seq;
+int pixels[4096];
+check(!seq.exportPianoRoll(8000,0,8,128,pixels));
+check(seq.create(480,120.0));
+check(seq.addNote(0,0,480,0,60,100));
+check(seq.addNote(0,480,480,0,64,100));
+check(seq.renderFrames(8000)==8000);
+check(seq.exportPianoRoll(8000,0,8,128,pixels));
+check(pixels[(67*8+1)*4]==255 && pixels[(67*8+1)*4+1]==192);
+check(pixels[(63*8+5)*4]==48 && pixels[(63*8+5)*4+2]==192);
+check(pixels[0]==255 && pixels[3]==255 && pixels[7]==255);
+check(seq.exportPianoRoll(8000,4000,8,128,pixels));
+check(pixels[(67*8+1)*4]==48 && pixels[(63*8+5)*4]==255);
+check(pixels[4*4]==255 && pixels[4*4+1]==255);
+check(seq.exportPianoRoll(8000,8000,8,128,pixels));
+check(pixels[(63*8+5)*4]==48 && pixels[7*4]==255);
+check(!seq.exportPianoRoll(7999,0,8,128,pixels));
+check(!seq.exportPianoRoll(8000,-1,8,128,pixels));
+check(!seq.exportPianoRoll(8000,8001,8,128,pixels));
+check(!seq.exportPianoRoll(8000,0,8,127,pixels));
+check(!seq.exportPianoRoll(8000,0,9,128,pixels));
+check(pixels[(63*8+5)*4]==48 && pixels[7*4]==255);
+12=>seq.transpose;
+check(seq.exportPianoRoll(8000,0,8,128,pixels));
+check(pixels[(55*8+1)*4]==255 && pixels[(67*8+1)*4]==0);
+seq.reset();
+check(seq.addTempo(480,60.0));
+check(seq.renderFrames(8000)==12000);
+check(seq.exportPianoRoll(8000,4000,8,128,pixels));
+check(pixels[(63*8+5)*4]==255 && pixels[(67*8+1)*4]==48);
+""",26,p)
+
+    run("video", """
+@import "MidiFileIO";
+MidiSequence seq;
+VideoWriter writer;
+VideoClip clip;
+VideoAudio soundtrack;
+check(seq.create(480,120.0));
+check(seq.addNote(0,0,480,0,60,100));
+check(seq.addNote(0,480,480,0,64,100));
+check(seq.renderFrames(8000)==8000);
+float pcm[8000];
+check(seq.renderSamples(8000,pcm));
+check(writer.openAV("piano-roll-animation.mkv",8,128,2,8000,1));
+int pixels[4096];
+float samples[4000];
+for(0=>int i;i<2;i++) {
+    check(seq.exportPianoRoll(8000,i*4000,8,128,pixels));
+    for(0=>int j;j<4000;j++) pcm[i*4000+j]=>samples[j];
+    check(writer.appendAV(pixels,samples));
+}
+check(writer.frames()==2 && writer.audioFrames()==8000);
+check(writer.finish());
+check(clip.load("piano-roll-animation.mkv"));
+check(clip.exportPixels(pixels));
+check(pixels[(67*8+1)*4]==255 && pixels[(63*8+5)*4]==48);
+check(clip.next()==1);
+check(clip.exportPixels(pixels));
+check(pixels[(67*8+1)*4]==48 && pixels[(63*8+5)*4]==255);
+check(soundtrack.load("piano-roll-animation.mkv",0));
+check(soundtrack.frames()==8000 && soundtrack.sampleRate()==8000);
+check(soundtrack.exportSamples(pcm));
+check(Math.fabs(pcm[100])>0.001);
+""",22,p)
