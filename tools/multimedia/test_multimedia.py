@@ -3144,3 +3144,51 @@ check(model.renderOrthographic(0,4,4,2.0,0xffffff,pixels));
 check(pixels[23]==0 && pixels[27]==255);
 check(pixels[59]==0);
 """,25,p)
+
+    run("model", """
+Model3D model;
+float projected[14];
+check(!model.projectTriangles(0,8,8,2.0,0xffffff,projected));
+check(model.createMesh([-1.0,-1.0,1.0,1.0,-1.0,1.0,-1.0,1.0,1.0,-1.0,-1.0,0.0,-1.0,1.0,0.0,1.0,-1.0,0.0],[0,1,2,3,4,5]));
+check(model.projectTriangles(0,8,8,2.0,0xffffff,projected));
+check(projected[0]==0.0 && projected[1]==8.0 && projected[2]==0.0 && projected[3]==0.0);
+check(projected[6]==4210752.0 && projected[13]==16777215.0);
+check(projected[7]==0.0 && projected[8]==8.0 && projected[9]==8.0 && projected[10]==8.0);
+check(!model.projectTriangles(-1,8,8,2.0,0xffffff,projected));
+check(!model.projectTriangles(0,0,8,2.0,0xffffff,projected));
+check(!model.projectTriangles(0,8,8,0.0,0xffffff,projected));
+check(!model.projectTriangles(0,8,8,2.0,-1,projected));
+float small[7];
+check(!model.projectTriangles(0,8,8,2.0,0xffffff,small));
+check(projected[6]==4210752.0 && projected[13]==16777215.0);
+0.5=>model.x;
+check(model.projectTriangles(0,8,8,2.0,0xff0000,projected));
+check(projected[0]==2.0 && projected[7]==2.0 && projected[13]==16711680.0);
+check(model.load("triangle.obj"));
+check(model.projectTriangles(0,8,8,2.0,0xffffff,small));
+check(small[0]==4.0 && small[1]==4.0 && small[2]==8.0 && small[3]==4.0);
+""",17,p)
+
+    run("vector", """
+VectorImage image;
+[0.0,0.0,8.0,0.0,0.0,8.0,16711680.0,0.0,0.0,8.0,0.0,0.0,8.0,255.0] @=> float projected[];
+check(image.importTriangles(8,8,projected));
+check(image.shapes()==2);
+int pixels[256];
+check(image.exportPixels(8,8,pixels));
+check(pixels[0]==0 && pixels[2]==255 && pixels[3]==255);
+check(pixels[255]==0);
+check(image.removeShape(1));
+check(image.exportPixels(8,8,pixels));
+check(pixels[0]==255 && pixels[2]==0 && pixels[3]==255);
+2.0=>image.x;
+check(!image.importTriangles(0,8,projected));
+check(!image.importTriangles(8,8,[0.0,0.0]));
+check(!image.importTriangles(8,8,[0.0,0.0,8.0,0.0,0.0,8.0,-1.0]));
+check(!image.importTriangles(8,8,[0.0,0.0,8.0,0.0,0.0,8.0,1.5]));
+check(image.x()==2.0 && image.shapes()==1);
+check(image.importTriangles(8,8,[0.0,0.0,1.0,1.0,2.0,2.0,255.0]));
+check(image.shapes()==0 && image.x()==0.0);
+check(image.exportPixels(8,8,pixels));
+check(pixels[3]==0);
+""",17,p)
