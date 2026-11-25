@@ -3824,3 +3824,47 @@ check(seq.importPitches(480,120.0,0.128,0,100,detected));
 check(seq.notes(0)==1);
 check(seq.save("video-audio.mid"));
 """,32,p)
+
+    run("video", """
+@import "VectorIO";
+VideoClip clip;
+VectorImage image;
+int pixels[64];
+int rendered[64];
+check(!clip.exportQuantized(4,4,2,pixels));
+check(clip.load("generated.mkv"));
+check(clip.exportQuantized(4,4,2,pixels));
+check(pixels[0]==255 && pixels[1]==0 && pixels[2]==0 && pixels[3]==255);
+check(pixels[60]==255 && pixels[63]==255);
+check(image.importPixels(4,4,pixels));
+check(image.shapes()==4);
+check(image.exportPixels(4,4,rendered));
+check(rendered[0]==255 && rendered[62]==0 && rendered[63]==255);
+check(image.save("video-red.svg"));
+0.4=>clip.red;
+check(clip.exportQuantized(4,4,2,pixels));
+check(pixels[0]==0 && pixels[3]==255);
+check(clip.exportQuantized(4,4,3,pixels));
+check(pixels[0]==128 && pixels[60]==128);
+check(clip.exportQuantized(4,4,256,pixels));
+check(pixels[0]==102);
+check(!clip.exportQuantized(4,4,1,pixels));
+check(!clip.exportQuantized(4,4,257,pixels));
+check(!clip.exportQuantized(0,4,2,pixels));
+check(!clip.exportQuantized(65,65,2,pixels));
+check(!clip.exportQuantized(2,2,2,pixels));
+check(pixels[0]==102 && pixels[63]==255);
+check(clip.frameIndex()==0);
+check(clip.next()==1);
+check(clip.exportQuantized(4,4,4,pixels));
+check(pixels[0]==0 && pixels[2]==255 && pixels[63]==255);
+check(image.importPixels(4,4,pixels));
+check(image.shapes()==4);
+check(image.exportPixels(4,4,rendered));
+check(rendered[2]==255 && rendered[60]==0 && rendered[63]==255);
+check(image.save("video-blue.svg"));
+check(clip.frameIndex()==1 && clip.width()==16 && clip.height()==16);
+clip.clear();
+check(!clip.exportQuantized(4,4,2,pixels));
+check(pixels[2]==255);
+""",34,p)
