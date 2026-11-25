@@ -3868,3 +3868,46 @@ clip.clear();
 check(!clip.exportQuantized(4,4,2,pixels));
 check(pixels[2]==255);
 """,34,p)
+
+    run("video", """
+@import "ModelIO";
+VideoClip clip;
+Model3D model;
+float heights[6];
+check(!clip.exportHeightmap(3,2,heights));
+check(clip.load("generated.mkv"));
+check(clip.exportHeightmap(3,2,heights));
+check(Math.fabs(heights[0]-0.2126)<0.000001 && Math.fabs(heights[5]-0.2126)<0.000001);
+check(model.createHeightmap(3,2,heights,2.0,10.0));
+check(model.meshVertices(0)==6 && model.faces(0)==4);
+check(Math.fabs(model.vertexAt(0,0,2)-2.126)<0.00001);
+check(model.vertexAt(0,0,0)==-2.0 && model.vertexAt(0,0,1)==1.0);
+check(model.hasNormals(0));
+float normals[18];
+check(model.exportNormals(0,normals));
+check(Math.fabs(normals[2]-1.0)<0.000001);
+check(!clip.exportHeightmap(1,6,heights));
+check(!clip.exportHeightmap(513,2,heights));
+check(!clip.exportHeightmap(2,2,heights));
+check(Math.fabs(heights[0]-0.2126)<0.000001);
+check(clip.frameIndex()==0 && clip.width()==16 && clip.height()==16);
+0.0=>clip.red;
+check(clip.exportHeightmap(3,2,heights));
+check(heights[0]==0.0 && heights[5]==0.0);
+check(Math.fabs(model.vertexAt(0,0,2)-2.126)<0.00001);
+check(clip.next()==1);
+check(clip.exportHeightmap(3,2,heights));
+check(Math.fabs(heights[0]-0.0722)<0.000001 && Math.fabs(heights[5]-0.0722)<0.000001);
+check(model.createHeightmap(3,2,heights,2.0,10.0));
+check(Math.fabs(model.vertexAt(0,5,2)-0.722)<0.00001);
+check(model.meshVertices(0)==6 && model.faces(0)==4);
+1.0=>clip.brightness;
+check(clip.exportHeightmap(3,2,heights));
+check(Math.fabs(heights[0]-1.0)<0.000001 && Math.fabs(heights[5]-1.0)<0.000001);
+check(model.createHeightmap(3,2,heights,2.0,10.0));
+check(Math.fabs(model.vertexAt(0,5,2)-10.0)<0.00001);
+check(clip.frameIndex()==1);
+clip.clear();
+check(!clip.exportHeightmap(3,2,heights));
+check(Math.fabs(heights[0]-1.0)<0.000001);
+""",32,p)
