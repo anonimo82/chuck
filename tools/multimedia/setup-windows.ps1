@@ -37,7 +37,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "MSYS2 update interrupted; rerun this script." }
     & $bash -lc 'pacman -Syu --noconfirm'
     if ($LASTEXITCODE -ne 0) { throw "MSYS2 update failed; rerun this script." }
-    & $bash -lc 'pacman -S --needed --noconfirm git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-imagemagick mingw-w64-ucrt-x86_64-librsvg mingw-w64-ucrt-x86_64-cairo mingw-w64-ucrt-x86_64-assimp mingw-w64-ucrt-x86_64-libsndfile mingw-w64-ucrt-x86_64-ffmpeg'
+    & $bash -lc 'pacman -S --needed --noconfirm git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-imagemagick mingw-w64-ucrt-x86_64-librsvg mingw-w64-ucrt-x86_64-cairo mingw-w64-ucrt-x86_64-assimp mingw-w64-ucrt-x86_64-libsndfile mingw-w64-ucrt-x86_64-ffmpeg mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-libjpeg-turbo mingw-w64-ucrt-x86_64-libwebp mingw-w64-ucrt-x86_64-zlib'
     if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed." }
     Write-Host "Dependencies installed. Run build-and-test.ps1 next."
 } finally { Stop-Transcript }
