@@ -3310,3 +3310,39 @@ check(image.exportPitches(48,60,128,0,pitches));
 check(pitches[2]==48);
 check(image.pixelAt(2,0,0)==255);
 """,24,p)
+
+    run("vector", """
+VectorImage image;
+int pitches[6];
+check(!image.exportPitches(3,2,48,60,128,0,pitches));
+check(image.create(3,2));
+check(image.addRect(0.0,0.0,1.0,1.0,0x000000,1.0));
+check(image.addRect(1.0,0.0,1.0,1.0,0xffffff,1.0));
+check(image.addRect(2.0,0.0,1.0,1.0,0xff0000,1.0));
+check(image.addRect(0.0,1.0,1.0,1.0,0x00ff00,1.0));
+check(image.addRect(2.0,1.0,1.0,1.0,0xffffff,0.5));
+check(image.exportPitches(3,2,48,60,100,0,pitches));
+check(pitches[0]==48 && pitches[1]==60 && pitches[2]==51);
+check(pitches[3]==57 && pitches[4]==-1 && pitches[5]==60);
+check(image.exportPitches(3,2,48,60,200,1,pitches));
+check(pitches[0]==48 && pitches[1]==57 && pitches[2]==60 && pitches[3]==-1 && pitches[4]==51 && pitches[5]==-1);
+check(image.exportPitches(3,2,48,60,100,2,pitches));
+check(pitches[3]==60 && pitches[4]==-1 && pitches[5]==57);
+check(!image.exportPitches(0,2,48,60,100,0,pitches));
+check(!image.exportPitches(4096,4096,48,60,100,0,pitches));
+check(!image.exportPitches(3,2,-1,60,100,0,pitches));
+check(!image.exportPitches(3,2,48,128,100,0,pitches));
+check(!image.exportPitches(3,2,60,48,100,0,pitches));
+check(!image.exportPitches(3,2,48,60,0,0,pitches));
+check(!image.exportPitches(3,2,48,60,256,0,pitches));
+check(!image.exportPitches(3,2,48,60,100,3,pitches));
+check(!image.exportPitches(2,2,48,60,100,0,pitches));
+check(pitches[3]==60 && pitches[5]==57);
+0.0=>image.opacity;
+check(image.exportPitches(3,2,48,60,100,0,pitches));
+check(pitches[0]==-1 && pitches[5]==-1);
+image.reset();
+check(image.exportPitches(3,2,64,64,100,0,pitches));
+check(pitches[0]==64 && pitches[4]==-1 && pitches[5]==64);
+check(image.shapes()==5);
+""",29,p)
