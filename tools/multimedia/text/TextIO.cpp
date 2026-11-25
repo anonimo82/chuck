@@ -95,7 +95,8 @@ struct Table {
 bool cellOK(Table *t,t_CKINT row,t_CKINT col) {
     return t&&row>=0&&col>=0&&row<t->rows&&col<t->cols;
 }
-struct TableBlock { size_t after=0; Table table; };
+struct TableBlock { size_t after=0; Table table; size_t order=0; };
+struct NodeBlock { size_t after=0; Node node; size_t order=0; };
 struct PageStyle {
     t_CKINT width=640;
     t_CKINT height=480;
@@ -105,7 +106,7 @@ struct PageStyle {
     t_CKINT marginBottom=0;
     t_CKINT backgroundColor=16777215;
 };
-struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; };
+struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; std::vector<TableBlock> tables; size_t tableCells=0,tableBytes=0; std::vector<NodeBlock> nodes; size_t nextOrder=0; };
 t_CKUINT styleOffset=0,docOffset=0,runOffset=0,paragraphStyleOffset=0,containerOffset=0,listOffset=0,tableOffset=0,gridOffset=0,pageOffset=0,nodeOffset=0;
 Node *nodeState(Chuck_Object *self,CK_DL_API API) {
     return self?reinterpret_cast<Node *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,nodeOffset))):nullptr;
@@ -269,10 +270,10 @@ CK_DLL_MFUN(text_doc_style) {
 }
 CK_DLL_MFUN(text_doc_remove) {
     auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); RETURN->v_int=0;
-    if(indexOK(d,i)) { d->bytes-=d->paragraphs[i].text.size(); d->runs-=d->paragraphs[i].runs.size(); d->paragraphs.erase(d->paragraphs.begin()+i); for(auto &b:d->tables) if(b.after>static_cast<size_t>(i)) --b.after; RETURN->v_int=1; }
+    if(indexOK(d,i)) { d->bytes-=d->paragraphs[i].text.size(); d->runs-=d->paragraphs[i].runs.size(); d->paragraphs.erase(d->paragraphs.begin()+i); for(auto &b:d->tables) if(b.after>static_cast<size_t>(i)) --b.after; for(auto &b:d->nodes) if(b.after>static_cast<size_t>(i)) --b.after; RETURN->v_int=1; }
 }
 CK_DLL_MFUN(text_doc_clear) {
-    if(auto *d=docState(SELF,API)) { d->paragraphs.clear(); d->bytes=0; d->runs=0; d->tables.clear(); d->tableCells=0; d->tableBytes=0; }
+    if(auto *d=docState(SELF,API)) { d->paragraphs.clear(); d->bytes=0; d->runs=0; d->tables.clear(); d->tableCells=0; d->tableBytes=0; d->nodes.clear(); d->nextOrder=0; }
 }
 CK_DLL_CTOR(text_run_ctor) {
     OBJ_MEMBER_UINT(SELF,runOffset)=0;
@@ -710,7 +711,7 @@ size_t blockIndex(const Document &d,t_CKINT index,bool grid) {
 }
 bool appendBlock(Document *d,const Table *t,bool grid) {
     if(!d||!t||!t->rows||t->grid!=grid||d->tables.size()>=256||d->tableCells+t->cells.size()>4096||d->tableBytes+t->bytes>1048576) return false;
-    d->tables.push_back({d->paragraphs.size(),*t});
+    d->tables.push_back({d->paragraphs.size(),*t,d->nextOrder}); ++d->nextOrder;
     d->tableCells+=t->cells.size(); d->tableBytes+=t->bytes; return true;
 }
 bool replaceBlock(Document *d,t_CKINT i,const Table *t,bool grid) {
@@ -1049,6 +1050,42 @@ CK_DLL_MFUN(text_node_rowGap_set) {
     if(n&&n->kind==4&&v>=0&&v<=512) RETURN->v_int=n->rowGap=v;
 }
 namespace {
+bool nodeBudget(const Document &d,const Node &n,size_t skip) {
+    NodeStats st;
+    for(size_t i=0;i<d.nodes.size();++i) if(i!=skip&&!nodeStats(d.nodes[i].node,st)) return false;
+    return nodeStats(n,st);
+}
+bool docNodeOK(const Document *d,t_CKINT i) { return d&&i>=0&&static_cast<uint64_t>(i)<d->nodes.size(); }
+}
+CK_DLL_MFUN(text_doc_append_node) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto *n=nodeState(GET_NEXT_OBJECT(ARGS),API);
+        if(!d||!n||d->nodes.size()>=256||!nodeBudget(*d,*n,d->nodes.size())) return;
+        d->nodes.push_back({d->paragraphs.size(),*n,d->nextOrder}); ++d->nextOrder; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_node_count) { auto *d=docState(SELF,API); RETURN->v_int=d?d->nodes.size():0; }
+CK_DLL_MFUN(text_doc_set_node) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *n=nodeState(GET_NEXT_OBJECT(ARGS),API);
+        if(docNodeOK(d,i)&&n&&nodeBudget(*d,*n,i)) { Node copy=*n; d->nodes[i].node=std::move(copy); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_get_node) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *n=nodeState(GET_NEXT_OBJECT(ARGS),API);
+        if(docNodeOK(d,i)&&n) { Node copy=d->nodes[i].node; *n=std::move(copy); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_remove_node) {
+    RETURN->v_int=0;
+    auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    if(docNodeOK(d,i)) { d->nodes.erase(d->nodes.begin()+i); RETURN->v_int=1; }
+}
+namespace {
 using LayoutPtr=std::unique_ptr<PangoLayout,decltype(&g_object_unref)>;
 LayoutPtr makeLayout(cairo_t *cr,const Paragraph &p,int width) {
     double inner=width-p.layout.marginLeft-p.layout.marginRight-p.box.paddingLeft-p.box.paddingRight-2*p.box.borderWidth-listSpace(p.list);
@@ -1173,6 +1210,126 @@ bool drawTable(cairo_t *cr,const Table &t,int width,int canvasHeight,int64_t &y,
     }
     return cairo_status(cr)==CAIRO_STATUS_SUCCESS;
 }
+// A single measured plan is reused for drawing; each subtree is visited once per pass.
+struct NodeGeometry {
+    int width=0,height=0,bodyWidth=0,bodyHeight=0;
+    double x=0,y=0,bodyX=0,bodyY=0;
+    std::vector<NodeGeometry> children;
+    std::vector<double> childX,childY;
+    std::vector<int> itemHeight;
+};
+bool nodeGeometry(cairo_t *cr,const Node &n,int width,NodeGeometry &g) {
+    const auto &p=n.paragraph; const auto &b=p.box; const auto &f=p.layout;
+    g.width=width;
+    double inner=width-f.marginLeft-f.marginRight-b.paddingLeft-b.paddingRight-2*b.borderWidth;
+    if(inner<1) return false;
+    g.bodyWidth=static_cast<int>(std::floor(inner));
+    g.bodyX=f.marginLeft+b.borderWidth+b.paddingLeft;
+    g.bodyY=f.marginTop+b.borderWidth+b.paddingTop;
+    double content=0;
+    if(n.kind==1) {
+        int w=0,h=0;
+        if(!paragraphDimensions(cr,p,width,w,h)) return false;
+        g.height=h; return true;
+    }
+    g.children.resize(n.children.size()); g.childX.resize(n.children.size()); g.childY.resize(n.children.size());
+    if(n.kind==3||n.kind==4) {
+        int available=g.bodyWidth-(n.cols-1)*n.columnGap;
+        if(available<n.cols) return false;
+        std::vector<int> xs(n.cols+1,0);
+        double sum=0,partial=0; for(double v:n.weights) sum+=v;
+        for(int c=0;c<n.cols;c++) { partial+=n.weights[c]; xs[c+1]=c+1==n.cols?available:static_cast<int>(std::lround(available*partial/sum)); }
+        for(int r=0;r<n.rows;r++) {
+            int rowH=0;
+            for(int c=0;c<n.cols;c++) {
+                size_t i=r*n.cols+c; int cw=xs[c+1]-xs[c];
+                if(cw<1||!nodeGeometry(cr,n.children[i],cw,g.children[i])) return false;
+                rowH=std::max(rowH,g.children[i].height);
+                g.childX[i]=xs[c]+c*n.columnGap; g.childY[i]=content;
+            }
+            // Stretch cell decorations to the row height while retaining natural content placement.
+            for(int c=0;c<n.cols;c++) g.children[r*n.cols+c].height=rowH;
+            content+=rowH; if(r+1<n.rows) content+=n.rowGap;
+        }
+    } else {
+        double gutter=n.kind==5?listSpace(p.list):0;
+        int cw=static_cast<int>(std::floor(g.bodyWidth-gutter));
+        if(cw<1) return false;
+        for(size_t i=0;i<n.children.size();++i) {
+            if(!nodeGeometry(cr,n.children[i],cw,g.children[i])) return false;
+            int h=g.children[i].height;
+            if(n.kind==5) {
+                Paragraph marker; marker.list=p.list;
+                if(marker.list.mode==2) marker.list.number+=i;
+                auto ml=makeMarker(cr,marker); if(!ml) return false;
+                int mw=0,mh=0; pango_layout_get_pixel_size(ml.get(),&mw,&mh); h=std::max(h,mh);
+            }
+            g.childX[i]=gutter; g.childY[i]=content; g.itemHeight.push_back(h);
+            content+=h; if(i+1<n.children.size()) content+=n.gap;
+        }
+    }
+    double total=content+f.marginTop+f.marginBottom+b.paddingTop+b.paddingBottom+2*b.borderWidth;
+    if(total<0||total>100000000) return false;
+    g.bodyHeight=static_cast<int>(std::ceil(content));
+    g.height=static_cast<int>(std::ceil(total)); return true;
+}
+void nodeColor(cairo_t *cr,t_CKINT rgb) { cairo_set_source_rgb(cr,((rgb>>16)&255)/255.0,((rgb>>8)&255)/255.0,(rgb&255)/255.0); }
+bool drawNode(cairo_t *cr,const Node &n,const NodeGeometry &g,double x,double y) {
+    const auto &p=n.paragraph; const auto &b=p.box; const auto &f=p.layout;
+    if(b.opacity==0||g.height==0) return true;
+    double bx=x+f.marginLeft,by=y+f.marginTop,bw=g.width-f.marginLeft-f.marginRight,bh=g.height-f.marginTop-f.marginBottom;
+    if(bh<=0) return true;
+    cairo_save(cr); cairo_rectangle(cr,bx,by,bw,bh); cairo_clip(cr);
+    if(b.opacity<1) cairo_push_group(cr);
+    if(b.backgroundColor>=0) { nodeColor(cr,b.backgroundColor); cairo_paint(cr); }
+    if(b.borderWidth>0) {
+        nodeColor(cr,b.borderColor); cairo_set_line_width(cr,b.borderWidth);
+        double half=b.borderWidth/2;
+        cairo_rectangle(cr,bx+half,by+half,bw-b.borderWidth,bh-b.borderWidth); cairo_stroke(cr);
+    }
+    double tx=x+g.bodyX,ty=y+g.bodyY;
+    double ch=bh-b.paddingTop-b.paddingBottom-2*b.borderWidth;
+    cairo_save(cr); cairo_rectangle(cr,tx,ty,g.bodyWidth,std::max(0.0,ch)); cairo_clip(cr);
+    bool ok=true;
+    if(n.kind==1) {
+        auto l=makeLayout(cr,p,g.width);
+        if(!l) ok=false;
+        else {
+            cairo_set_source_rgb(cr,0,0,0);
+            if(p.list.mode) {
+                auto ml=makeMarker(cr,p); if(!ml) ok=false;
+                else {
+                    double mx=tx+p.list.level*p.list.levelIndent;
+                    cairo_save(cr); cairo_rectangle(cr,mx,ty,p.list.markerWidth,ch); cairo_clip(cr);
+                    cairo_move_to(cr,mx,ty); pango_cairo_show_layout(cr,ml.get()); cairo_restore(cr);
+                }
+            }
+            cairo_rectangle(cr,tx+listSpace(p.list),ty,g.bodyWidth-listSpace(p.list),ch); cairo_clip(cr);
+            cairo_move_to(cr,tx+listSpace(p.list),ty); pango_cairo_show_layout(cr,l.get());
+        }
+    } else for(size_t i=0;i<n.children.size()&&ok;i++) {
+        if(n.kind==5) {
+            Paragraph marker; marker.list=p.list;
+            if(marker.list.mode==2) marker.list.number+=i;
+            auto ml=makeMarker(cr,marker);
+            if(!ml) { ok=false; break; }
+            double mx=tx+p.list.level*p.list.levelIndent,my=ty+g.childY[i];
+            cairo_save(cr); cairo_rectangle(cr,mx,my,p.list.markerWidth,g.itemHeight[i]); cairo_clip(cr);
+            cairo_set_source_rgb(cr,0,0,0); cairo_move_to(cr,mx,my); pango_cairo_show_layout(cr,ml.get()); cairo_restore(cr);
+        }
+        ok=drawNode(cr,n.children[i],g.children[i],tx+g.childX[i],ty+g.childY[i]);
+    }
+    cairo_restore(cr);
+    if(b.opacity<1) { cairo_pop_group_to_source(cr); cairo_paint_with_alpha(cr,b.opacity); }
+    cairo_restore(cr);
+    return ok&&cairo_status(cr)==CAIRO_STATUS_SUCCESS;
+}
+bool visitNode(cairo_t *cr,const Node &n,int width,int canvasHeight,int64_t &y,bool draw) {
+    NodeGeometry g;
+    if(!nodeGeometry(cr,n,width,g)||g.height>100000000-y) return false;
+    if(draw&&y<canvasHeight&&!drawNode(cr,n,g,0,y)) return false;
+    y+=g.height; return true;
+}
 }
 CK_DLL_MFUN(text_doc_measure) {
     RETURN->v_int=0;
@@ -1208,6 +1365,10 @@ CK_DLL_MFUN(text_doc_measure_document) {
             if(!drawTable(cr.get(),b.table,width,0,totalH,false)) return;
             maxW=std::max(maxW,static_cast<int>(width));
         }
+        for(const auto &b:d->nodes) {
+            if(!visitNode(cr.get(),b.node,width,0,totalH,false)) return;
+            maxW=std::max(maxW,static_cast<int>(width));
+        }
         API->object->array_int_set_idx(a,0,maxW); API->object->array_int_set_idx(a,1,totalH); RETURN->v_int=1;
     } catch(...) {}
 }
@@ -1218,11 +1379,14 @@ bool validCanvas(t_CKINT w,t_CKINT h,t_CKINT bg) {
 }
 bool drawDocument(cairo_t *cr,const Document &d,int w,int h) {
     // Validate all paragraphs, including those beyond the visible canvas.
-    int64_t y=0; size_t block=0;
+    int64_t y=0; size_t block=0,node=0;
     for(size_t pi=0;pi<=d.paragraphs.size();++pi) {
-        while(block<d.tables.size()&&d.tables[block].after==pi) {
-            if(!drawTable(cr,d.tables[block].table,w,h,y,true)) return false;
-            ++block;
+        while((block<d.tables.size()&&d.tables[block].after==pi)||(node<d.nodes.size()&&d.nodes[node].after==pi)) {
+            bool table=block<d.tables.size()&&d.tables[block].after==pi;
+            bool tree=node<d.nodes.size()&&d.nodes[node].after==pi;
+            if(table&&(!tree||d.tables[block].order<d.nodes[node].order)) {
+                if(!drawTable(cr,d.tables[block++].table,w,h,y,true)) return false;
+            } else if(!visitNode(cr,d.nodes[node++].node,w,h,y,true)) return false;
         }
         if(pi==d.paragraphs.size()) break;
         const auto &p=d.paragraphs[pi];
@@ -1306,7 +1470,7 @@ SurfacePtr renderDocument(const Document &d,int w,int h,t_CKINT bg) {
 bool validPage(const PageStyle &p) {
     return validCanvas(p.width,p.height,p.backgroundColor)&&p.width>p.marginLeft+p.marginRight&&p.height>p.marginTop+p.marginBottom;
 }
-struct PageEntry { bool table=false; size_t index=0; int page=0; };
+struct PageEntry { int kind=0; size_t index=0; int page=0; };
 bool planPages(const Document &d,const PageStyle &p,std::vector<PageEntry> &entries,int &count) {
     if(!validPage(p)) return false;
     SurfacePtr surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1),cairo_surface_destroy);
@@ -1315,21 +1479,29 @@ bool planPages(const Document &d,const PageStyle &p,std::vector<PageEntry> &entr
     if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return false;
     int width=p.width-p.marginLeft-p.marginRight, height=p.height-p.marginTop-p.marginBottom;
     count=1; int used=0;
-    auto place=[&](bool table,size_t index,int h) {
+    auto place=[&](int kind,size_t index,int h) {
         if(h<0||h>height) return false;
         if(h>height-used) { if(count>=4096) return false; ++count; used=0; }
-        entries.push_back({table,index,count-1}); used+=h; return true;
+        entries.push_back({kind,index,count-1}); used+=h; return true;
     };
-    size_t block=0;
+    size_t block=0,node=0;
     for(size_t pi=0;pi<=d.paragraphs.size();++pi) {
-        while(block<d.tables.size()&&d.tables[block].after==pi) {
-            std::vector<int> xs,hs; int h=0;
-            if(!tableGeometry(cr.get(),d.tables[block].table,width,xs,hs,h)||!place(true,block,h)) return false;
-            ++block;
+        while((block<d.tables.size()&&d.tables[block].after==pi)||(node<d.nodes.size()&&d.nodes[node].after==pi)) {
+            bool table=block<d.tables.size()&&d.tables[block].after==pi;
+            bool tree=node<d.nodes.size()&&d.nodes[node].after==pi;
+            if(table&&(!tree||d.tables[block].order<d.nodes[node].order)) {
+                std::vector<int> xs,hs; int h=0;
+                if(!tableGeometry(cr.get(),d.tables[block].table,width,xs,hs,h)||!place(1,block,h)) return false;
+                ++block;
+            } else {
+                NodeGeometry g;
+                if(!nodeGeometry(cr.get(),d.nodes[node].node,width,g)||!place(2,node,g.height)) return false;
+                ++node;
+            }
         }
         if(pi==d.paragraphs.size()) break;
         int w=0,h=0;
-        if(!paragraphDimensions(cr.get(),d.paragraphs[pi],width,w,h)||!place(false,pi,h)) return false;
+        if(!paragraphDimensions(cr.get(),d.paragraphs[pi],width,w,h)||!place(0,pi,h)) return false;
     }
     return true;
 }
@@ -1338,7 +1510,8 @@ SurfacePtr renderPage(const Document &d,const PageStyle &p,t_CKINT page) {
     if(!planPages(d,p,entries,count)||page<0||page>=count) return SurfacePtr(nullptr,cairo_surface_destroy);
     Document selected;
     for(const auto &e:entries) if(e.page==page) {
-        if(e.table) selected.tables.push_back({selected.paragraphs.size(),d.tables[e.index].table});
+        if(e.kind==1) selected.tables.push_back({selected.paragraphs.size(),d.tables[e.index].table,selected.nextOrder++});
+        else if(e.kind==2) selected.nodes.push_back({selected.paragraphs.size(),d.nodes[e.index].node,selected.nextOrder++});
         else selected.paragraphs.push_back(d.paragraphs[e.index]);
     }
     SurfacePtr surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,p.width,p.height),cairo_surface_destroy);
@@ -1861,6 +2034,17 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_doc_save_page,"int","savePagePNG");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_arg(QUERY,"TextPage","page");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_doc_append_node,"int","appendNode");
+    QUERY->add_arg(QUERY,"TextNode","node");
+    QUERY->add_mfun(QUERY,text_doc_node_count,"int","nodeCount");
+    QUERY->add_mfun(QUERY,text_doc_set_node,"int","setNode");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextNode","node");
+    QUERY->add_mfun(QUERY,text_doc_get_node,"int","getNode");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextNode","destination");
+    QUERY->add_mfun(QUERY,text_doc_remove_node,"int","removeNode");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_doc_measure_document,"int","measureDocument");
     QUERY->add_arg(QUERY,"int","width");

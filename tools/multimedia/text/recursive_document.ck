@@ -1,0 +1,10 @@
+@import "TextIO";
+TextDocument doc; TextNode root; TextNode panels; TextNode items; TextNode leaf; TextStyle style; TextList numbering; TextContainer box;
+2=>numbering.mode; items.createList(numbering);
+leaf.setParagraph("First item",style); items.appendChild(leaf);
+leaf.setParagraph("Second item",style); items.appendChild(leaf);
+panels.createGrid(1,2); panels.columnGap(12); panels.setCellNode(0,0,items);
+leaf.setParagraph("A second panel",style); panels.setCellNode(0,1,leaf);
+0xe8f0ff=>box.backgroundColor; 12.0=>box.paddingLeft; 12.0=>box.paddingTop; 12.0=>box.paddingBottom;
+root.setContainer(box); root.appendChild(panels); doc.appendNode(root);
+if(!doc.savePNG("recursive.png",640,240,0xffffff)) <<< "PNG save failed" >>>;
