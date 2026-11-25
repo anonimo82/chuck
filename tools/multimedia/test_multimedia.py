@@ -2719,3 +2719,37 @@ check(model.baseColorTexturePath(0,0)=="");
 model.clear();
 check(model.baseColorTexturePath(0,0)=="");
 """,18,p)
+
+
+    import base64, struct
+    png=base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR9sAAAAASUVORK5CYII=")
+    geom=struct.pack("<9f6f3H",0,0,0,1,0,0,0,1,0,0,0,1,0,0,1,0,1,2)
+    embedded={"asset":{"version":"2.0"},"buffers":[{"byteLength":len(geom),"uri":"data:application/octet-stream;base64,"+base64.b64encode(geom).decode()}],
+      "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":24,"target":34962},{"buffer":0,"byteOffset":60,"byteLength":6,"target":34963}],
+      "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},{"bufferView":1,"componentType":5126,"count":3,"type":"VEC2"},{"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"}],
+      "images":[{"uri":"data:image/png;base64,"+base64.b64encode(png).decode()}],"textures":[{"source":0}],
+      "materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}],
+      "meshes":[{"primitives":[{"attributes":{"POSITION":0,"TEXCOORD_0":1},"indices":2,"material":0}]}],"nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0}
+    (p/"embedded.gltf").write_text(json.dumps(embedded),encoding="utf-8")
+    run("model", """
+Model3D model;
+check(model.embeddedBaseColorFormat(0,0)=="");
+check(!model.exportEmbeddedBaseColor(0,0,"embedded.png"));
+check(model.load("embedded.gltf"));
+model.materialAt(0) => int mat;
+check(model.baseColorTextures(mat)==1);
+check(model.baseColorTexturePath(mat,0)=="");
+check(model.embeddedBaseColorFormat(mat,0)=="png");
+check(model.embeddedBaseColorFormat(mat,1)=="");
+check(model.embeddedBaseColorFormat(-1,0)=="");
+check(!model.exportEmbeddedBaseColor(mat,0,"embedded.jpg"));
+check(!model.exportEmbeddedBaseColor(mat,1,"wrong.png"));
+check(model.exportEmbeddedBaseColor(mat,0,"embedded.png"));
+check(!model.exportEmbeddedBaseColor(mat,0,"embedded.png"));
+check(!model.exportEmbeddedBaseColor(mat,0,"missing/embedded.png"));
+check(model.load("triangle.obj"));
+check(model.embeddedBaseColorFormat(model.materialAt(0),0)=="");
+""",15,p)
+    assert (p/"embedded.png").read_bytes()==png
+    assert not (p/"embedded.jpg").exists()
+    assert not (p/"wrong.png").exists()
