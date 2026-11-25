@@ -6797,7 +6797,7 @@ check(flow.insertText(4,"!"));
 check(flow.ready()==0);
 check(flow.sourceText()=="base! café");
 check(flow.frameCount()==1);
-check(flow.replaceText(3,7,"X"));
+check(flow.replaceText(3,6,"X"));
 check(flow.sourceText()=="basXcafé");
 check(flow.selectionFocus()==4);
 check(flow.layout());
