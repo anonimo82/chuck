@@ -1701,6 +1701,85 @@ CK_DLL_MFUN(model3d_create_heightmap) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(model3d_render_orthographic) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto index=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        double span=GET_NEXT_FLOAT(ARGS);
+        auto rgb=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        auto *m=meshAt(p,index);
+        if(!m||!a||w<1||h<1||w>2048||h>2048||w*h>4194304||
+           !std::isfinite(span)||span<0.0001||span>1e9||rgb<0||rgb>0xffffff||
+           m->mNumVertices>1000000||m->mNumFaces>1000000||
+           API->object->array_int_size(a)!=w*h*4) return;
+        aiMatrix4x4 t,rx,ry,rz,s;
+        constexpr double rad=3.14159265358979323846/180.0;
+        auto &c=p->controls;
+        aiMatrix4x4::Translation(aiVector3D(c[0],c[1],c[2]),t);
+        aiMatrix4x4::RotationX(static_cast<ai_real>(std::remainder(c[3],360.0)*rad),rx);
+        aiMatrix4x4::RotationY(static_cast<ai_real>(std::remainder(c[4],360.0)*rad),ry);
+        aiMatrix4x4::RotationZ(static_cast<ai_real>(std::remainder(c[5],360.0)*rad),rz);
+        aiMatrix4x4::Scaling(aiVector3D(c[6],c[7],c[8]),s);
+        auto transform=t*rz*ry*rx*s;
+        struct V { double x,y,z; };
+        std::vector<V> verts;
+        verts.reserve(m->mNumVertices);
+        double factor=h/span;
+        for(unsigned i=0;i<m->mNumVertices;++i) {
+            auto v=transform*m->mVertices[i];
+            if(!std::isfinite(v.x)||!std::isfinite(v.y)||!std::isfinite(v.z)) return;
+            verts.push_back({w*0.5+v.x*factor,h*0.5-v.y*factor,v.z});
+        }
+        auto edge=[](V a,V b,double x,double y) {
+            return (b.x-a.x)*(y-a.y)-(b.y-a.y)*(x-a.x);
+        };
+        std::vector<double> depth(w*h,-std::numeric_limits<double>::infinity());
+        std::vector<unsigned char> pixels(w*h*4,0);
+        uint64_t work=0;
+        for(unsigned f=0;f<m->mNumFaces;++f) {
+            const auto &face=m->mFaces[f];
+            if(face.mNumIndices!=3) return;
+            for(unsigned k=0;k<3;++k) if(face.mIndices[k]>=verts.size()) return;
+            V A=verts[face.mIndices[0]],B=verts[face.mIndices[1]],C=verts[face.mIndices[2]];
+            double area=edge(A,B,C.x,C.y);
+            if(!std::isfinite(area)||area==0) continue;
+            double minX=std::min({A.x,B.x,C.x}),maxX=std::max({A.x,B.x,C.x});
+            double minY=std::min({A.y,B.y,C.y}),maxY=std::max({A.y,B.y,C.y});
+            if(maxX<0.5||maxY<0.5||minX>w-0.5||minY>h-0.5) continue;
+            int x0=static_cast<int>(std::max(0.0,std::ceil(minX-0.5)));
+            int y0=static_cast<int>(std::max(0.0,std::ceil(minY-0.5)));
+            int x1=static_cast<int>(std::min(double(w-1),std::floor(maxX-0.5)));
+            int y1=static_cast<int>(std::min(double(h-1),std::floor(maxY-0.5)));
+            if(x1<x0||y1<y0) continue;
+            work+=uint64_t(x1-x0+1)*(y1-y0+1);
+            if(work>100000000) return;
+            double ux=(B.x-A.x)/factor,uy=-(B.y-A.y)/factor,uz=B.z-A.z;
+            double vx=(C.x-A.x)/factor,vy=-(C.y-A.y)/factor,vz=C.z-A.z;
+            double nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;
+            double len=std::hypot(nx,ny,nz);
+            if(!std::isfinite(len)||len<=0) continue;
+            double light=0.25+0.75*std::clamp(nz/len,0.0,1.0);
+            unsigned char colors[3];
+            for(int k=0;k<3;++k) colors[k]=static_cast<unsigned char>(
+                std::lround(((rgb>>(16-8*k))&255)*light));
+            for(int y=y0;y<=y1;++y) for(int x=x0;x<=x1;++x) {
+                double px=x+0.5,py=y+0.5;
+                double u=edge(B,C,px,py)/area,v=edge(C,A,px,py)/area,q=edge(A,B,px,py)/area;
+                if(u< -1e-12||v< -1e-12||q< -1e-12) continue;
+                double z=u*A.z+v*B.z+q*C.z;
+                size_t i=static_cast<size_t>(y)*w+x;
+                if(z<=depth[i]) continue;
+                depth[i]=z;
+                for(int k=0;k<3;++k) pixels[4*i+k]=colors[k];
+                pixels[4*i+3]=255;
+            }
+        }
+        for(size_t i=0;i<pixels.size();++i) API->object->array_int_set_idx(a,i,pixels[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(ModelIO) {
     QUERY->setname(QUERY, "ModelIO");
     QUERY->begin_class(QUERY, "ModelIO", "Object");
@@ -1755,6 +1834,13 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_get_scaleZ,"float","scaleZ");
     QUERY->add_mfun(QUERY,model3d_set_scaleZ,"float","scaleZ");
     QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,model3d_render_orthographic,"int","renderOrthographic");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"float","verticalSpan");
+    QUERY->add_arg(QUERY,"int","rgb");
+    QUERY->add_arg(QUERY,"int[]","pixels");
     QUERY->add_mfun(QUERY,model3d_create_heightmap,"int","createHeightmap");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
