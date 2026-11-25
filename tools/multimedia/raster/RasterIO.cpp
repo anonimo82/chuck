@@ -1,6 +1,7 @@
 // Optional offline raster I/O for ChucK; no VM changes.
 #include "chuck_dl.h"
 #include "../file_compat.h"
+#include "../capture/CaptureFrame.h"
 #include "../keyframe/keyframe.h"
 #include <array>
 #include <vector>
@@ -645,6 +646,75 @@ CK_DLL_MFUN(raster_image_export_blend) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+namespace {
+struct RasterCaptureState {
+    media_capture::Frame frame;
+};
+t_CKUINT rasterCaptureOffset=0;
+RasterCaptureState *captureState(Chuck_Object *self,CK_DL_API API) {
+    return reinterpret_cast<RasterCaptureState *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,rasterCaptureOffset)));
+}
+}
+CK_DLL_CTOR(raster_capture_ctor) {
+    OBJ_MEMBER_UINT(SELF,rasterCaptureOffset)=reinterpret_cast<uintptr_t>(new(std::nothrow) RasterCaptureState);
+}
+CK_DLL_DTOR(raster_capture_dtor) {
+    delete captureState(SELF,API); OBJ_MEMBER_UINT(SELF,rasterCaptureOffset)=0;
+}
+CK_DLL_MFUN(raster_capture_platform) {
+    RETURN->v_int=static_cast<int>(media_capture::platform());
+}
+CK_DLL_MFUN(raster_capture_supported) {
+    auto source=GET_NEXT_INT(ARGS);
+    RETURN->v_int=0; // No native backend registered yet.
+    (void)source;
+}
+CK_DLL_MFUN(raster_capture_devices) {
+    auto source=GET_NEXT_INT(ARGS);
+    RETURN->v_int=(source==1||source==2)?0:-1;
+}
+CK_DLL_MFUN(raster_capture_ingest) {
+    RETURN->v_int=0;
+    try {
+        auto *p=captureState(SELF,API); auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        double seconds=GET_NEXT_FLOAT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!a||!media_capture::Frame::dimensions(w,h)||!std::isfinite(seconds)||seconds<0) return;
+        size_t n=static_cast<size_t>(w)*h*4;
+        if(API->object->array_int_size(a)!=static_cast<t_CKINT>(n)) return;
+        media_capture::Frame next; next.width=static_cast<int>(w); next.height=static_cast<int>(h); next.seconds=seconds;
+        next.rgba.resize(n);
+        for(size_t k=0;k<n;++k) {
+            auto v=API->object->array_int_get_idx(a,k);
+            if(v<0||v>255) return;
+            next.rgba[k]=static_cast<unsigned char>(v);
+        }
+        p->frame=std::move(next); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(raster_capture_ready) {
+    auto *p=captureState(SELF,API); RETURN->v_int=p&&p->frame.valid();
+}
+CK_DLL_MFUN(raster_capture_width) {
+    auto *p=captureState(SELF,API); RETURN->v_int=p&&p->frame.valid()?p->frame.width:-1;
+}
+CK_DLL_MFUN(raster_capture_height) {
+    auto *p=captureState(SELF,API); RETURN->v_int=p&&p->frame.valid()?p->frame.height:-1;
+}
+CK_DLL_MFUN(raster_capture_seconds) {
+    auto *p=captureState(SELF,API); RETURN->v_float=p&&p->frame.valid()?p->frame.seconds:-1;
+}
+CK_DLL_MFUN(raster_capture_export) {
+    RETURN->v_int=0;
+    auto *p=captureState(SELF,API);
+    auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+    if(!p||!p->frame.valid()||!a||API->object->array_int_size(a)!=static_cast<t_CKINT>(p->frame.rgba.size())) return;
+    for(size_t k=0;k<p->frame.rgba.size();++k) API->object->array_int_set_idx(a,k,p->frame.rgba[k]);
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(raster_capture_clear) {
+    if(auto *p=captureState(SELF,API)) p->frame=media_capture::Frame{};
+}
 CK_DLL_QUERY(RasterIO) {
     QUERY->setname(QUERY, "RasterIO");
     QUERY->begin_class(QUERY, "RasterIO", "Object");
@@ -661,6 +731,29 @@ CK_DLL_QUERY(RasterIO) {
     QUERY->add_arg(QUERY,"string","outputPrefix");
     QUERY->add_arg(QUERY,"int","frameCount");
     QUERY->add_arg(QUERY,"int","fps");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"RasterCapture","Object");
+    rasterCaptureOffset=QUERY->add_mvar(QUERY,"int","@rasterCaptureNative",FALSE);
+    if(rasterCaptureOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,raster_capture_ctor);
+    QUERY->add_dtor(QUERY,raster_capture_dtor);
+    QUERY->add_mfun(QUERY,raster_capture_platform,"int","platform");
+    QUERY->add_mfun(QUERY,raster_capture_supported,"int","supported");
+    QUERY->add_arg(QUERY,"int","source");
+    QUERY->add_mfun(QUERY,raster_capture_devices,"int","deviceCount");
+    QUERY->add_arg(QUERY,"int","source");
+    QUERY->add_mfun(QUERY,raster_capture_ingest,"int","ingestFrame");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"float","seconds");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,raster_capture_ready,"int","ready");
+    QUERY->add_mfun(QUERY,raster_capture_width,"int","width");
+    QUERY->add_mfun(QUERY,raster_capture_height,"int","height");
+    QUERY->add_mfun(QUERY,raster_capture_seconds,"float","timestamp");
+    QUERY->add_mfun(QUERY,raster_capture_export,"int","exportPixels");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,raster_capture_clear,"void","clear");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"RasterImage","Object");
     rasterImageOffset=QUERY->add_mvar(QUERY,"int","@rasterImageNative",FALSE);
