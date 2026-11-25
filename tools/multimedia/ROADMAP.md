@@ -145,3 +145,5 @@ User-reported Windows Local: expected=277, PASS=277, FAIL=0, missing=0, unreport
 #178: optional libavdevice camera snapshot, backend capability and best-effort device enumeration (DirectShow, V4L2, AVFoundation). 17 new headless checks, global 4919, local 60; cadence 12/20. Existing foundation assertions adapted to backend availability without changing count. Native compilation and real camera validation pending; enumeration can be unsupported, timeout is cooperative and not guaranteed. No workflow changes.
 
 #179: primary desktop region snapshot backend (Windows GDI, optional Linux X11 TrueColor), screen dimensions and capability queries. 22 new headless checks, global 4941, local 82; cadence 13/20. Three previous assertions adapted without changing counts. macOS and native Wayland screen capture not implemented. Native and live desktop validation pending. No workflow changes.
+
+#180: direct RasterImage.importCapture snapshot bridge, independent pixel ownership, neutral rendering controls and PNG/edit roundtrip checks. 52 new checks, global 4993, local 134; cadence 14/20. Native and device validation pending. No workflow changes.

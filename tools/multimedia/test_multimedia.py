@@ -7853,8 +7853,76 @@ cap.clear();
 check(!cap.ready());
 """,22,p)
 
+
+def raster_capture_image():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("raster", """
+RasterCapture capture;
+RasterImage img;
+check(!img.importCapture(capture));
+check(!img.loaded());
+check(img.create(1,1));
+check(img.setPixel(0,0,20,40,60,80));
+img.red(0.5);
+check(!img.importCapture(capture));
+check(img.pixelAt(0,0,0)==20);
+check(img.red()==0.5);
+[255,0,0,255,0,128,255,128,10,20,30,255,40,50,60,64] @=> int data[];
+check(capture.ingestFrame(2,2,0.25,data));
+check(img.importCapture(capture));
+check(img.loaded());
+check(img.width()==2);
+check(img.height()==2);
+check(img.red()==1);
+check(img.green()==1);
+check(img.blue()==1);
+check(img.opacity()==1);
+check(img.brightness()==0);
+check(img.pixelAt(0,0,0)==255);
+check(img.pixelAt(1,0,1)==128);
+check(img.pixelAt(1,0,3)==128);
+check(img.pixelAt(0,1,2)==30);
+check(img.pixelAt(1,1,3)==64);
+int pixels[16];
+check(img.exportPixels(pixels));
+check(pixels[0]==255 && pixels[15]==64);
+check(img.setPixel(0,0,1,2,3,255));
+check(capture.exportPixels(pixels));
+check(pixels[0]==255);
+check(capture.timestamp()==0.25);
+check(img.importCapture(capture));
+check(img.pixelAt(0,0,0)==255);
+capture.clear();
+check(img.loaded());
+check(!img.importCapture(capture));
+check(img.width()==2 && img.height()==2);
+check(img.pixelAt(1,0,1)==128);
+check(img.save("snapshot.png"));
+check(!img.save("snapshot.png"));
+RasterImage restored;
+check(restored.load("snapshot.png"));
+check(restored.width()==2 && restored.height()==2);
+check(restored.pixelAt(1,0,1)==128);
+check(restored.pixelAt(1,0,3)==128);
+check(img.crop(1,0,1,2));
+check(img.width()==1 && img.height()==2);
+check(img.pixelAt(0,0,2)==255);
+check(img.resize(2,4));
+check(img.width()==2 && img.height()==4);
+check(img.save("edited.png"));
+check(capture.ingestFrame(1,1,1,[12,34,56,255]));
+check(img.importCapture(capture));
+check(img.width()==1 && img.height()==1);
+check(img.pixelAt(0,0,0)==12);
+check(restored.width()==2);
+check(capture.ready());
+""",52,p)
+        assert (p / "snapshot.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert (p / "edited.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
