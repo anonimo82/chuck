@@ -909,7 +909,7 @@ CK_DLL_QUERY(MidiFileIO) {
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_arg(QUERY,"int","rgb");
     QUERY->add_arg(QUERY,"float[]","rects");
-    QUERY->add_mfun(QUERY,midi_sequence_static_roll,"int","exportPianoRoll");
+    QUERY->add_mfun(QUERY,midi_sequence_static_roll,"int","exportStaticPianoRoll");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_arg(QUERY,"int","rgb");
