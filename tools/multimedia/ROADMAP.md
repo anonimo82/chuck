@@ -57,3 +57,47 @@ Update this checkpoint at each validated cycle, with the last full baseline, fun
 ## Full validation checkpoint — PR #161
 
 Developer-reported Windows Full validation: expected=4282, PASS=4282, FAIL=0, missing=0, unreported=0, extra=0, suites=3/3, status=PASS. All multimedia smoke tests passed. Eighth text cycle validated (283 new checks). New full baseline 4282; functional cadence resets to 0/20. Next cycle starts at 0/5. Clear the validated local manifest in the checkpoint maintenance PR; retain the global manifest unchanged. This is Windows native validation, not a new Linux/macOS validation claim.
+
+
+## 7×8 capability audit — baseline #162 (2026-11-25)
+
+The user confirmed seven media types and eight processes and elected to prioritize coverage gaps over further specialized text editing. This static audit inspected the registered native APIs in raster/RasterIO.cpp, vector/VectorIO.cpp, model/ModelIO.cpp, audio/AudioIO.cpp, midi/MidiFileIO.cpp, video/VideoIO.cpp, text/TextIO.cpp, subtitle/SubtitleIO.cpp, their module documentation, CMakeLists.txt, KeyframeIO documentation and relevant ChucK core sources (chuck_io.cpp, ulib_opsc.cpp, ulib_std.cpp, ugen_xxx.cpp, ugen_stk.cpp). It is a provisional planning assessment, not exhaustive hardware or cross-platform certification. Baseline: 4282/4282 Windows Full PASS at #161; #162 maintenance; local manifest empty; functional cadence 0/20.
+
+### Process definitions
+
+Synthesis: create media programmatically. Manipulation: modify existing media. Input: read/import existing content from files or interfaces. Output: save/export or locally reproduce content. Capture: acquire new content directly from a live device/source. Conversion: transform formats or media types. Transmission: exchange media over a communication channel/network. Automation: drive media operations programmatically over time or in reusable workflows. Reuse core ChucK and optional ChuGL rather than duplicate capabilities. Video remains both independent and synchronized raster/audio composition. TTS, speech recognition, ASCII art, tracing and OCR remain excluded.
+
+### Matrix
+
+O = usable foundational capability; P = partial capability; M = specific capability not identified in inspected code. File input/output qualifies without every codec or device; conversion qualifies with useful existing format or cross-type routes, not every possible pairing; automation includes ordinary ChucK scheduling and numerical control. Generic OSC/blob or byte exchange alone is not a complete media transport. Capture does not mean reloading an existing file or generating synthetic media. Text capture means direct text entry/collection, not OCR or speech recognition. Vector/3D capture require a defined practical source before implementation; do not invent sensors or reintroduce excluded tracing. O does not imply full professional feature parity or hard-realtime safety.
+
+| Type | Synthesis | Manipulation | Input | Output | Capture | Conversion | Transmission | Automation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Raster | O | O | O | O | M | O | M | O |
+| Vector | O | P | O | O | M | O | M | O |
+| 3D | O | O | O | O | M | O | M | O |
+| Audio Wave | O | O | O | O | O | O | M | O |
+| Audio MIDI | O | O | O | O | P | O | P | O |
+| Video | O | O | O | O | M | O | M | O |
+| Text | O | O | O | O | P | O | P | O |
+
+42 O, 5 P, 9 M = 56. Weighted coverage (O=1, P=0.5) = 79.46%; this is a new static rubric, not a comparable measured increase over the earlier historical estimate, nor a percentage of engineering effort.
+
+### Evidence and gaps by type
+
+- Raster: RasterImage create/fill/line/composite/crop/resize, load/save, RasterIO.convert, typed pixel/audio/pitch/heightmap export and numeric controls/keyframe animation. No dedicated live screen/camera acquisition or media transport identified.
+- Vector: VectorImage.create/addRect/addCircle/addLine/addPolygon/removeShape/load/save/render/exportPixels and cross-type exports; global transforms and numeric automation. Partial manipulation: imported arbitrary SVG is not fully editable as independent shapes; provide bounded editable shape operations without tracing. Live vector capture source and transport not yet defined.
+- 3D: Model3D.createMesh/createBoxes/setVertex/transformMesh, materials, skinning and animation controller, load/save, orthographic rendering/projection and sonification. Optional ChuGL geometry/scene bridge documented, graphical runtime not certified by headless baseline. No dedicated live geometry acquisition or network scene transport identified.
+- Wave: AudioBuffer.create/importSamples, crop/mix/resample/filters, load/save, format conversion and visualization/pitch analysis. Native ChucK adc/dac, SndBuf and WvOut cover foundational local device acquisition/playback/recording and scheduling. No dedicated network waveform streaming/transport identified.
+- MIDI: MidiSequence.create/addNote/addCC/addTempo, edit/quantize, load/save, renderSamples and visual/geometry export. Native MidiIn/MidiOut provide live event I/O; partial capture because no direct timestamped MidiSequence recording bridge was identified; partial transmission because MIDI device protocol is supported but network transport is not established.
+- Video: VideoWriter.open/appendFrame/openAV/appendAV, VideoClip.load/next/exportPixels, transcode/trim/concat/transition/composite/subtitles, VideoAudio and synchronized frame/PCM writing. No camera/screen video acquisition or explicit network video transport identified. Offline operations do not guarantee realtime.
+- Text: TextDocument/TextFlow creation, formatting, pagination, editing and TXT/native/PNG/SVG/PDF interchange, programmatic controls. Native keyboard/console input and OSC strings give partial capture/transmission; no integrated text capture/session or media-aware text transfer identified. More specialized grapheme/cursor geometry remains deferred.
+
+### Proposed priority order (not an approved PR schedule)
+
+1. Define a bounded shared media exchange protocol and transport requirements (framing, sizes, timestamps, validation, explicit local/trusted endpoints; separate offline transfer from realtime streaming). Reuse native interfaces where appropriate. Start with one small end-to-end media type before extending it.
+2. Complete practical capture pathways: camera/screen for raster and video; timestamped MIDI recording; text entry/collection. Clarify feasible vector/3D live sources (e.g. stylus paths, externally supplied geometry/pose streams) before claiming coverage. Avoid OCR/tracing.
+3. Complete vector shape manipulation within a documented supported subset; preserve imported SVG and existing APIs.
+4. Extend transmission across types and add integration/validation; do not assume offline transfer equals live streaming.
+
+The next functional PR is proposed to address a matrix gap rather than additional text layout/editor specialization. No implementation or dependency choice is committed by this audit. Preserve global tests and five/twenty functional PR cadence; no GitHub Actions changes.
