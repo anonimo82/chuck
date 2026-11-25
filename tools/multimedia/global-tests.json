@@ -60,6 +60,7 @@
     "transport-pcm-stream",
     "transport-pcm-buffer",
     "transport-midi",
-    "transport-audio-midi"
+    "transport-audio-midi",
+    "transport-raster"
   ]
 }
