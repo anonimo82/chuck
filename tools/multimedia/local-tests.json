@@ -1,6 +1,7 @@
 {
   "version": 1,
   "groups": [
-    "text-frame-foundation"
+    "text-frame-foundation",
+    "text-frame-flow"
   ]
 }
