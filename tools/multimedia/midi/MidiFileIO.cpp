@@ -730,6 +730,34 @@ CK_DLL_MFUN(midi_sequence_static_roll) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(midi_sequence_rect_count) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=midiState(SELF,API);
+        std::vector<RenderNote> notes; size_t frames=0;
+        if(prepareRender(p,96000,notes,frames,true)&&notes.size()<=4096)
+            RETURN->v_int=notes.size();
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_rects) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),rgb=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!a||w<1||w>4096||h<128||h>4096||rgb<0||rgb>0xffffff) return;
+        std::vector<RenderNote> notes; size_t frames=0;
+        if(!prepareRender(p,96000,notes,frames,true)||notes.size()>4096||
+           API->object->array_float_size(a)!=static_cast<t_CKINT>(notes.size()*6)) return;
+        for(size_t i=0;i<notes.size();++i) {
+            const auto &n=notes[i];
+            double v[]={double(n.begin)*w/frames,double(127-n.pitch)*h/128,
+                        double(n.end-n.begin)*w/frames,double(h)/128,double(rgb),n.gain};
+            for(int k=0;k<6;++k) API->object->array_float_set_idx(a,i*6+k,v[k]);
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(MidiFileIO) {
     QUERY->setname(QUERY, "MidiFileIO");
     QUERY->begin_class(QUERY, "MidiFileIO", "Object");
@@ -847,6 +875,12 @@ CK_DLL_QUERY(MidiFileIO) {
     QUERY->add_mfun(QUERY,midi_sequence_remove_note,"int","removeNote");
     QUERY->add_arg(QUERY,"int","track");
     QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,midi_sequence_rect_count,"int","pianoRollRectCount");
+    QUERY->add_mfun(QUERY,midi_sequence_rects,"int","exportPianoRollRects");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","rgb");
+    QUERY->add_arg(QUERY,"float[]","rects");
     QUERY->add_mfun(QUERY,midi_sequence_static_roll,"int","exportPianoRoll");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
