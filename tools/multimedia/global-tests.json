@@ -47,6 +47,7 @@
     "video-av-recording",
     "video-capture-consolidation",
     "video-opengl-framebuffer",
-    "video-chugl-texture"
+    "video-chugl-texture",
+    "video-offscreen-render"
   ]
 }
