@@ -782,6 +782,100 @@ bool skinWorld(ModelState *p,aiNode *node,aiMatrix4x4 &world) {
     return node==root;
 }
 }
+namespace {
+struct SceneNodeEntry { const aiNode *node; t_CKINT parent; };
+// Preorder indices are valid until the scene's topology changes.
+bool sceneNodes(ModelState *p,std::vector<SceneNodeEntry> &out) {
+    if(!p||!p->scene||!p->scene->mRootNode) return false;
+    std::vector<SceneNodeEntry> pending{{p->scene->mRootNode,-1}};
+    while(!pending.empty()) {
+        auto entry=pending.back(); pending.pop_back();
+        if(!entry.node||out.size()>=1000000) return false;
+        auto index=static_cast<t_CKINT>(out.size());
+        out.push_back(entry);
+        for(unsigned j=entry.node->mNumChildren;j>0;--j)
+            pending.push_back({entry.node->mChildren[j-1],index});
+    }
+    return true;
+}
+bool nodeIndex(const std::vector<SceneNodeEntry> &nodes,t_CKINT i) {
+    return i>=0&&static_cast<uint64_t>(i)<nodes.size();
+}
+bool writeNodeMatrix(ModelState *p,t_CKINT index,Chuck_DL_Api::ArrayFloat a,
+                     bool world,CK_DL_API API) {
+    if(!a||API->object->array_float_size(a)!=16) return false;
+    std::vector<SceneNodeEntry> nodes;
+    if(!sceneNodes(p,nodes)||!nodeIndex(nodes,index)) return false;
+    const auto *node=nodes[index].node;
+    aiMatrix4x4 matrix;
+    if(world) {
+        // Imported-world helper also handles generated nodes (empty overlay).
+        if(!importedWorld(p,node,matrix)) return false;
+    } else {
+        auto it=p->importedPose.find(node);
+        matrix=it==p->importedPose.end()?node->mTransformation:it->second;
+    }
+    if(!finiteMatrix(matrix)) return false;
+    for(unsigned r=0;r<4;++r)
+        for(unsigned c=0;c<4;++c)
+            API->object->array_float_set_idx(a,4*r+c,matrix[r][c]);
+    return true;
+}
+}
+CK_DLL_MFUN(model3d_node_count) {
+    RETURN->v_int=-1;
+    try {
+        std::vector<SceneNodeEntry> nodes;
+        if(sceneNodes(modelState(SELF,API),nodes)) RETURN->v_int=nodes.size();
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_node_parent) {
+    RETURN->v_int=-2;
+    try {
+        auto index=GET_NEXT_INT(ARGS);
+        std::vector<SceneNodeEntry> nodes;
+        if(sceneNodes(modelState(SELF,API),nodes)&&nodeIndex(nodes,index))
+            RETURN->v_int=nodes[index].parent;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_node_mesh_count) {
+    RETURN->v_int=-1;
+    try {
+        auto index=GET_NEXT_INT(ARGS);
+        std::vector<SceneNodeEntry> nodes;
+        if(sceneNodes(modelState(SELF,API),nodes)&&nodeIndex(nodes,index))
+            RETURN->v_int=nodes[index].node->mNumMeshes;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_node_mesh_at) {
+    RETURN->v_int=-1;
+    try {
+        auto index=GET_NEXT_INT(ARGS),slot=GET_NEXT_INT(ARGS);
+        auto *p=modelState(SELF,API);
+        std::vector<SceneNodeEntry> nodes;
+        if(!sceneNodes(p,nodes)||!nodeIndex(nodes,index)||slot<0) return;
+        const auto *node=nodes[index].node;
+        if(static_cast<uint64_t>(slot)>=node->mNumMeshes) return;
+        auto mesh=node->mMeshes[slot];
+        if(mesh<p->scene->mNumMeshes) RETURN->v_int=mesh;
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_node_local_matrix) {
+    RETURN->v_int=0;
+    try {
+        auto index=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        RETURN->v_int=writeNodeMatrix(modelState(SELF,API),index,a,false,API);
+    } catch(...) {}
+}
+CK_DLL_MFUN(model3d_node_world_matrix) {
+    RETURN->v_int=0;
+    try {
+        auto index=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        RETURN->v_int=writeNodeMatrix(modelState(SELF,API),index,a,true,API);
+    } catch(...) {}
+}
 CK_DLL_MFUN(model3d_bone_parent) {
     RETURN->v_int=-2;
     auto *p=modelState(SELF,API);
@@ -1312,6 +1406,20 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_export_weights,"int","exportWeights");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"float[]","weights");
+    QUERY->add_mfun(QUERY,model3d_node_count,"int","nodes");
+    QUERY->add_mfun(QUERY,model3d_node_parent,"int","nodeParent");
+    QUERY->add_arg(QUERY,"int","nodeIndex");
+    QUERY->add_mfun(QUERY,model3d_node_mesh_count,"int","nodeMeshes");
+    QUERY->add_arg(QUERY,"int","nodeIndex");
+    QUERY->add_mfun(QUERY,model3d_node_mesh_at,"int","nodeMeshAt");
+    QUERY->add_arg(QUERY,"int","nodeIndex");
+    QUERY->add_arg(QUERY,"int","slot");
+    QUERY->add_mfun(QUERY,model3d_node_local_matrix,"int","exportNodeLocalMatrix");
+    QUERY->add_arg(QUERY,"int","nodeIndex");
+    QUERY->add_arg(QUERY,"float[]","matrix");
+    QUERY->add_mfun(QUERY,model3d_node_world_matrix,"int","exportNodeWorldMatrix");
+    QUERY->add_arg(QUERY,"int","nodeIndex");
+    QUERY->add_arg(QUERY,"float[]","matrix");
     QUERY->add_mfun(QUERY,model3d_bone_parent,"int","boneParent");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"int","bone");
