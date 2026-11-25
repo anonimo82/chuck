@@ -1874,6 +1874,42 @@ CK_DLL_MFUN(model3d_export_audio) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(model3d_export_pitches) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto index=GET_NEXT_INT(ARGS),axis=GET_NEXT_INT(ARGS);
+        auto low=GET_NEXT_INT(ARGS),high=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        auto *m=meshAt(p,index);
+        if(!m||!a||axis<0||axis>2||low<0||high>127||low>high||
+           m->mNumVertices<1||m->mNumVertices>1000000) return;
+        auto n=API->object->array_int_size(a);
+        if(n<1||n>100000) return;
+        std::vector<double> values;
+        values.reserve(m->mNumVertices);
+        double lo=std::numeric_limits<double>::infinity(),hi=-lo;
+        for(unsigned i=0;i<m->mNumVertices;++i) {
+            const auto &v=m->mVertices[i];
+            double x=axis==0?v.x:axis==1?v.y:v.z;
+            if(!std::isfinite(x)) return;
+            lo=std::min(lo,x); hi=std::max(hi,x);
+            values.push_back(x);
+        }
+        double mid=lo*0.5+hi*0.5,half=hi*0.5-lo*0.5;
+        for(auto &v:values)
+            v=half>0?std::clamp(0.5+0.5*((v-mid)/half),0.0,1.0):0.5;
+        for(t_CKINT i=0;i<n;++i) {
+            double pos=n==1?0.0:double(i)*(values.size()-1)/(n-1);
+            size_t left=std::min(static_cast<size_t>(pos),values.size()-1);
+            size_t right=std::min(left+1,values.size()-1);
+            double mix=pos-left;
+            double v=values[left]*(1-mix)+values[right]*mix;
+            API->object->array_int_set_idx(a,i,low+std::lround(std::clamp(v,0.0,1.0)*(high-low)));
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(ModelIO) {
     QUERY->setname(QUERY, "ModelIO");
     QUERY->begin_class(QUERY, "ModelIO", "Object");
@@ -1928,6 +1964,12 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_get_scaleZ,"float","scaleZ");
     QUERY->add_mfun(QUERY,model3d_set_scaleZ,"float","scaleZ");
     QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,model3d_export_pitches,"int","exportPitches");
+    QUERY->add_arg(QUERY,"int","mesh");
+    QUERY->add_arg(QUERY,"int","axis");
+    QUERY->add_arg(QUERY,"int","lowPitch");
+    QUERY->add_arg(QUERY,"int","highPitch");
+    QUERY->add_arg(QUERY,"int[]","pitches");
     QUERY->add_mfun(QUERY,model3d_export_audio,"int","exportAudioSamples");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"int","axis");

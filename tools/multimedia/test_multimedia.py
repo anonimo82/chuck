@@ -3346,3 +3346,43 @@ check(image.exportPitches(3,2,64,64,100,0,pitches));
 check(pitches[0]==64 && pitches[4]==-1 && pitches[5]==64);
 check(image.shapes()==5);
 """,29,p)
+
+    run("model", """
+Model3D model;
+int pitches[5];
+check(!model.exportPitches(0,0,48,60,pitches));
+check(model.createMesh([-2.0,0.0,5.0,0.0,2.0,5.0,2.0,0.0,5.0],[0,1,2]));
+check(model.exportPitches(0,0,48,60,pitches));
+check(pitches[0]==48 && pitches[1]==51 && pitches[2]==54 && pitches[3]==57 && pitches[4]==60);
+check(model.exportPitches(0,1,48,60,pitches));
+check(pitches[0]==48 && pitches[1]==54 && pitches[2]==60 && pitches[3]==54 && pitches[4]==48);
+check(model.exportPitches(0,2,48,61,pitches));
+check(pitches[0]==55 && pitches[2]==55 && pitches[4]==55);
+check(!model.exportPitches(-1,0,48,60,pitches));
+check(!model.exportPitches(0,-1,48,60,pitches));
+check(!model.exportPitches(0,3,48,60,pitches));
+check(!model.exportPitches(0,0,-1,60,pitches));
+check(!model.exportPitches(0,0,48,128,pitches));
+check(!model.exportPitches(0,0,60,48,pitches));
+check(pitches[0]==55 && pitches[4]==55);
+int empty[0];
+check(!model.exportPitches(0,0,48,60,empty));
+int one[1];
+check(model.exportPitches(0,0,48,60,one));
+check(one[0]==48);
+int two[2];
+check(model.exportPitches(0,0,48,60,two));
+check(two[0]==48 && two[1]==60);
+check(model.exportPitches(0,0,64,64,pitches));
+check(pitches[0]==64 && pitches[4]==64);
+30.0=>model.rotationY;
+check(model.exportPitches(0,0,48,60,pitches));
+check(pitches[0]==48 && pitches[4]==60);
+check(model.load("triangle.obj"));
+int exact[3];
+check(model.exportPitches(0,0,48,60,exact));
+check(exact[0]==48 && exact[1]==60 && exact[2]==48);
+model.clear();
+check(!model.exportPitches(0,0,48,60,exact));
+check(exact[0]==48 && exact[1]==60 && exact[2]==48);
+""",29,p)
