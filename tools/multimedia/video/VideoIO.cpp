@@ -3,6 +3,7 @@
 #include "../file_compat.h"
 #include "../capture/CameraCapture.h"
 #include "../capture/ScreenCapture.h"
+#include "../capture/GraphicsCapture.h"
 // X11 headers define macros that collide with application identifiers.
 #ifdef None
 #undef None
@@ -3865,6 +3866,43 @@ CK_DLL_MFUN(video_capture_discard_audio) {
     RETURN->v_int=1;
 }
 
+
+CK_DLL_MFUN(video_capture_gl_supported) {RETURN->v_int=media_capture::graphicsSupported();}
+CK_DLL_MFUN(video_capture_gl_current) {RETURN->v_int=media_capture::graphicsCurrent();}
+CK_DLL_MFUN(video_capture_gl_open) {
+    RETURN->v_int=0;
+    auto *p=videoCaptureState(SELF,API);auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+    if(!p||p->mode||p->recording||!media_capture::Frame::dimensions(w,h)||!media_capture::graphicsCurrent()) return;
+    p->reset(4,w,h);RETURN->v_int=1;
+}
+CK_DLL_MFUN(video_capture_gl_read) {
+    RETURN->v_int=0;
+    try {
+        auto *p=videoCaptureState(SELF,API);auto x=GET_NEXT_INT(ARGS),y=GET_NEXT_INT(ARGS);
+        double seconds=GET_NEXT_FLOAT(ARGS);
+        if(!p||p->mode!=4||p->count>=1000000||!std::isfinite(seconds)||seconds<0||
+           (p->count&&seconds<p->frame.seconds)) return;
+        media_capture::Frame next;
+        if(media_capture::graphicsSnapshot(x,y,p->w,p->h,seconds,next))
+            RETURN->v_int=p->accept(std::move(next));
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_capture_gl_ingest) {
+    RETURN->v_int=0;
+    try {
+        auto *p=videoCaptureState(SELF,API);double seconds=GET_NEXT_FLOAT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||p->mode!=2||!a||!std::isfinite(seconds)||seconds<0||
+           (p->count&&seconds<p->frame.seconds)||p->count>=1000000) return;
+        size_t n=static_cast<size_t>(p->w)*p->h*4;
+        if(API->object->array_int_size(a)!=static_cast<t_CKINT>(n)) return;
+        media_capture::Frame next;next.width=p->w;next.height=p->h;next.seconds=seconds;
+        next.rgba.resize(n);
+        for(size_t k=0;k<n;++k) {auto val=API->object->array_int_get_idx(a,k);if(val<0||val>255)return;next.rgba[k]=static_cast<unsigned char>(val);}
+        if(media_capture::graphicsPixels(next,true,true)) RETURN->v_int=p->accept(std::move(next));
+    } catch(...) {}
+}
+
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -4201,6 +4239,18 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_mfun(QUERY,video_capture_clear,"int","clear");
     QUERY->add_mfun(QUERY,video_capture_discard_audio,"int","discardAudio");
     QUERY->add_arg(QUERY,"int","frames");
+    QUERY->add_mfun(QUERY,video_capture_gl_supported,"int","openGLSupported");
+    QUERY->add_mfun(QUERY,video_capture_gl_current,"int","openGLCurrent");
+    QUERY->add_mfun(QUERY,video_capture_gl_open,"int","openGL");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_mfun(QUERY,video_capture_gl_read,"int","readGL");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"float","seconds");
+    QUERY->add_mfun(QUERY,video_capture_gl_ingest,"int","ingestGLPixels");
+    QUERY->add_arg(QUERY,"float","seconds");
+    QUERY->add_arg(QUERY,"int[]","pixels");
     QUERY->add_mfun(QUERY,video_capture_export,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY)) return FALSE;
