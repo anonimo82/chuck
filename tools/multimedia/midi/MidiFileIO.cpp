@@ -616,6 +616,43 @@ CK_DLL_MFUN(midi_sequence_render_samples) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_MFUN(midi_sequence_import_pitches) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API);
+        auto tpq=GET_NEXT_INT(ARGS);
+        double bpm=GET_NEXT_FLOAT(ARGS),seconds=GET_NEXT_FLOAT(ARGS);
+        auto channel=GET_NEXT_INT(ARGS),velocity=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!a||tpq<1||tpq>32767||!std::isfinite(bpm)||bpm<4||bpm>1000||
+           !std::isfinite(seconds)||seconds<=0||seconds>60||channel<0||channel>15||
+           velocity<1||velocity>127) return;
+        auto n=API->object->array_int_size(a);
+        double step=seconds*bpm*tpq/60.0;
+        if(n<1||n>100000||step<1||step*n>0x0fffffff) return;
+        std::vector<int> pitches(n);
+        for(t_CKINT i=0;i<n;++i) {
+            auto v=API->object->array_int_get_idx(a,i);
+            if(v< -1||v>127) return;
+            pitches[i]=static_cast<int>(v);
+        }
+        auto next=std::make_unique<smf::MidiFile>();
+        next->setTicksPerQuarterNote(static_cast<int>(tpq));
+        next->addTempo(0,0,bpm);
+        for(t_CKINT i=0;i<n;) {
+            t_CKINT end=i+1;
+            while(end<n&&pitches[end]==pitches[i]) ++end;
+            if(pitches[i]>=0) {
+                next->addNoteOn(0,static_cast<int>(std::llround(i*step)),channel,pitches[i],velocity);
+                next->addNoteOff(0,static_cast<int>(std::llround(end*step)),channel,pitches[i],0);
+            }
+            i=end;
+        }
+        next->sortTracks();
+        p->file=std::move(next); p->generated=true; p->reset();
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(MidiFileIO) {
     QUERY->setname(QUERY, "MidiFileIO");
     QUERY->begin_class(QUERY, "MidiFileIO", "Object");
@@ -638,6 +675,13 @@ CK_DLL_QUERY(MidiFileIO) {
     if(midiSequenceOffset==CK_INVALID_OFFSET) return FALSE;
     QUERY->add_ctor(QUERY,midi_sequence_ctor);
     QUERY->add_dtor(QUERY,midi_sequence_dtor);
+    QUERY->add_mfun(QUERY,midi_sequence_import_pitches,"int","importPitches");
+    QUERY->add_arg(QUERY,"int","ticksPerQuarter");
+    QUERY->add_arg(QUERY,"float","bpm");
+    QUERY->add_arg(QUERY,"float","blockSeconds");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","velocity");
+    QUERY->add_arg(QUERY,"int[]","pitches");
     QUERY->add_mfun(QUERY,midi_sequence_load,"int","load");
     QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,midi_sequence_save,"int","save");
