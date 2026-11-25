@@ -2241,3 +2241,64 @@ check(!seq.quantize(0,120,1.0));
         return sorted((e[0],e[2][0]) for e in events if e[1]==128 or (e[1]==144 and e[2][1]==0))
     assert note_ends(edited[1])==[(170,62),(295,64)]
     assert note_ends(removed[1])==[(295,64)]
+
+    run("model", """
+Model3D model;
+[0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0] @=> float xyz[];
+[0,1,2] @=> int tris[];
+[0.0,0.0,1.0,0.0,0.0,1.0] @=> float uv[];
+float normals[9];
+float outUV[6];
+float shortUV[2];
+[1.0,0.0,0.0,2.0,0.0,1.0,0.0,3.0,0.0,0.0,1.0,4.0] @=> float matrix[];
+check(model.addMesh(xyz,tris)==-1);
+check(!model.computeNormals(0));
+check(model.createMesh(xyz,tris));
+check(model.meshes()==1);
+check(model.addMesh(xyz,tris)==1);
+check(model.meshes()==2 && model.vertices()==6);
+check(model.meshVertices(1)==3 && model.faces(1)==1);
+check(!model.hasNormals(1));
+check(model.computeNormals(1));
+check(model.hasNormals(1));
+check(model.exportNormals(1,normals));
+check(normals[0]==0.0 && normals[1]==0.0 && normals[2]==1.0);
+check(normals[5]==1.0 && normals[8]==1.0);
+check(!model.exportUV(1,outUV));
+check(model.setUV(1,uv));
+check(model.exportUV(1,outUV));
+check(outUV[2]==1.0 && outUV[5]==1.0);
+check(!model.setUV(1,shortUV));
+check(!model.transformMesh(1,shortUV));
+check(model.transformMesh(1,matrix));
+check(model.vertexAt(1,0,0)==2.0 && model.vertexAt(1,0,1)==3.0 && model.vertexAt(1,0,2)==4.0);
+check(model.vertexAt(0,0,0)==0.0);
+check(!model.hasNormals(1));
+check(model.exportUV(1,outUV));
+check(model.computeNormals(1));
+check(model.setVertex(1,2,2.0,4.0,5.0));
+check(!model.hasNormals(1));
+check(model.computeNormals(1));
+check(model.exportNormals(1,normals));
+check(Math.fabs(normals[1]+0.70710678)<0.00001 && Math.fabs(normals[2]-0.70710678)<0.00001);
+check(!model.setVertex(2,0,0.0,0.0,0.0));
+check(model.computeNormals(0));
+check(model.setVertex(0,0.0,0.0,0.0));
+check(!model.hasNormals(0));
+check(model.computeNormals(0));
+check(model.setUV(0,uv));
+check(model.save("multi-mesh/model.obj"));
+check(!model.save("multi-mesh/model.obj"));
+Model3D imported;
+check(imported.load("multi-mesh/model.obj"));
+check(imported.meshes()>=1);
+check(imported.hasNormals(0));
+check(!imported.setVertex(0,0,0.0,0.0,0.0));
+check(imported.addMesh(xyz,tris)==-1);
+""",43,p)
+    obj=(p/"multi-mesh/model.obj").read_text(encoding="utf-8")
+    rows=[line.split() for line in obj.splitlines()]
+    assert len([row for row in rows if row and row[0]=="f"])==2
+    assert any(row and row[0]=="vn" for row in rows)
+    assert any(row and row[0]=="vt" for row in rows)
+    assert any(row and row[0]=="v" and tuple(map(float,row[1:4]))==(2.0,4.0,5.0) for row in rows)
