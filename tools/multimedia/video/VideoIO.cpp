@@ -3565,6 +3565,11 @@ struct VideoCaptureState {
     std::chrono::steady_clock::time_point screenStart{};
     std::unique_ptr<VideoWriterState> recording;
     t_CKINT recorded=0,lastRecorded=0;
+    int audioRate=0,audioChannels=0;
+    bool audioActive=false;
+    int64_t audioFirst=0;
+    std::vector<double> audioSamples;
+    int64_t audioFrames() const {return audioChannels?static_cast<int64_t>(audioSamples.size()/audioChannels):0;}
     t_CKINT count=0;
     bool accept(media_capture::Frame &&next) {
         if(!mode||!next.valid()||next.width!=w||next.height!=h||
@@ -3574,6 +3579,8 @@ struct VideoCaptureState {
     void reset(int m,int width,int height) {
         frame=media_capture::Frame{}; count=0; mode=m; w=width; h=height;
         recorded=lastRecorded=0;
+        audioRate=audioChannels=0; audioActive=false; audioFirst=0;
+        std::vector<double>().swap(audioSamples);
     }
 };
 t_CKUINT videoCaptureOffset=0;
@@ -3629,7 +3636,7 @@ CK_DLL_MFUN(video_capture_next) {
         }
         if(ok&&p->accept(std::move(next))) {RETURN->v_int=1;return;}
     } catch(...) {}
-    p->camera.reset(); p->mode=0;
+    p->camera.reset(); p->mode=0; p->audioActive=false;
 }
 CK_DLL_MFUN(video_capture_ingest) {
     RETURN->v_int=0;
@@ -3647,7 +3654,7 @@ CK_DLL_MFUN(video_capture_ingest) {
     } catch(...) {}
 }
 CK_DLL_MFUN(video_capture_close) {
-    if(auto *p=videoCaptureState(SELF,API)) {p->camera.reset();p->mode=0;}
+    if(auto *p=videoCaptureState(SELF,API)) {p->camera.reset();p->mode=0;p->audioActive=false;}
 }
 CK_DLL_MFUN(video_capture_active) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p&&p->mode;}
 CK_DLL_MFUN(video_capture_ready) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p&&p->frame.valid();}
@@ -3709,6 +3716,64 @@ CK_DLL_MFUN(video_capture_record_finish) {
 CK_DLL_MFUN(video_capture_record_abort) {if(auto *p=videoCaptureState(SELF,API)) p->recording.reset();}
 CK_DLL_MFUN(video_capture_recording) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p&&p->recording;}
 CK_DLL_MFUN(video_capture_recorded) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p?p->recorded:0;}
+
+
+CK_DLL_MFUN(video_capture_audio_open) {
+    RETURN->v_int=0;
+    auto *p=videoCaptureState(SELF,API);
+    auto rate=GET_NEXT_INT(ARGS),channels=GET_NEXT_INT(ARGS);
+    if(!p||!p->mode||p->audioRate||rate<8000||rate>192000||channels<1||channels>8) return;
+    p->audioRate=static_cast<int>(rate);p->audioChannels=static_cast<int>(channels);
+    p->audioActive=true; RETURN->v_int=1;
+}
+CK_DLL_MFUN(video_capture_audio_ingest) {
+    RETURN->v_int=0;
+    try {
+        auto *p=videoCaptureState(SELF,API);double seconds=GET_NEXT_FLOAT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!p->mode||!p->audioActive||!a||!std::isfinite(seconds)||seconds<0||seconds>86400) return;
+        auto n=API->object->array_float_size(a);
+        constexpr size_t limit=8*1024*1024;
+        if(n<=0||n%p->audioChannels||static_cast<uint64_t>(n)>limit-p->audioSamples.size()) return;
+        int64_t first=std::llround(seconds*p->audioRate);
+        // Blocks are contiguous on the session-relative sample grid; no silent padding.
+        if(!p->audioSamples.empty()&&first!=p->audioFirst+p->audioFrames()) return;
+        std::vector<double> block(static_cast<size_t>(n));
+        for(t_CKINT k=0;k<n;++k) {
+            double x=API->object->array_float_get_idx(a,k);
+            if(!std::isfinite(x)||x< -1||x>1) return;
+            block[k]=x;
+        }
+        bool empty=p->audioSamples.empty();
+        p->audioSamples.insert(p->audioSamples.end(),block.begin(),block.end());
+        if(empty) p->audioFirst=first;
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_capture_audio_close) {if(auto *p=videoCaptureState(SELF,API)) p->audioActive=false;}
+CK_DLL_MFUN(video_capture_audio_active) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p&&p->audioActive;}
+CK_DLL_MFUN(video_capture_audio_rate) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p?p->audioRate:0;}
+CK_DLL_MFUN(video_capture_audio_channels) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p?p->audioChannels:0;}
+CK_DLL_MFUN(video_capture_audio_frames) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p?p->audioFrames():0;}
+CK_DLL_MFUN(video_capture_audio_start) {
+    auto *p=videoCaptureState(SELF,API);
+    RETURN->v_float=p&&!p->audioSamples.empty()?static_cast<double>(p->audioFirst)/p->audioRate:-1;
+}
+CK_DLL_MFUN(video_capture_audio_end) {
+    auto *p=videoCaptureState(SELF,API);
+    RETURN->v_float=p&&!p->audioSamples.empty()?static_cast<double>(p->audioFirst+p->audioFrames())/p->audioRate:-1;
+}
+CK_DLL_MFUN(video_capture_audio_read) {
+    RETURN->v_int=0;
+    auto *p=videoCaptureState(SELF,API);auto first=GET_NEXT_INT(ARGS);
+    auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+    if(!p||!p->audioChannels||!a||first<0||first>p->audioFrames()) return;
+    auto n=API->object->array_float_size(a);
+    if(n<=0||n%p->audioChannels||n/p->audioChannels>p->audioFrames()-first) return;
+    size_t offset=static_cast<size_t>(first)*p->audioChannels;
+    for(t_CKINT k=0;k<n;++k) API->object->array_float_set_idx(a,k,p->audioSamples[offset+k]);
+    RETURN->v_int=1;
+}
 
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
@@ -4019,6 +4084,22 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_mfun(QUERY,video_capture_record_abort,"void","abortRecording");
     QUERY->add_mfun(QUERY,video_capture_recording,"int","recording");
     QUERY->add_mfun(QUERY,video_capture_recorded,"int","recordedFrames");
+    QUERY->add_mfun(QUERY,video_capture_audio_open,"int","openAudio");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_mfun(QUERY,video_capture_audio_ingest,"int","ingestAudio");
+    QUERY->add_arg(QUERY,"float","seconds");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,video_capture_audio_close,"void","closeAudio");
+    QUERY->add_mfun(QUERY,video_capture_audio_active,"int","audioActive");
+    QUERY->add_mfun(QUERY,video_capture_audio_rate,"int","audioSampleRate");
+    QUERY->add_mfun(QUERY,video_capture_audio_channels,"int","audioChannels");
+    QUERY->add_mfun(QUERY,video_capture_audio_frames,"int","audioFrames");
+    QUERY->add_mfun(QUERY,video_capture_audio_start,"float","audioStart");
+    QUERY->add_mfun(QUERY,video_capture_audio_end,"float","audioEnd");
+    QUERY->add_mfun(QUERY,video_capture_audio_read,"int","readAudio");
+    QUERY->add_arg(QUERY,"int","firstFrame");
+    QUERY->add_arg(QUERY,"float[]","samples");
     QUERY->add_mfun(QUERY,video_capture_export,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY)) return FALSE;
