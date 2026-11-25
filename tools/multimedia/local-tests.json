@@ -1,6 +1,7 @@
 {
   "version": 1,
   "groups": [
-    "video-opengl-framebuffer"
+    "video-opengl-framebuffer",
+    "video-chugl-texture"
   ]
 }
