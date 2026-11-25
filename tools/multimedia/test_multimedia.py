@@ -5591,7 +5591,7 @@ check(!doc.savePDF("text-pdf-empty.pdf",page));
 check(!doc.savePDF("text-pdf-wrong.svg",page));
 check(page.backgroundColor(-1)==-1);
 check(doc.savePDF("text-pdf-transparent.pdf",page));
-check(style.size(16)==16);
+check(style.fontSize(16)==16);
 check(doc.addParagraph("First café",style));
 check(flow.marginBottom(75)==75);
 check(doc.setParagraphLayout(0,flow));
