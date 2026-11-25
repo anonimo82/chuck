@@ -4472,3 +4472,87 @@ doc.clear();
 check(doc.measureDocument(180,dims));
 check(dims[0]==0 && dims[1]==0);
 """,45,p)
+
+    run("text", """
+@import "RasterIO";
+@import "KeyframeIO";
+TextDocument doc;
+TextStyle style;
+TextStyle accent;
+TextRun run;
+TextParagraphStyle flow;
+RasterImage raster;
+int rgba[128*64*4];
+int tiny[4];
+check(doc.exportPixels(1,1,-1,tiny));
+check(tiny[0]==0 && tiny[1]==0 && tiny[2]==0 && tiny[3]==0);
+check(doc.exportPixels(1,1,0x123456,tiny));
+check(tiny[0]==18 && tiny[1]==52 && tiny[2]==86 && tiny[3]==255);
+check(!doc.exportPixels(0,1,-1,tiny));
+check(!doc.exportPixels(1,4097,-1,tiny));
+check(!doc.exportPixels(4096,4096,-1,tiny));
+check(!doc.exportPixels(1,1,-2,tiny));
+check(!doc.exportPixels(1,1,0x1000000,tiny));
+check(!doc.exportPixels(2,1,-1,tiny));
+check(tiny[0]==18 && tiny[3]==255);
+24.0=>style.fontSize;
+0xff0000=>style.color;
+check(doc.addParagraph("M",style));
+check(accent.inherit(style));
+0x0000ff=>accent.color;
+check(run.set("M",accent));
+check(doc.appendRun(0,run));
+8.0=>flow.marginLeft;
+8.0=>flow.marginTop;
+check(doc.setParagraphLayout(0,flow));
+check(doc.exportPixels(128,64,-1,rgba));
+check(rgba[3]==0);
+0=>int redCount; 0=>int blueCount; 0=>int alphaCount; 0=>int outside;
+for(0=>int i;i<128*64;i++) {
+    if(rgba[4*i+3]>0) {
+        alphaCount++;
+        if(rgba[4*i]>200 && rgba[4*i+2]<30) redCount++;
+        if(rgba[4*i+2]>200 && rgba[4*i]<30) blueCount++;
+        if(i%128<8 || i/128<8) outside++;
+    }
+}
+check(redCount>0 && blueCount>0 && alphaCount>0);
+check(outside==0);
+check(raster.importPixels(128,64,rgba));
+check(raster.pixelAt(0,0,3)==0);
+check(doc.exportPixels(128,64,0xffffff,rgba));
+0=>int nonOpaque;
+for(0=>int i;i<128*64;i++) if(rgba[4*i+3]!=255) nonOpaque++;
+check(nonOpaque==0 && rgba[0]==255 && rgba[1]==255 && rgba[2]==255);
+check(doc.savePNG("text-render.png",128,64,-1));
+check(!doc.savePNG("text-render.png",128,64,-1));
+check(!doc.savePNG("text-render.txt",128,64,-1));
+check(raster.load("text-render.png"));
+check(raster.width()==128 && raster.height()==64);
+check(raster.pixelAt(0,0,3)==0);
+KeyframeCurve curve;
+check(curve.add(0.0,8.0,"linear"));
+check(curve.add(2.0,48.0,"linear"));
+curve.valueAt(2.0)=>flow.marginLeft;
+check(doc.setParagraphLayout(0,flow));
+check(doc.exportPixels(128,64,-1,rgba));
+0=>int leftInk; 0=>int rightInk;
+for(0=>int i;i<128*64;i++) if(rgba[4*i+3]>0) {
+    if(i%128<48) leftInk++; else rightInk++;
+}
+check(leftInk==0 && rightInk>0);
+check(doc.paragraphText(0)=="MM" && doc.runCount(0)==1);
+128.0=>flow.marginLeft;
+check(doc.setParagraphLayout(0,flow));
+123=>rgba[0];
+check(!doc.exportPixels(128,64,-1,rgba));
+check(rgba[0]==123);
+check(!doc.savePNG("invalid-layout.png",128,64,-1));
+doc.clear();
+check(doc.exportPixels(128,64,-1,rgba));
+0=>int nonzero;
+for(0=>int i;i<rgba.size();i++) if(rgba[i]!=0) nonzero++;
+check(nonzero==0);
+""",42,p)
+    assert (p / "text-render.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert not (p / "invalid-layout.png").exists()
