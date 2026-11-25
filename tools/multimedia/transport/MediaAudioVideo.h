@@ -73,7 +73,11 @@ public:
         if(!count||count>audio_.capacity()) return reject(2);
         if(!started_) return reject(5);
         if(videoDue()) return reject(6);
-        if(audio_.ready()&&video_.available()&&video_.ready()&&audioLimit()<count&&audioLimit()<audio_.available()) return reject(6);
+        if(audio_.ready()&&video_.available()&&video_.ready()) {
+            auto limit=audioLimit();
+            if(count>limit && limit && at(audio_.consumedFrames()+limit)>=video_.timestamp())
+                return reject(6);
+        }
         if(!audio_.pull(count,out)) return reject(3);
         error_=0; return true;
     }

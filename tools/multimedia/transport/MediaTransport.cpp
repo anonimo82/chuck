@@ -6,6 +6,7 @@
 #include "MediaVideoStream.h"
 #include "MediaVideoBuffer.h"
 #include "MediaAudioVideo.h"
+#include "MediaAVPacket.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -983,6 +984,18 @@ CK_DLL_MFUN(sav_error) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->error(
 CK_DLL_MFUN(sav_audioError) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->audioError():0; }
 CK_DLL_MFUN(sav_videoError) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->videoError():0; }
 CK_DLL_MFUN(sav_audioLimit) { auto *p=syncAVState(SELF,API);RETURN->v_int=p?p->audioLimit():0; }
+CK_DLL_SFUN(avp_inspect) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;std::array<uint64_t,9> metadata{};
+        if(!exact(dst,API,9)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire))return;
+        int kind=mediawire::inspectAV(wire,metadata);
+        if(!kind)return;
+        for(size_t i=0;i<metadata.size();++i)API->object->array_int_set_idx(dst,i,metadata[i]);
+        RETURN->v_int=kind;
+    } catch(...) {}
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -1481,6 +1494,11 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_mfun(QUERY,sav_audioError,"int","audioError");
     QUERY->add_mfun(QUERY,sav_videoError,"int","videoError");
     QUERY->add_mfun(QUERY,sav_audioLimit,"int","audioLimit");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaAVPacket","Object");
+    QUERY->add_sfun(QUERY,avp_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"MediaGraphics","Object");
     QUERY->add_sfun(QUERY,gr_inspect,"int","inspect");
