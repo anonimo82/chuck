@@ -1,0 +1,11 @@
+@import "TextIO";
+TextDocument doc; TextTable tbl; TextStyle normal; TextStyle heading; TextContainer box;
+heading.inherit(normal); 700=>heading.weight;
+tbl.create(3,2); tbl.columnWeight(0,2.0);
+tbl.setCell(0,0,"Process",heading); tbl.setCell(0,1,"Status",heading);
+0xe8f0ff=>box.backgroundColor; 1.0=>box.borderWidth; 6.0=>box.paddingLeft; 6.0=>box.paddingTop;
+tbl.setCellContainer(0,0,box); tbl.setCellContainer(0,1,box);
+tbl.setCell(1,0,"Synthesis",normal); tbl.setCell(1,1,"Ready",normal);
+tbl.setCell(2,0,"Rendering",normal); tbl.setCell(2,1,"Ready",normal);
+doc.addParagraph("Multimedia capabilities",heading); doc.appendTable(tbl);
+if(!doc.savePNG("table.png",640,240,0xffffff)) <<< "PNG save failed" >>>;
