@@ -4,6 +4,7 @@
 #include "../capture/CameraCapture.h"
 #include "../capture/ScreenCapture.h"
 #include "../capture/GraphicsCapture.h"
+#include "../capture/OffscreenCapture.h"
 // X11 headers define macros that collide with application identifiers.
 #ifdef None
 #undef None
@@ -3582,6 +3583,7 @@ CK_DLL_MFUN(video_clip_export_matrix) {
 namespace {
 struct VideoCaptureState {
     std::unique_ptr<media_capture::CameraSession> camera;
+    std::unique_ptr<media_capture::OffscreenSession> offscreen;
     media_capture::Frame frame;
     int mode=0,w=0,h=0;
     int x=0,y=0;
@@ -3679,7 +3681,7 @@ CK_DLL_MFUN(video_capture_ingest) {
     } catch(...) {}
 }
 CK_DLL_MFUN(video_capture_close) {
-    if(auto *p=videoCaptureState(SELF,API)) {p->camera.reset();p->mode=0;p->audioActive=false;}
+    if(auto *p=videoCaptureState(SELF,API)) {p->camera.reset();p->offscreen.reset();p->mode=0;p->audioActive=false;}
 }
 CK_DLL_MFUN(video_capture_active) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p&&p->mode;}
 CK_DLL_MFUN(video_capture_ready) {auto *p=videoCaptureState(SELF,API);RETURN->v_int=p&&p->frame.valid();}
@@ -3927,6 +3929,30 @@ CK_DLL_MFUN(video_capture_texture_ingest) {
             next.rgba[k]=static_cast<unsigned char>(std::lround(val*255.0));
         }
         if(media_capture::graphicsPixels(next,false,true)) RETURN->v_int=p->accept(std::move(next));
+    } catch(...) {}
+}
+
+
+CK_DLL_MFUN(video_capture_offscreen_supported) {RETURN->v_int=media_capture::OffscreenSession::supported();}
+CK_DLL_MFUN(video_capture_offscreen_open) {
+    RETURN->v_int=0;
+    try {
+        auto *p=videoCaptureState(SELF,API);auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        if(!p||p->mode||p->recording||!media_capture::Frame::dimensions(w,h)) return;
+        auto next=std::make_unique<media_capture::OffscreenSession>();
+        if(!next->open(w,h)) return;
+        p->reset(6,w,h);p->offscreen=std::move(next);RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(video_capture_offscreen_render) {
+    RETURN->v_int=0;
+    try {
+        auto *p=videoCaptureState(SELF,API);double seconds=GET_NEXT_FLOAT(ARGS);
+        auto r=GET_NEXT_INT(ARGS),g=GET_NEXT_INT(ARGS),b=GET_NEXT_INT(ARGS);
+        if(!p||p->mode!=6||!p->offscreen||p->count>=1000000||!std::isfinite(seconds)||seconds<0||
+           (p->count&&seconds<p->frame.seconds)||r<0||r>255||g<0||g>255||b<0||b>255) return;
+        media_capture::Frame next;
+        if(p->offscreen->render(seconds,r,g,b,next)) RETURN->v_int=p->accept(std::move(next));
     } catch(...) {}
 }
 
@@ -4284,6 +4310,15 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_mfun(QUERY,video_capture_texture_ingest,"int","ingestTexture");
     QUERY->add_arg(QUERY,"float","seconds");
     QUERY->add_arg(QUERY,"float[]","rgba");
+    QUERY->add_mfun(QUERY,video_capture_offscreen_supported,"int","offscreenSupported");
+    QUERY->add_mfun(QUERY,video_capture_offscreen_open,"int","openOffscreen");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_mfun(QUERY,video_capture_offscreen_render,"int","renderOffscreen");
+    QUERY->add_arg(QUERY,"float","seconds");
+    QUERY->add_arg(QUERY,"int","red");
+    QUERY->add_arg(QUERY,"int","green");
+    QUERY->add_arg(QUERY,"int","blue");
     QUERY->add_mfun(QUERY,video_capture_export,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY)) return FALSE;
