@@ -445,6 +445,107 @@ CK_DLL_MFUN(audio_buffer_read_samples) {
     RETURN->v_int=1;
 }
 
+
+namespace {
+// Bounded windowed-sinc interpolation. The cutoff follows the output
+// Nyquist frequency when decimating; edge taps extend the endpoint samples.
+bool resampleBuffer(AudioBufferState *p,double ratio,int newRate) {
+    if(!p || !p->loaded() || !std::isfinite(ratio) || ratio<0.0625 || ratio>16) return false;
+    const size_t old=p->frames();
+    const double exact=old*ratio;
+    if(exact<0.5 || exact>32.0*1024*1024/p->channels+0.499999) return false;
+    const auto n=static_cast<size_t>(std::llround(exact));
+    if(!bufferDimensions(n,newRate,p->channels)) return false;
+    if(ratio==1.0) { p->rate=newRate; return true; }
+    // Limit the total convolution cost as well as allocation size.
+    constexpr double pi=3.14159265358979323846;
+    const double cutoff=std::min(1.0,ratio);
+    const int radius=static_cast<int>(std::ceil(16.0/cutoff));
+    if(static_cast<double>(n)*(2*radius+1)*p->channels>1000000000.0) return false;
+    std::vector<double> next(n*p->channels);
+    for(size_t i=0;i<n;++i) {
+        double pos=static_cast<double>(i)/ratio;
+        int64_t center=static_cast<int64_t>(std::floor(pos));
+        double sums[8]={}, weights=0;
+        for(int j=-radius;j<=radius;++j) {
+            int64_t k=center+j;
+            double d=pos-k;
+            if(std::abs(d)>=radius) continue;
+            double z=pi*d*cutoff;
+            double sinc=std::abs(z)<1e-12?1.0:std::sin(z)/z;
+            double weight=sinc*(0.5+0.5*std::cos(pi*d/radius))*cutoff;
+            size_t src=static_cast<size_t>(std::clamp<int64_t>(k,0,static_cast<int64_t>(old)-1));
+            for(int c=0;c<p->channels;++c) sums[c]+=p->samples[src*p->channels+c]*weight;
+            weights+=weight;
+        }
+        if(!std::isfinite(weights)||std::abs(weights)<1e-12) return false;
+        for(int c=0;c<p->channels;++c) {
+            double v=sums[c]/weights;
+            if(!std::isfinite(v)) return false;
+            next[i*p->channels+c]=clipSample(v);
+        }
+    }
+    p->samples.swap(next); p->rate=newRate; return true;
+}
+bool filterBuffer(AudioBufferState *p,double hz,bool high) {
+    if(!p || !p->loaded() || !std::isfinite(hz) || hz<=0 || hz>=p->rate/2.0) return false;
+    // One-pole low-pass with exponential coefficient; high-pass is its
+    // complementary residual. Independent state per channel, zero initial state.
+    const double a=-std::expm1(-2.0*3.14159265358979323846*hz/p->rate);
+    double state[8]={};
+    std::vector<double> next(p->samples.size());
+    for(size_t i=0;i<p->frames();++i) for(int c=0;c<p->channels;++c) {
+        size_t j=i*p->channels+c;
+        double x=p->samples[j];
+        state[c]=(1-a)*state[c]+a*x;
+        double v=high?x-state[c]:state[c];
+        if(!std::isfinite(v)) return false;
+        next[j]=clipSample(v);
+    }
+    p->samples.swap(next); return true;
+}
+}
+CK_DLL_MFUN(audio_buffer_resample) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API); auto rate=GET_NEXT_INT(ARGS);
+        if(p && p->loaded() && rate>=1 && rate<=384000)
+            RETURN->v_int=resampleBuffer(p,static_cast<double>(rate)/p->rate,static_cast<int>(rate));
+    } catch(...) {}
+}
+CK_DLL_MFUN(audio_buffer_speed) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API); auto factor=GET_NEXT_FLOAT(ARGS);
+        if(p && p->loaded() && std::isfinite(factor) && factor>=0.0625 && factor<=16)
+            RETURN->v_int=resampleBuffer(p,1.0/factor,p->rate);
+    } catch(...) {}
+}
+CK_DLL_MFUN(audio_buffer_channels_convert) {
+    RETURN->v_int=0;
+    try {
+        auto *p=audioState(SELF,API); auto channels=GET_NEXT_INT(ARGS);
+        if(!p || !p->loaded() || channels<1 || channels>2 ||
+           p->channels>2 || !bufferDimensions(p->frames(),p->rate,channels)) return;
+        if(channels==p->channels) { RETURN->v_int=1; return; }
+        size_t n=p->frames();
+        std::vector<double> next(n*channels);
+        for(size_t i=0;i<n;++i) {
+            if(channels==1) next[i]=0.5*p->samples[i*2]+0.5*p->samples[i*2+1];
+            else next[i*2]=next[i*2+1]=p->samples[i];
+        }
+        p->samples.swap(next); p->channels=static_cast<int>(channels); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(audio_buffer_lowpass) {
+    RETURN->v_int=0;
+    try { auto *p=audioState(SELF,API); auto hz=GET_NEXT_FLOAT(ARGS); RETURN->v_int=filterBuffer(p,hz,false); } catch(...) {}
+}
+CK_DLL_MFUN(audio_buffer_highpass) {
+    RETURN->v_int=0;
+    try { auto *p=audioState(SELF,API); auto hz=GET_NEXT_FLOAT(ARGS); RETURN->v_int=filterBuffer(p,hz,true); } catch(...) {}
+}
+
 CK_DLL_QUERY(AudioIO) {
     QUERY->setname(QUERY, "AudioIO");
     QUERY->begin_class(QUERY, "AudioIO", "Object");
@@ -524,5 +625,15 @@ CK_DLL_QUERY(AudioIO) {
     QUERY->add_mfun(QUERY,audio_buffer_read_samples,"int","readSamples");
     QUERY->add_arg(QUERY,"int","firstFrame");
     QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,audio_buffer_resample,"int","resample");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_mfun(QUERY,audio_buffer_speed,"int","changeSpeed");
+    QUERY->add_arg(QUERY,"float","factor");
+    QUERY->add_mfun(QUERY,audio_buffer_channels_convert,"int","convertChannels");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_mfun(QUERY,audio_buffer_lowpass,"int","lowPass");
+    QUERY->add_arg(QUERY,"float","frequency");
+    QUERY->add_mfun(QUERY,audio_buffer_highpass,"int","highPass");
+    QUERY->add_arg(QUERY,"float","frequency");
     return QUERY->end_class(QUERY);
 }
