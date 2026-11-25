@@ -18,9 +18,13 @@ struct Style {
     t_CKINT rgb=0,background=-1;
     double spacing=0,rise=0,opacity=1;
 };
-struct Paragraph { std::string text; Style style; };
-struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0; };
-t_CKUINT styleOffset=0,docOffset=0;
+struct Run { std::string text; Style style; };
+struct Paragraph { std::string text; Style style; size_t baseBytes=0; std::vector<Run> runs; };
+struct Document { std::vector<Paragraph> paragraphs; size_t bytes=0,runs=0; };
+t_CKUINT styleOffset=0,docOffset=0,runOffset=0;
+Run *runState(Chuck_Object *self,CK_DL_API API) {
+    return self?reinterpret_cast<Run *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,runOffset))):nullptr;
+}
 Style *styleState(Chuck_Object *self,CK_DL_API API) {
     return self?reinterpret_cast<Style *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,styleOffset))):nullptr;
 }
@@ -131,7 +135,7 @@ CK_DLL_MFUN(text_doc_add) {
         auto *d=docState(SELF,API); auto s=GET_NEXT_STRING_SAFE(ARGS);
         auto *p=styleState(GET_NEXT_OBJECT(ARGS),API);
         if(!d||!p||d->paragraphs.size()>=4096||!validText(s,65536)||d->bytes+s.size()>1048576) return;
-        d->paragraphs.push_back({s,*p}); d->bytes+=s.size(); RETURN->v_int=1;
+        d->paragraphs.push_back({s,*p,s.size(),{}}); d->bytes+=s.size(); RETURN->v_int=1;
     } catch(...) {}
 }
 CK_DLL_MFUN(text_doc_count) {
@@ -147,7 +151,7 @@ CK_DLL_MFUN(text_doc_replace) {
         auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto s=GET_NEXT_STRING_SAFE(ARGS);
         if(!indexOK(d,i)||!validText(s,65536)||d->bytes-d->paragraphs[i].text.size()+s.size()>1048576) return;
         auto old=d->paragraphs[i].text.size(),next=s.size();
-        d->paragraphs[i].text.swap(s); d->bytes=d->bytes-old+next; RETURN->v_int=1;
+        auto &p=d->paragraphs[i]; p.text.swap(s); p.baseBytes=next; d->runs-=p.runs.size(); p.runs.clear(); d->bytes=d->bytes-old+next; RETURN->v_int=1;
     } catch(...) {}
 }
 CK_DLL_MFUN(text_doc_style) {
@@ -159,10 +163,95 @@ CK_DLL_MFUN(text_doc_style) {
 }
 CK_DLL_MFUN(text_doc_remove) {
     auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); RETURN->v_int=0;
-    if(indexOK(d,i)) { d->bytes-=d->paragraphs[i].text.size(); d->paragraphs.erase(d->paragraphs.begin()+i); RETURN->v_int=1; }
+    if(indexOK(d,i)) { d->bytes-=d->paragraphs[i].text.size(); d->runs-=d->paragraphs[i].runs.size(); d->paragraphs.erase(d->paragraphs.begin()+i); RETURN->v_int=1; }
 }
 CK_DLL_MFUN(text_doc_clear) {
-    if(auto *d=docState(SELF,API)) { d->paragraphs.clear(); d->bytes=0; }
+    if(auto *d=docState(SELF,API)) { d->paragraphs.clear(); d->bytes=0; d->runs=0; }
+}
+CK_DLL_CTOR(text_run_ctor) {
+    OBJ_MEMBER_UINT(SELF,runOffset)=0;
+    try { OBJ_MEMBER_UINT(SELF,runOffset)=reinterpret_cast<uintptr_t>(new Run); } catch(...) {}
+}
+CK_DLL_DTOR(text_run_dtor) { delete runState(SELF,API); OBJ_MEMBER_UINT(SELF,runOffset)=0; }
+CK_DLL_MFUN(text_run_set) {
+    RETURN->v_int=0;
+    try {
+        auto *p=runState(SELF,API); auto s=GET_NEXT_STRING_SAFE(ARGS); auto *style=styleState(GET_NEXT_OBJECT(ARGS),API);
+        if(p&&style&&validText(s,65536)) { Run next{s,*style}; *p=std::move(next); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_run_text) {
+    auto *p=runState(SELF,API);
+    RETURN->v_string=API->object->create_string(VM,p?p->text.c_str():"",FALSE);
+}
+CK_DLL_MFUN(text_run_style) {
+    RETURN->v_int=0;
+    try {
+        auto *p=runState(SELF,API); auto *s=styleState(GET_NEXT_OBJECT(ARGS),API);
+        if(p&&s) { Style copy=*s; p->style=std::move(copy); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_run_replace) {
+    RETURN->v_int=0;
+    try {
+        auto *p=runState(SELF,API); auto s=GET_NEXT_STRING_SAFE(ARGS);
+        if(p&&validText(s,65536)) { p->text.swap(s); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_append_run) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS); auto *r=runState(GET_NEXT_OBJECT(ARGS),API);
+        if(!indexOK(d,i)||!r||r->text.empty()||d->runs>=16384) return;
+        auto &p=d->paragraphs[i];
+        if(p.runs.size()>=1024||p.text.size()+r->text.size()>65536||d->bytes+r->text.size()>1048576) return;
+        auto next=p.text+r->text;
+        p.runs.push_back(*r); p.text.swap(next); d->bytes+=r->text.size(); ++d->runs; RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_run_count) {
+    auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS);
+    RETURN->v_int=indexOK(d,i)?static_cast<t_CKINT>(d->paragraphs[i].runs.size()):-1;
+}
+CK_DLL_MFUN(text_doc_run_text) {
+    auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS),j=GET_NEXT_INT(ARGS);
+    RETURN->v_string=API->object->create_string(VM,indexOK(d,i)&&j>=0&&static_cast<size_t>(j)<d->paragraphs[i].runs.size()?d->paragraphs[i].runs[j].text.c_str():"",FALSE);
+}
+CK_DLL_MFUN(text_doc_set_run_style) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS),j=GET_NEXT_INT(ARGS); auto *s=styleState(GET_NEXT_OBJECT(ARGS),API);
+        if(indexOK(d,i)&&s&&j>=0&&static_cast<size_t>(j)<d->paragraphs[i].runs.size()) {
+            Style copy=*s; d->paragraphs[i].runs[j].style=std::move(copy); RETURN->v_int=1;
+        }
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_replace_run) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS),j=GET_NEXT_INT(ARGS); auto *r=runState(GET_NEXT_OBJECT(ARGS),API);
+        if(!indexOK(d,i)||!r||r->text.empty()) return;
+        auto &p=d->paragraphs[i];
+        if(j<0||static_cast<size_t>(j)>=p.runs.size()) return;
+        size_t old=p.runs[j].text.size(),nextSize=p.text.size()-old+r->text.size();
+        if(nextSize>65536||d->bytes-old+r->text.size()>1048576) return;
+        Run copy=*r; size_t offset=p.baseBytes;
+        for(size_t k=0;k<static_cast<size_t>(j);++k) offset+=p.runs[k].text.size();
+        auto next=p.text; next.replace(offset,old,copy.text);
+        p.runs[j]=std::move(copy); p.text.swap(next); d->bytes=d->bytes-old+r->text.size(); RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_doc_remove_run) {
+    RETURN->v_int=0;
+    try {
+        auto *d=docState(SELF,API); auto i=GET_NEXT_INT(ARGS),j=GET_NEXT_INT(ARGS);
+        if(!indexOK(d,i)) return;
+        auto &p=d->paragraphs[i];
+        if(j<0||static_cast<size_t>(j)>=p.runs.size()) return;
+        size_t offset=p.baseBytes,old=p.runs[j].text.size();
+        for(size_t k=0;k<static_cast<size_t>(j);++k) offset+=p.runs[k].text.size();
+        p.text.erase(offset,old); p.runs.erase(p.runs.begin()+j); d->bytes-=old; --d->runs; RETURN->v_int=1;
+    } catch(...) {}
 }
 CK_DLL_MFUN(text_doc_measure) {
     RETURN->v_int=0;
@@ -189,23 +278,32 @@ CK_DLL_MFUN(text_doc_measure) {
         pango_layout_set_wrap(layout.get(),PANGO_WRAP_WORD_CHAR);
         std::unique_ptr<PangoAttrList,decltype(&pango_attr_list_unref)> attrs(pango_attr_list_new(),pango_attr_list_unref);
         if(!attrs) return;
-        auto add=[&](PangoAttribute *attr) { pango_attr_list_insert(attrs.get(),attr); };
-        auto rgb16=[](t_CKINT rgb,int shift) { return static_cast<guint16>(((rgb>>shift)&255)*257); };
-        add(pango_attr_foreground_new(rgb16(p.style.rgb,16),rgb16(p.style.rgb,8),rgb16(p.style.rgb,0)));
-        add(pango_attr_foreground_alpha_new(static_cast<guint16>(std::lround(p.style.opacity*65535))));
-        if(p.style.background>=0) {
-            add(pango_attr_background_new(rgb16(p.style.background,16),rgb16(p.style.background,8),rgb16(p.style.background,0)));
-            add(pango_attr_background_alpha_new(static_cast<guint16>(std::lround(p.style.opacity*65535))));
-        }
-        if(p.style.underline) add(pango_attr_underline_new(PANGO_UNDERLINE_SINGLE));
-        if(p.style.strikethrough) add(pango_attr_strikethrough_new(TRUE));
-        if(p.style.spacing!=0) add(pango_attr_letter_spacing_new(static_cast<int>(std::lround(p.style.spacing*PANGO_SCALE))));
-        double rise=p.style.rise;
-        if(p.style.script!=0) {
-            add(pango_attr_scale_new(0.7));
-            rise+=(p.style.script==1?0.35:-0.2)*p.style.size;
-        }
-        if(rise!=0) add(pango_attr_rise_new(static_cast<int>(std::lround(rise*PANGO_SCALE))));
+        auto apply=[&](const Style &style,guint begin,guint end) {
+            auto add=[&](PangoAttribute *attr) { attr->start_index=begin; attr->end_index=end; pango_attr_list_insert(attrs.get(),attr); };
+            add(pango_attr_family_new(style.font.c_str()));
+            add(pango_attr_size_new_absolute(static_cast<int>(std::lround(style.size*PANGO_SCALE))));
+            add(pango_attr_weight_new(static_cast<PangoWeight>(style.weight)));
+            add(pango_attr_style_new(style.italic?PANGO_STYLE_ITALIC:PANGO_STYLE_NORMAL));
+            auto rgb16=[](t_CKINT rgb,int shift) { return static_cast<guint16>(((rgb>>shift)&255)*257); };
+            add(pango_attr_foreground_new(rgb16(style.rgb,16),rgb16(style.rgb,8),rgb16(style.rgb,0)));
+            add(pango_attr_foreground_alpha_new(static_cast<guint16>(std::lround(style.opacity*65535))));
+            if(style.background>=0) {
+                add(pango_attr_background_new(rgb16(style.background,16),rgb16(style.background,8),rgb16(style.background,0)));
+                add(pango_attr_background_alpha_new(static_cast<guint16>(std::lround(style.opacity*65535))));
+            }
+            if(style.underline) add(pango_attr_underline_new(PANGO_UNDERLINE_SINGLE));
+            if(style.strikethrough) add(pango_attr_strikethrough_new(TRUE));
+            if(style.spacing!=0) add(pango_attr_letter_spacing_new(static_cast<int>(std::lround(style.spacing*PANGO_SCALE))));
+            double rise=style.rise;
+            if(style.script!=0) {
+                add(pango_attr_scale_new(0.7));
+                rise+=(style.script==1?0.35:-0.2)*style.size;
+            }
+            if(rise!=0) add(pango_attr_rise_new(static_cast<int>(std::lround(rise*PANGO_SCALE))));
+        };
+        if(p.baseBytes>0||p.runs.empty()) apply(p.style,0,p.baseBytes?static_cast<guint>(p.baseBytes):G_MAXUINT);
+        guint offset=static_cast<guint>(p.baseBytes);
+        for(const auto &run:p.runs) { guint next=offset+static_cast<guint>(run.text.size()); apply(run.style,offset,next); offset=next; }
         pango_layout_set_attributes(layout.get(),attrs.get());
         int w=0,h=0; pango_layout_get_pixel_size(layout.get(),&w,&h);
         API->object->array_int_set_idx(a,0,w); API->object->array_int_set_idx(a,1,h);
@@ -262,6 +360,19 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_style_inherit,"int","inherit");
     QUERY->add_arg(QUERY,"TextStyle","source");
     if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"TextRun","Object");
+    runOffset=QUERY->add_mvar(QUERY,"int","@textRunNative",FALSE);
+    if(runOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,text_run_ctor); QUERY->add_dtor(QUERY,text_run_dtor);
+    QUERY->add_mfun(QUERY,text_run_set,"int","set");
+    QUERY->add_arg(QUERY,"string","text");
+    QUERY->add_arg(QUERY,"TextStyle","style");
+    QUERY->add_mfun(QUERY,text_run_text,"string","text");
+    QUERY->add_mfun(QUERY,text_run_replace,"int","setText");
+    QUERY->add_arg(QUERY,"string","text");
+    QUERY->add_mfun(QUERY,text_run_style,"int","setStyle");
+    QUERY->add_arg(QUERY,"TextStyle","style");
+    if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"TextDocument","Object");
     docOffset=QUERY->add_mvar(QUERY,"int","@textDocumentNative",FALSE);
     if(docOffset==CK_INVALID_OFFSET) return FALSE;
@@ -281,6 +392,25 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_mfun(QUERY,text_doc_remove,"int","removeParagraph");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_doc_clear,"void","clear");
+    QUERY->add_mfun(QUERY,text_doc_append_run,"int","appendRun");
+    QUERY->add_arg(QUERY,"int","paragraph");
+    QUERY->add_arg(QUERY,"TextRun","run");
+    QUERY->add_mfun(QUERY,text_doc_run_count,"int","runCount");
+    QUERY->add_arg(QUERY,"int","paragraph");
+    QUERY->add_mfun(QUERY,text_doc_run_text,"string","runText");
+    QUERY->add_arg(QUERY,"int","paragraph");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,text_doc_set_run_style,"int","setRunStyle");
+    QUERY->add_arg(QUERY,"int","paragraph");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextStyle","style");
+    QUERY->add_mfun(QUERY,text_doc_replace_run,"int","setRun");
+    QUERY->add_arg(QUERY,"int","paragraph");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"TextRun","run");
+    QUERY->add_mfun(QUERY,text_doc_remove_run,"int","removeRun");
+    QUERY->add_arg(QUERY,"int","paragraph");
+    QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_doc_measure,"int","measureParagraph");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"int","width");
