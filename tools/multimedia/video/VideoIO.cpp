@@ -4029,6 +4029,30 @@ CK_DLL_MFUN(video_capture_indexed_ingest_audio) {
     } catch(...) {}
 }
 
+
+CK_DLL_MFUN(video_capture_indexed_pending) {
+    auto *p=videoCaptureState(SELF,API);
+    RETURN->v_int=p&&p->recording&&p->indexedRecording&&
+        p->count==p->indexedBase+p->recorded+1;
+}
+CK_DLL_MFUN(video_capture_indexed_ready) {
+    RETURN->v_int=0;
+    auto *p=videoCaptureState(SELF,API);
+    if(!p||!p->recording||!p->indexedRecording||!p->frame.valid()||
+       p->count!=p->indexedBase+p->recorded+1||!p->audioStarted) return;
+    auto &w=*p->recording;
+    int64_t first=p->recordOrigin+w.samples,n=w.nextSamples();
+    if(n<=0||first<p->audioFirst||first-p->audioFirst>p->audioFrames()||
+       n>p->audioFrames()-(first-p->audioFirst)) return;
+    for(size_t i=3;i<p->frame.rgba.size();i+=4) if(p->frame.rgba[i]!=255) return;
+    RETURN->v_int=1;
+}
+CK_DLL_MFUN(video_capture_indexed_lost) {
+    auto *p=videoCaptureState(SELF,API);
+    RETURN->v_int=p&&p->recording&&p->indexedRecording&&
+        p->count>p->indexedBase+p->recorded+1;
+}
+
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -4404,6 +4428,9 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_mfun(QUERY,video_capture_indexed_ingest_audio,"int","ingestAudioAt");
     QUERY->add_arg(QUERY,"int","firstSample");
     QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,video_capture_indexed_pending,"int","indexedPending");
+    QUERY->add_mfun(QUERY,video_capture_indexed_ready,"int","indexedReady");
+    QUERY->add_mfun(QUERY,video_capture_indexed_lost,"int","indexedLost");
     QUERY->add_mfun(QUERY,video_capture_export,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY)) return FALSE;
