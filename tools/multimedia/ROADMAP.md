@@ -77,11 +77,11 @@ O = usable foundational capability; P = partial capability; M = specific capabil
 | Vector | O | O | O | O | N/A | O | M | O |
 | 3D | O | O | O | O | N/A | O | M | O |
 | Audio Wave | O | O | O | O | O | O | M | O |
-| Audio MIDI | O | O | O | O | P | O | P | O |
+| Audio MIDI | O | O | O | O | O | O | P | O |
 | Video | O | O | O | O | M | O | M | O |
-| Text | O | O | O | O | P | O | P | O |
+| Text | O | O | O | O | O | O | P | O |
 
-43 O, 4 P, 7 M, 2 N/A = 56. Weighted coverage over 54 applicable cells (O=1, P=0.5) = 83.33%; this is a new static rubric, not a comparable measured increase over the earlier historical estimate, nor a percentage of engineering effort.
+45 O, 2 P, 7 M, 2 N/A = 56. Weighted coverage over 54 applicable cells (O=1, P=0.5) = 85.19%; this is a new static rubric, not a comparable measured increase over the earlier historical estimate, nor a percentage of engineering effort.
 
 ### Evidence and gaps by type
 
@@ -89,9 +89,9 @@ O = usable foundational capability; P = partial capability; M = specific capabil
 - Vector: VectorImage.create/addRect/addCircle/addLine/addPolygon/removeShape/load/save/render/exportPixels and cross-type exports; global transforms and numeric automation. Operational foundational manipulation after #169 and Windows local validation: individual geometry, affine transforms, solid paint, structural groups, duplication, stacking order and explicit editable SVG subset loading. Arbitrary SVG DOM editing is not claimed; tracing remains excluded. Vector capture excluded; transport remains missing.
 - 3D: Model3D.createMesh/createBoxes/setVertex/transformMesh, materials, skinning and animation controller, load/save, orthographic rendering/projection and sonification. Optional ChuGL geometry/scene bridge documented, graphical runtime not certified by headless baseline. Live geometry capture excluded; no dedicated network scene transport identified.
 - Wave: AudioBuffer.create/importSamples, crop/mix/resample/filters, load/save, format conversion and visualization/pitch analysis. Native ChucK adc/dac, SndBuf and WvOut cover foundational local device acquisition/playback/recording and scheduling. No dedicated network waveform streaming/transport identified.
-- MIDI: MidiSequence.create/addNote/addCC/addTempo, edit/quantize, load/save, renderSamples and visual/geometry export. Native MidiIn/MidiOut provide live event I/O; partial capture because no direct timestamped MidiSequence recording bridge was identified; partial transmission because MIDI device protocol is supported but network transport is not established.
+- MIDI: MidiSequence.create/addNote/addCC/addTempo, edit/quantize, load/save, renderSamples and visual/geometry export. Native MidiIn/MidiOut provide live event I/O; foundational capture operational after #171–173 with MidiCapture timestamped channel messages, session controls and SMF export, validated with constructed MidiMsg events. Physical device behavior is not certified. Transmission remains partial because network transport is not established.
 - Video: VideoWriter.open/appendFrame/openAV/appendAV, VideoClip.load/next/exportPixels, transcode/trim/concat/transition/composite/subtitles, VideoAudio and synchronized frame/PCM writing. No camera/screen video acquisition or explicit network video transport identified. Offline operations do not guarantee realtime.
-- Text: TextDocument/TextFlow creation, formatting, pagination, editing and TXT/native/PNG/SVG/PDF interchange, programmatic controls. Native keyboard/console input and OSC strings give partial capture/transmission; no integrated text capture/session or media-aware text transfer identified. More specialized grapheme/cursor geometry remains deferred.
+- Text: TextDocument/TextFlow creation, formatting, pagination, editing and TXT/native/PNG/SVG/PDF interchange, programmatic controls. Foundational capture operational after #174–175 with TextCapture UTF-8 buffer, terminal ASCII key adapter and document/flow snapshots; committed Unicode strings/codepoints accepted, no IME or global hooks. Physical terminal behavior is not certified. OSC strings give partial transmission; media-aware text transfer remains missing. More specialized grapheme/cursor geometry remains deferred.
 
 ### Proposed priority order (not an approved PR schedule)
 
@@ -133,3 +133,7 @@ User selected all capture before transmission. Proposed three five-functional-PR
 #174: bounded UTF-8 text capture buffer with codepoint insertion, cursor and editing; 64 new checks, global 4803, local 221; functional cadence 9/20. Native validation pending. Interactive device adapter and document/flow integration follow.
 
 #175: native terminal key adapter and capture snapshots into TextDocument/TextFlow; 56 new checks, global 4859, local 277; functional cadence 10/20. Local validation required. MIDI and text capture classification pending validation and scope review. Terminal ASCII keys and caller-supplied committed Unicode text supported; no global keyboard hook or IME implementation. Physical MIDI and terminal device behavior not certified by headless tests.
+
+## Validation checkpoint after #175
+
+User-reported Windows Local: expected=277, PASS=277, FAIL=0, missing=0, unreported=0, extra=0, suites=1/1, status=PASS. Five capture groups validated. Cumulative validated checks 4859; last Full baseline remains 4282 after #161; functional cadence 10/20, local cycle resets to 0/5. Clear validated local groups; retain global manifest unchanged. Promote MIDI and text capture to O under foundational rubric; physical hardware and full Unicode terminal/IME behavior are not certified. Coverage 85.19% (45 O, 2 P, 7 M, 2 N/A). Next functional cycle: raster capture, with device backend feasibility to be assessed before implementation. No workflow changes.
