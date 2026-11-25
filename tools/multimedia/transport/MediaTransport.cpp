@@ -1,6 +1,6 @@
+#include "MediaSession.h"
 #include "MediaVideoSender.h"
 #include "MediaRasterAuto.h"
-#include "MediaSession.h"
 #include "MediaPCMBuffer.h"
 #include "MediaAudioMidi.h"
 #include "MediaGraphics.h"
@@ -1466,7 +1466,7 @@ CK_DLL_MFUN(ca_size){auto *p=ca(SELF,API);RETURN->v_int=p?p->size():0;}
 CK_DLL_MFUN(ca_ready){auto *p=ca(SELF,API);RETURN->v_int=p&&p->ready();}
 CK_DLL_MFUN(ca_push){RETURN->v_int=0;try{auto *p=ca(SELF,API);auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));mediawire::Bytes wire;if(p&&read(a,API,mediawire::headerSize+mediawire::maxPayload,wire))RETURN->v_int=p->push(wire);}catch(...){}}
 CK_DLL_MFUN(ca_pixels){RETURN->v_int=0;auto *p=ca(SELF,API);auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));if(p&&p->ready()&&exact(a,API,p->size())){write(a,API,p->pixels());RETURN->v_int=1;}}
-CK_DLL_SFUN(ra_select){
+CK_DLL_SFUN(raster_auto_select){
     RETURN->v_int=0;try{
         auto s=GET_NEXT_INT(ARGS),q=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),limit=GET_NEXT_INT(ARGS);
         auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
@@ -1478,7 +1478,7 @@ CK_DLL_SFUN(ra_select){
         if(k&&exact(dst,API,wire.size())){write(dst,API,wire);RETURN->v_int=k;}
     }catch(...){}
 }
-CK_DLL_SFUN(ra_size){
+CK_DLL_SFUN(raster_auto_size){
     RETURN->v_int=0;try{
         auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),limit=GET_NEXT_INT(ARGS);
         auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));auto n=mediawire::imagePixels(w,h);mediawire::Bytes pixels,wire;
@@ -2300,12 +2300,12 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaRasterAuto","Object");
-    QUERY->add_sfun(QUERY,ra_size,"int","packetSize");
+    QUERY->add_sfun(QUERY,raster_auto_size,"int","packetSize");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_arg(QUERY,"int","payloadLimit");
     QUERY->add_arg(QUERY,"int[]","pixels");
-    QUERY->add_sfun(QUERY,ra_select,"int","encode");
+    QUERY->add_sfun(QUERY,raster_auto_select,"int","encode");
     QUERY->add_arg(QUERY,"int","stream");
     QUERY->add_arg(QUERY,"int","sequence");
     QUERY->add_arg(QUERY,"int","timestampUs");
