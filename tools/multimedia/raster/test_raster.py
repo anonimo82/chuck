@@ -21,9 +21,9 @@ def fixture(path):
                      + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 def count_checks(log):
-    # ChucK prints quoted strings; count only standalone result tokens.
-    return (len(re.findall(r'(?m)^\s*"?PASS"?\s*,?\s+"', log)),
-            len(re.findall(r'(?m)^\s*"?FAIL"?\s*,?\s+"', log)))
+    # Multi-value ChucK output may be unquoted; count only result tokens.
+    return (len(re.findall(r'(?m)^[ \t]*"?PASS"?(?=[ \t,]|$)', log)),
+            len(re.findall(r'(?m)^[ \t]*"?FAIL"?(?=[ \t,]|$)', log)))
 
 def main():
     with tempfile.TemporaryDirectory() as directory:
