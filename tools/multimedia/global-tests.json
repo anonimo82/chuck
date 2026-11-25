@@ -10,6 +10,7 @@
     "text-page-furniture",
     "text-page-numbers",
     "text-split-paragraphs",
-    "text-split-tables"
+    "text-split-tables",
+    "text-frame-foundation"
   ]
 }
