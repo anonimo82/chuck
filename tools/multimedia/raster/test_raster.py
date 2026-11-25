@@ -38,6 +38,7 @@ check(RasterIO.convert("input.png", "output.bmp") == 0, "no overwrite");
 check(RasterIO.width("missing.png") == -1, "missing input");
 check(RasterIO.convert("input.png", "output.unknown") == 0, "unsupported output");
 """)
+        print("SMOKE_EXPECTED 8", flush=True)
         result = subprocess.run(
             [os.environ.get("CHUCK_EXE", str(ROOT / "src/chuck")), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE)), script.name],
             cwd=tmp, capture_output=True, text=True, timeout=30)

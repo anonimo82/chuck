@@ -21,6 +21,7 @@ check(AudioIO.sampleRate("output.flac") == 8000);
 check(AudioIO.convert("input.wav", "output.flac") == 0);
 check(AudioIO.channels("missing.wav") == -1);
 """)
+    print("SMOKE_EXPECTED 7", flush=True)
     r = subprocess.run([os.environ.get("CHUCK_EXE", str(ROOT / "src/chuck")), "--silent", "--chugin-path:" + os.environ.get("CHUGIN_DIR", str(HERE)), "test.ck"], cwd=p, capture_output=True, text=True, timeout=30)
     log = r.stdout + r.stderr
     print(log)
