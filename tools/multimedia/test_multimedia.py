@@ -5569,3 +5569,64 @@ check(doc.saveSVG("text-svg-invalid.svg",240,160,-1));
     assert not list(ET.parse(p / "text-svg-empty.svg").getroot().iter(svg_ns + "path"))
     for name in ("text-svg-wrong.png","text-svg-zero.svg","text-svg-large.svg","text-svg-bg.svg","text-svg-color.svg"):
         assert not (p / name).exists(), name
+
+    # PDF pages are emitted by Cairo, not assembled from PNG snapshots.
+    run("text", """
+TextDocument doc;
+TextPage page;
+TextStyle style;
+TextParagraphStyle flow;
+TextNode root;
+TextNode leaf;
+TextTable table;
+check(page.width(240)==240);
+check(page.height(120)==120);
+check(page.marginLeft(10)==10);
+check(page.marginRight(10)==10);
+check(page.marginTop(10)==10);
+check(page.marginBottom(10)==10);
+check(doc.pageCount(page)==1);
+check(doc.savePDF("text-pdf-empty.pdf",page));
+check(!doc.savePDF("text-pdf-empty.pdf",page));
+check(!doc.savePDF("text-pdf-wrong.svg",page));
+check(page.backgroundColor(-1)==-1);
+check(doc.savePDF("text-pdf-transparent.pdf",page));
+check(style.size(16)==16);
+check(doc.addParagraph("First café",style));
+check(flow.marginBottom(75)==75);
+check(doc.setParagraphLayout(0,flow));
+check(doc.addParagraph("Second page",style));
+check(doc.setParagraphLayout(1,flow));
+check(doc.addParagraph("Third page",style));
+check(doc.setParagraphLayout(2,flow));
+check(doc.pageCount(page)==3);
+check(doc.savePDF("text-pdf-three.pdf",page));
+check(doc.paragraphCount()==3);
+check(page.marginTop(110)==110);
+check(doc.pageCount(page)==-1);
+check(!doc.savePDF("text-pdf-invalid.pdf",page));
+check(page.marginTop(10)==10);
+check(page.height(40)==40);
+check(doc.pageCount(page)==-1);
+check(!doc.savePDF("text-pdf-oversize.pdf",page));
+check(page.height(120)==120);
+check(doc.savePDF("text-pdf-invalid.pdf",page));
+doc.clear();
+check(table.create(1,2));
+check(table.setCell(0,0,"Left",style));
+check(table.setCell(0,1,"Right",style));
+check(doc.appendTable(table));
+check(leaf.setParagraph("Nested",style));
+check(root.appendChild(leaf));
+check(doc.appendNode(root));
+check(doc.pageCount(page)==1);
+check(doc.savePDF("text-pdf-rich.pdf",page));
+""",41,p)
+    import re
+    for name, pages in (("text-pdf-empty.pdf",1), ("text-pdf-transparent.pdf",1), ("text-pdf-three.pdf",3), ("text-pdf-invalid.pdf",3), ("text-pdf-rich.pdf",1)):
+        pdf = (p / name).read_bytes()
+        assert pdf.startswith(b"%PDF-") and pdf.rstrip().endswith(b"%%EOF"), name
+        assert len(re.findall(rb"/Type\s*/Page\b",pdf)) == pages, name
+        assert len(re.findall(rb"/MediaBox\s*\[\s*0\s+0\s+180\s+90\s*\]",pdf)) == pages, name
+    assert not (p / "text-pdf-wrong.svg").exists()
+    assert not (p / "text-pdf-oversize.pdf").exists()
