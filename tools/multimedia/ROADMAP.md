@@ -125,3 +125,5 @@ Developer-reported Windows Local: expected=300, PASS=300, FAIL=0, missing=0, unr
 ## Capture cycle 1 — MIDI and text
 
 User selected all capture before transmission. Proposed three five-functional-PR cycles: MIDI/text, raster, video/audio synchronization; device backend feasibility must be verified. #171: timestamped MIDI channel message capture buffer, fixed-tempo tick conversion and inspection. 58 new checks, global 4640, local 58; functional cadence 6/20. Native validation pending. MIDI capture remains partial until device bridge, persistence and session integration. Vector/3D capture and point clouds remain excluded.
+
+#172: native MidiMsg field bridge and SMF recording export; 42 new checks, global 4682, local 100; functional cadence 7/20. Hardware validation and native compilation pending.
