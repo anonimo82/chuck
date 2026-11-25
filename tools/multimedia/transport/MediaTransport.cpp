@@ -7,6 +7,7 @@
 #include "MediaVideoBuffer.h"
 #include "MediaAudioVideo.h"
 #include "MediaAVPacket.h"
+#include "MediaText.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -996,6 +997,47 @@ CK_DLL_SFUN(avp_inspect) {
         RETURN->v_int=kind;
     } catch(...) {}
 }
+CK_DLL_SFUN(tx_size) {
+    auto n=GET_NEXT_INT(ARGS); RETURN->v_int=mediawire::textPacketSize(n);
+}
+CK_DLL_SFUN(tx_encode) {
+    RETURN->v_int=0;
+    try {
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS);
+        auto text=GET_NEXT_STRING_SAFE(ARGS);
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto n=mediawire::textPacketSize(text.size());
+        if(!n||stream<1||static_cast<uint64_t>(stream)>=0xffffffffu||seq<0||
+           static_cast<uint64_t>(seq)>0xffffffffu||ts<0||!exact(dst,API,n)) return;
+        mediawire::Bytes data(text.begin(),text.end()),wire;
+        if(mediawire::encodeText({7,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},data,wire)) {
+            write(dst,API,wire);RETURN->v_int=1;
+        }
+    } catch(...) {}
+}
+CK_DLL_SFUN(tx_inspect) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Header h;mediawire::Bytes wire,text;
+        if(!exact(dst,API,4)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeText(wire,h,text)) return;
+        const uint64_t fields[]={h.stream,h.sequence,h.timestamp,text.size()};
+        for(size_t i=0;i<4;++i) API->object->array_int_set_idx(dst,i,fields[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_SFUN(tx_decode) {
+    std::string result;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Header h;mediawire::Bytes wire,text;
+        if(read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)&&mediawire::decodeText(wire,h,text))
+            result.assign(text.begin(),text.end());
+    } catch(...) {}
+    RETURN->v_string=API->object->create_string(VM,result.c_str(),FALSE);
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -1499,6 +1541,21 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_sfun(QUERY,avp_inspect,"int","inspect");
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"int[]","metadata");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaText","Object");
+    QUERY->add_sfun(QUERY,tx_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","utf8Bytes");
+    QUERY->add_sfun(QUERY,tx_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"string","text");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,tx_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,tx_decode,"string","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
     if(!QUERY->end_class(QUERY)) return FALSE;
     QUERY->begin_class(QUERY,"MediaGraphics","Object");
     QUERY->add_sfun(QUERY,gr_inspect,"int","inspect");
