@@ -3769,3 +3769,58 @@ source.clear();
 check(!source.analyze(0,0,1,stats));
 """,32,p)
     assert writer_pcm("videoaudio-mono-analysis.wav")==struct.pack("<h",-4096)*4000
+
+    run("video", """
+@import "MidiFileIO";
+@import "AudioIO";
+VideoClip clip;
+MidiSequence seq;
+check(clip.framePitch(48,60,0.0)==-1);
+check(clip.load("generated.mkv"));
+check(clip.framePitch(48,60,0.0)==51);
+check(clip.framePitch(48,60,0.3)==-2);
+check(clip.framePitch(-1,60,0.0)==-1);
+check(clip.framePitch(60,48,0.0)==-1);
+check(clip.framePitch(48,128,0.0)==-1);
+check(clip.framePitch(48,60,-0.1)==-1);
+check(clip.framePitch(48,60,1.1)==-1);
+check(clip.framePitch(64,64,0.0)==64);
+check(clip.frameIndex()==0);
+int pitches[2];
+clip.framePitch(48,60,0.0)=>pitches[0];
+check(clip.next()==1);
+clip.framePitch(48,60,0.0)=>pitches[1];
+check(pitches[0]==51 && pitches[1]==49);
+check(seq.importPitches(480,120.0,0.5,0,100,pitches));
+check(seq.notes(0)==2 && seq.noteLength(0,0)==480);
+check(seq.save("video-visual.mid"));
+0.0=>clip.blue;
+check(clip.framePitch(48,60,0.0)==48);
+check(clip.framePitch(48,60,0.01)==-2);
+1.0=>clip.brightness;
+check(clip.framePitch(48,60,0.0)==60);
+check(clip.frameIndex()==1);
+clip.clear();
+check(clip.framePitch(48,60,0.0)==-1);
+VideoWriter writer;
+VideoAudio source;
+AudioBuffer audio;
+int pixels[1024];
+for(0=>int i;i<256;i++) 255=>pixels[i*4+3];
+float samples[4096];
+for(0=>int i;i<4096;i++) 0.5*Math.sin(2.0*Math.pi*440.0*i/8000.0)=>samples[i];
+check(writer.openAV("video-pitch-audio.mkv",16,16,2,8000,1));
+float block[4000];
+for(0=>int i;i<4000;i++) samples[i]=>block[i];
+check(writer.appendAV(pixels,block));
+check(writer.finish());
+check(source.load("video-pitch-audio.mkv",0));
+check(source.readChannel(0,0,block));
+check(audio.importSamples(8000,1,block));
+int detected[3];
+check(audio.detectPitches(0,1024,0.02,0.9,detected));
+check(detected[0]==69 && detected[1]==69 && detected[2]==69);
+check(seq.importPitches(480,120.0,0.128,0,100,detected));
+check(seq.notes(0)==1);
+check(seq.save("video-audio.mid"));
+""",32,p)

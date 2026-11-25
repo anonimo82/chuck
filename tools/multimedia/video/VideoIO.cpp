@@ -3407,6 +3407,35 @@ CK_DLL_MFUN(video_audio_analyze) {
     API->object->array_float_set_idx(a,3,std::sqrt(squares/count));
     RETURN->v_int=1;
 }
+CK_DLL_MFUN(video_clip_pitch) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=clipState(SELF,API);
+        auto low=GET_NEXT_INT(ARGS),high=GET_NEXT_INT(ARGS);
+        double gate=GET_NEXT_FLOAT(ARGS);
+        if(!p||!p->reader||low<0||high>127||low>high||
+           !std::isfinite(gate)||gate<0||gate>1) return;
+        auto *src=p->reader->current.p;
+        int w=src->width,h=src->height;
+        if(w<1||h<1||w>8192||h>8192||int64_t(w)*h>16777216) return;
+        Frame image;
+        if(!image.p) return;
+        image.p->width=w; image.p->height=h; image.p->format=AV_PIX_FMT_BGR0;
+        if(av_frame_get_buffer(image.p,32)<0||!p->reader->render(image.p)) return;
+        double sum=0;
+        for(int y=0;y<h;++y) {
+            auto *row=image.p->data[0]+size_t(y)*image.p->linesize[0];
+            for(int x=0;x<w;++x) {
+                double c[3];
+                for(int k=0;k<3;++k)
+                    c[k]=std::lround(std::clamp(row[x*4+2-k]*p->controls[k]+255*p->controls[3],0.0,255.0));
+                sum+=0.2126*c[0]+0.7152*c[1]+0.0722*c[2];
+            }
+        }
+        double lum=std::clamp(sum/(255.0*w*h),0.0,1.0);
+        RETURN->v_int=lum<gate?-2:low+std::lround(lum*(high-low));
+    } catch(...) {}
+}
 CK_DLL_QUERY(VideoIO) {
     QUERY->setname(QUERY, "VideoIO");
     QUERY->begin_class(QUERY, "VideoIO", "Object");
@@ -3647,6 +3676,10 @@ CK_DLL_QUERY(VideoIO) {
     QUERY->add_mfun(QUERY,video_clip_get_brightness,"float","brightness");
     QUERY->add_mfun(QUERY,video_clip_set_brightness,"float","brightness");
     QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,video_clip_pitch,"int","framePitch");
+    QUERY->add_arg(QUERY,"int","lowPitch");
+    QUERY->add_arg(QUERY,"int","highPitch");
+    QUERY->add_arg(QUERY,"float","luminanceGate");
     QUERY->add_mfun(QUERY,video_clip_export_pixels,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
     QUERY->add_mfun(QUERY,video_clip_export_pixels_scaled,"int","exportPixels");
