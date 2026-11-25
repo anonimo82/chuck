@@ -337,6 +337,171 @@ CK_DLL_MFUN(midi_sequence_add_tempo) {
     } catch(...) {}
 }
 
+
+namespace {
+struct NotePair { int on,off; };
+// Pair only unambiguous, positive-duration notes on a single track.
+bool notePairs(smf::MidiFile &m,int track,std::vector<NotePair> &pairs) {
+    if(track<0 || track>=m.getTrackCount()) return false;
+    int pending[2048]; std::fill_n(pending,2048,-1);
+    auto &events=m[track];
+    for(int i=0;i<events.size();++i) {
+        auto &e=events[i];
+        if(!midiTick(e.tick) || (i>0 && e.tick<events[i-1].tick)) return false;
+        if(e.size()!=3) continue;
+        int status=e[0]&0xf0;
+        if(status!=0x80 && status!=0x90) continue;
+        if(e[1]>127 || e[2]>127) return false;
+        int key=(e[0]&15)*128+e[1];
+        if(status==0x90 && e[2]>0) {
+            if(pending[key]>=0) return false;
+            pending[key]=i;
+        } else {
+            int on=pending[key];
+            if(on<0 || e.tick<=events[on].tick) return false;
+            pairs.push_back({on,i}); pending[key]=-1;
+        }
+    }
+    for(int i:pending) if(i>=0) return false;
+    std::sort(pairs.begin(),pairs.end(),[](const NotePair &a,const NotePair &b){return a.on<b.on;});
+    return true;
+}
+bool editableTrack(MidiState *p,t_CKINT t) {
+    return p && p->file && t>=0 && t<p->file->getTrackCount() &&
+           p->file->getTicksPerQuarterNote()>0 && p->file->getTicksPerQuarterNote()<=32767;
+}
+template<class Edit>
+bool editNotes(MidiState *p,int track,Edit edit) {
+    size_t total=0;
+    for(int t=0;t<p->file->getTrackCount();++t) total+=(*p->file)[t].size();
+    if(total>1000000) return false;
+    auto copy=std::make_unique<smf::MidiFile>(*p->file);
+    std::vector<NotePair> pairs;
+    if(!notePairs(*copy,track,pairs) || !edit(*copy,pairs)) return false;
+    // End-of-track must not precede a moved note. Keep trailing silence.
+    int end=0;
+    auto &events=(*copy)[track];
+    for(int i=0;i<events.size();++i) end=std::max(end,events[i].tick);
+    for(int i=0;i<events.size();++i) {
+        auto &e=events[i];
+        if(e.size()>=2 && e[0]==0xff && e[1]==0x2f) e.tick=end;
+    }
+    copy->sortTracks();
+    pairs.clear();
+    if(!notePairs(*copy,track,pairs)) return false;
+    p->file=std::move(copy);
+    return true;
+}
+}
+CK_DLL_MFUN(midi_sequence_notes) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=midiState(SELF,API); auto track=GET_NEXT_INT(ARGS);
+        if(!editableTrack(p,track)) return;
+        std::vector<NotePair> pairs;
+        if(notePairs(*p->file,track,pairs)) RETURN->v_int=pairs.size();
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_note_length) {
+    RETURN->v_int=-1;
+    try {
+        auto *p=midiState(SELF,API);
+        auto track=GET_NEXT_INT(ARGS),index=GET_NEXT_INT(ARGS);
+        if(!editableTrack(p,track)||index<0) return;
+        std::vector<NotePair> pairs;
+        if(!notePairs(*p->file,track,pairs)||static_cast<uint64_t>(index)>=pairs.size()) return;
+        auto pair=pairs[index]; auto &events=(*p->file)[track];
+        RETURN->v_int=events[pair.off].tick-events[pair.on].tick;
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_set_note) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API);
+        auto track=GET_NEXT_INT(ARGS),index=GET_NEXT_INT(ARGS),tick=GET_NEXT_INT(ARGS);
+        auto length=GET_NEXT_INT(ARGS),pitch=GET_NEXT_INT(ARGS),velocity=GET_NEXT_INT(ARGS);
+        if(!editableTrack(p,track)||index<0||!midiTick(tick)||length<1||
+           length>0x0fffffff-tick||!midiByte(pitch)||velocity<1||velocity>127) return;
+        RETURN->v_int=editNotes(p,track,[&](smf::MidiFile &m,const std::vector<NotePair> &pairs){
+            if(static_cast<uint64_t>(index)>=pairs.size()) return false;
+            auto pair=pairs[index]; auto &on=m[track][pair.on]; auto &off=m[track][pair.off];
+            on.tick=tick; off.tick=tick+length;
+            on[1]=off[1]=static_cast<unsigned char>(pitch); on[2]=static_cast<unsigned char>(velocity);
+            return true;
+        });
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_quantize) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API); auto track=GET_NEXT_INT(ARGS),grid=GET_NEXT_INT(ARGS);
+        auto strength=GET_NEXT_FLOAT(ARGS);
+        if(!editableTrack(p,track)||grid<1||grid>0x0fffffff||
+           !std::isfinite(strength)||strength<0||strength>1) return;
+        RETURN->v_int=editNotes(p,track,[&](smf::MidiFile &m,const std::vector<NotePair> &pairs){
+            for(auto pair:pairs) {
+                auto &on=m[track][pair.on]; auto &off=m[track][pair.off];
+                int64_t snapped=((static_cast<int64_t>(on.tick)+grid/2)/grid)*grid;
+                int64_t start=on.tick+std::llround((snapped-on.tick)*strength);
+                int64_t stop=start+(off.tick-on.tick);
+                if(!midiTick(start)||!midiTick(stop)) return false;
+                on.tick=start; off.tick=stop;
+            }
+            return true;
+        });
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_shift) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API); auto track=GET_NEXT_INT(ARGS),delta=GET_NEXT_INT(ARGS);
+        if(!editableTrack(p,track)||delta< -0x0fffffff||delta>0x0fffffff) return;
+        RETURN->v_int=editNotes(p,track,[&](smf::MidiFile &m,const std::vector<NotePair> &pairs){
+            for(auto pair:pairs) {
+                auto &on=m[track][pair.on]; auto &off=m[track][pair.off];
+                int64_t start=static_cast<int64_t>(on.tick)+delta,stop=static_cast<int64_t>(off.tick)+delta;
+                if(!midiTick(start)||!midiTick(stop)) return false;
+                on.tick=start; off.tick=stop;
+            }
+            return true;
+        });
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_scale_lengths) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API); auto track=GET_NEXT_INT(ARGS); auto factor=GET_NEXT_FLOAT(ARGS);
+        if(!editableTrack(p,track)||!std::isfinite(factor)||factor<0.0625||factor>16) return;
+        RETURN->v_int=editNotes(p,track,[&](smf::MidiFile &m,const std::vector<NotePair> &pairs){
+            for(auto pair:pairs) {
+                auto &on=m[track][pair.on]; auto &off=m[track][pair.off];
+                int64_t stop=on.tick+std::max<int64_t>(1,std::llround((off.tick-on.tick)*factor));
+                if(!midiTick(stop)) return false;
+                off.tick=stop;
+            }
+            return true;
+        });
+    } catch(...) {}
+}
+CK_DLL_MFUN(midi_sequence_remove_note) {
+    RETURN->v_int=0;
+    try {
+        auto *p=midiState(SELF,API); auto track=GET_NEXT_INT(ARGS),index=GET_NEXT_INT(ARGS);
+        if(!editableTrack(p,track)||index<0) return;
+        RETURN->v_int=editNotes(p,track,[&](smf::MidiFile &m,const std::vector<NotePair> &pairs){
+            if(static_cast<uint64_t>(index)>=pairs.size()) return false;
+            // Rebuild the selected track's event list without the two note messages.
+            auto pair=pairs[index];
+            smf::MidiEventList replacement;
+            auto &events=m[track];
+            for(int i=0;i<events.size();++i)
+                if(i!=pair.on && i!=pair.off) replacement.push_back(events[i]);
+            events=replacement;
+            return true;
+        });
+    } catch(...) {}
+}
+
 CK_DLL_QUERY(MidiFileIO) {
     QUERY->setname(QUERY, "MidiFileIO");
     QUERY->begin_class(QUERY, "MidiFileIO", "Object");
@@ -422,5 +587,30 @@ CK_DLL_QUERY(MidiFileIO) {
     QUERY->add_mfun(QUERY,midi_sequence_add_tempo,"int","addTempo");
     QUERY->add_arg(QUERY,"int","tick");
     QUERY->add_arg(QUERY,"float","bpm");
+    QUERY->add_mfun(QUERY,midi_sequence_notes,"int","notes");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_mfun(QUERY,midi_sequence_note_length,"int","noteLength");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,midi_sequence_set_note,"int","setNote");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"int","tick");
+    QUERY->add_arg(QUERY,"int","length");
+    QUERY->add_arg(QUERY,"int","pitch");
+    QUERY->add_arg(QUERY,"int","velocity");
+    QUERY->add_mfun(QUERY,midi_sequence_quantize,"int","quantize");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","grid");
+    QUERY->add_arg(QUERY,"float","strength");
+    QUERY->add_mfun(QUERY,midi_sequence_shift,"int","shiftNotes");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","delta");
+    QUERY->add_mfun(QUERY,midi_sequence_scale_lengths,"int","scaleLengths");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"float","factor");
+    QUERY->add_mfun(QUERY,midi_sequence_remove_note,"int","removeNote");
+    QUERY->add_arg(QUERY,"int","track");
+    QUERY->add_arg(QUERY,"int","index");
     return QUERY->end_class(QUERY);
 }
