@@ -1051,6 +1051,38 @@ CK_DLL_MFUN(model3d_node_world_matrix) {
         RETURN->v_int=writeNodeMatrix(modelState(SELF,API),index,a,true,API);
     } catch(...) {}
 }
+CK_DLL_MFUN(model3d_export_node_trs) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto index=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        std::vector<SceneNodeEntry> nodes;
+        if(!a||API->object->array_float_size(a)!=10||!sceneNodes(p,nodes)||!nodeIndex(nodes,index)) return;
+        auto *node=nodes[index].node;
+        auto it=p->importedPose.find(node);
+        auto matrix=it==p->importedPose.end()?node->mTransformation:it->second;
+        if(!finiteMatrix(matrix)) return;
+        aiVector3D scale,pos;
+        aiQuaternion rotation;
+        matrix.Decompose(scale,rotation,pos);
+        if(std::abs(scale.x)<1e-8||std::abs(scale.y)<1e-8||std::abs(scale.z)<1e-8) return;
+        rotation.Normalize();
+        // Reject shear and perspective instead of silently approximating them.
+        aiMatrix4x4 t,s;
+        aiMatrix4x4::Translation(pos,t);
+        aiMatrix4x4::Scaling(scale,s);
+        aiMatrix4x4 reconstructed=t*aiMatrix4x4(rotation.GetMatrix())*s;
+        if(!finiteMatrix(reconstructed)) return;
+        for(unsigned r=0;r<4;++r) for(unsigned c=0;c<4;++c)
+            if(std::abs(double(matrix[r][c])-reconstructed[r][c])>
+               1e-5*std::max(1.0,std::abs(double(matrix[r][c])))) return;
+        double values[]={pos.x,pos.y,pos.z,rotation.x,rotation.y,rotation.z,rotation.w,scale.x,scale.y,scale.z};
+        for(double v:values) if(!coordinate(v)) return;
+        for(unsigned i=0;i<10;++i) API->object->array_float_set_idx(a,i,values[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_MFUN(model3d_bone_parent) {
     RETURN->v_int=-2;
     auto *p=modelState(SELF,API);
@@ -1613,6 +1645,9 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_node_world_matrix,"int","exportNodeWorldMatrix");
     QUERY->add_arg(QUERY,"int","nodeIndex");
     QUERY->add_arg(QUERY,"float[]","matrix");
+    QUERY->add_mfun(QUERY,model3d_export_node_trs,"int","exportNodeTRS");
+    QUERY->add_arg(QUERY,"int","nodeIndex");
+    QUERY->add_arg(QUERY,"float[]","values");
     QUERY->add_mfun(QUERY,model3d_bone_parent,"int","boneParent");
     QUERY->add_arg(QUERY,"int","mesh");
     QUERY->add_arg(QUERY,"int","bone");
