@@ -87,12 +87,16 @@ class Loopback {
     std::string peerIp_;
     Bytes tx_,rx_;
     size_t sent_=0, target_=headerSize;
+    uint64_t txPackets_=0,rxPackets_=0,txBytes_=0,rxBytes_=0;
+    int lastError_=0;
+    static void add(uint64_t &v,uint64_t n) { constexpr uint64_t cap=0x7fffffffffffffffull; v=n>cap-v?cap:v+n; }
+    void resetStats() { txPackets_=rxPackets_=txBytes_=rxBytes_=0; lastError_=0; }
     void resetPeer() {
         if(peer_!=invalidSocket) closeSocket(peer_);
         peer_=invalidSocket; tx_.clear(); rx_.clear();
         sent_=0; target_=headerSize; ready_=false; peerIp_.clear();
     }
-    int fail() { resetPeer(); return -1; }
+    int fail(int code) { resetPeer(); lastError_=code; return -1; }
 public:
     Loopback() {
 #ifdef _WIN32
@@ -115,6 +119,11 @@ public:
     const std::string &peerAddress() const { return peerIp_; }
     bool connected() const { return peer_!=invalidSocket; }
     unsigned port() const { return port_; }
+    uint64_t sentPackets() const { return txPackets_; }
+    uint64_t receivedPackets() const { return rxPackets_; }
+    uint64_t sentBytes() const { return txBytes_; }
+    uint64_t receivedBytes() const { return rxBytes_; }
+    int transportError() const { return lastError_; }
     bool busy() const { return !tx_.empty(); }
     size_t packetSize() const { return ready_?rx_.size():0; }
     void disconnect() { resetPeer(); }
@@ -148,7 +157,7 @@ public:
         char ip[INET_ADDRSTRLEN]{};
         if(!preparePeer(s)||!inet_ntop(AF_INET,&peer.sin_addr,ip,sizeof(ip))) { closeSocket(s); return -1; }
         try { peerIp_=ip; } catch(...) { closeSocket(s); return -1; }
-        peer_=s; return 1;
+        resetStats(); peer_=s; return 1;
     }
     bool connectTo(unsigned port) { return connectAt("127.0.0.1",port,1000); }
     bool connectAt(const std::string &ip,unsigned port,unsigned timeoutMs) {
@@ -159,7 +168,7 @@ public:
         if(s==invalidSocket) return false;
         if(!timedConnect(s,a,timeoutMs)||!preparePeer(s)) { closeSocket(s); return false; }
         try { peerIp_=ip; } catch(...) { closeSocket(s); return false; }
-        peer_=s; return true;
+        resetStats(); peer_=s; return true;
     }
     bool enqueue(Bytes packet) {
         Header h; Bytes payload;
@@ -184,9 +193,9 @@ public:
 #endif
                 auto r=send(peer_,reinterpret_cast<const char*>(tx_.data()+sent_),static_cast<int>(n),flags);
                 if(r>0) {
-                    sent_+=static_cast<size_t>(r); progress=true;
-                    if(sent_==tx_.size()) { tx_.clear(); sent_=0; }
-                } else if(r==0||!retryable()) return fail();
+                    sent_+=static_cast<size_t>(r); add(txBytes_,r); progress=true;
+                    if(sent_==tx_.size()) { tx_.clear(); sent_=0; add(txPackets_,1); }
+                } else if(r==0||!retryable()) return fail(2);
             }
             if(!ready_) {
                 size_t old=rx_.size(),n=std::min<size_t>(65536,target_-old);
@@ -194,27 +203,28 @@ public:
                 auto r=recv(peer_,reinterpret_cast<char*>(rx_.data()+old),static_cast<int>(n),0);
                 if(r<=0) {
                     rx_.resize(old);
-                    if(r==0||!retryable()) return fail();
+                    if(r==0) return fail(1);
+                    if(!retryable()) return fail(2);
                 } else {
-                    rx_.resize(old+static_cast<size_t>(r)); progress=true;
+                    rx_.resize(old+static_cast<size_t>(r)); add(rxBytes_,r); progress=true;
                     if(rx_.size()==target_) {
                         if(target_==headerSize) {
                             if(rx_[0]!='C'||rx_[1]!='K'||rx_[2]!='M'||rx_[3]!='P'||
                                rx_[4]!=1||rx_[5]<1||rx_[5]>7||rx_[6]||rx_[7]||
                                !get(rx_,8,4)||get(rx_,16,8)>0x7fffffffffffffffull||
-                               get(rx_,24,4)>maxPayload) return fail();
+                               get(rx_,24,4)>maxPayload) return fail(3);
                             target_=headerSize+static_cast<size_t>(get(rx_,24,4));
                         }
                         if(rx_.size()==target_) {
                             Header h; Bytes payload;
-                            if(!decode(rx_,h,payload)) return fail();
-                            ready_=true;
+                            if(!decode(rx_,h,payload)) return fail(3);
+                            ready_=true; add(rxPackets_,1);
                         }
                     }
                 }
             }
             return progress?1:0;
-        } catch(...) { return fail(); }
+        } catch(...) { return fail(4); }
     }
 };
 }
