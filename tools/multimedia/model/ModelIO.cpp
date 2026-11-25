@@ -1602,6 +1602,52 @@ CK_DLL_MFUN(model3d_reset_animation) {
     p->importedPose.clear(); p->playback=ModelState::Playback{}; RETURN->v_int=1;
 }
 
+CK_DLL_MFUN(model3d_create_silhouette) {
+    RETURN->v_int=0;
+    try {
+        auto *p=modelState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        auto threshold=GET_NEXT_INT(ARGS);
+        double depth=GET_NEXT_FLOAT(ARGS);
+        if(!p||!a||w<1||w>256||h<1||h>256||threshold<1||threshold>255||
+           !std::isfinite(depth)||depth<0.0001||depth>1000000||
+           API->object->array_int_size(a)!=w*h) return;
+        std::vector<unsigned char> mask(w*h);
+        for(size_t i=0;i<mask.size();++i) {
+            auto v=API->object->array_int_get_idx(a,i);
+            if(v<0||v>255) return;
+            mask[i]=v>=threshold;
+        }
+        auto solid=[&](int x,int y){return x>=0&&x<w&&y>=0&&y<h&&mask[y*w+x];};
+        std::vector<aiVector3D> verts,normals;
+        std::vector<unsigned> indices;
+        auto quad=[&](aiVector3D a,aiVector3D b,aiVector3D c,aiVector3D d,aiVector3D n) {
+            unsigned i=static_cast<unsigned>(verts.size());
+            verts.insert(verts.end(),{a,b,c,d});
+            normals.insert(normals.end(),4,n);
+            indices.insert(indices.end(),{i,i+1,i+2,i,i+2,i+3});
+        };
+        ai_real z=static_cast<ai_real>(depth/2);
+        for(int y=0;y<h;++y) for(int x=0;x<w;++x) if(solid(x,y)) {
+            ai_real l=x-w/2.0,r=l+1,t=h/2.0-y,b=t-1;
+            aiVector3D A(l,b,z),B(r,b,z),C(r,t,z),D(l,t,z);
+            aiVector3D E(l,b,-z),F(r,b,-z),G(r,t,-z),H(l,t,-z);
+            quad(A,B,C,D,{0,0,1}); quad(E,H,G,F,{0,0,-1});
+            if(!solid(x-1,y)) quad(E,A,D,H,{-1,0,0});
+            if(!solid(x+1,y)) quad(B,F,G,C,{1,0,0});
+            if(!solid(x,y-1)) quad(D,C,G,H,{0,1,0});
+            if(!solid(x,y+1)) quad(E,F,B,A,{0,-1,0});
+            if(verts.size()>1000000||indices.size()>3000000) return;
+        }
+        if(verts.empty()) return;
+        auto shading=std::make_unique<aiVector3D[]>(normals.size());
+        std::copy(normals.begin(),normals.end(),shading.get());
+        if(!makeMesh(p,verts,indices)) return;
+        p->generated->mMeshes[0]->mNormals=shading.release();
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(ModelIO) {
     QUERY->setname(QUERY, "ModelIO");
     QUERY->begin_class(QUERY, "ModelIO", "Object");
@@ -1656,6 +1702,12 @@ CK_DLL_QUERY(ModelIO) {
     QUERY->add_mfun(QUERY,model3d_get_scaleZ,"float","scaleZ");
     QUERY->add_mfun(QUERY,model3d_set_scaleZ,"float","scaleZ");
     QUERY->add_arg(QUERY,"float","value");
+    QUERY->add_mfun(QUERY,model3d_create_silhouette,"int","createSilhouette");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int[]","alpha");
+    QUERY->add_arg(QUERY,"int","threshold");
+    QUERY->add_arg(QUERY,"float","depth");
     QUERY->add_mfun(QUERY,model3d_create_mesh,"int","createMesh");
     QUERY->add_arg(QUERY,"float[]","xyz");
     QUERY->add_arg(QUERY,"int[]","triangles");
