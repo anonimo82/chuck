@@ -3067,3 +3067,48 @@ check(image.loaded() && image.shapes()==0);
 check(image.exportPixels(1,1,one));
 check(one[0]==0 && one[3]==0);
 """,18,p)
+
+    run("raster", """
+RasterImage image;
+float heights[4];
+check(!image.exportHeightmap(heights));
+check(image.importPixels(2,2,[0,0,0,255,255,255,255,255,255,0,0,255,255,255,255,0]));
+check(image.exportHeightmap(heights));
+check(heights[0]==0.0 && Math.fabs(heights[1]-1.0)<0.00001);
+check(Math.fabs(heights[2]-0.2126)<0.00001 && heights[3]==0.0);
+float small[3];
+check(!image.exportHeightmap(small));
+check(Math.fabs(heights[2]-0.2126)<0.00001);
+0.0=>image.opacity;
+check(image.exportHeightmap(heights));
+check(heights[0]==0.0 && heights[1]==0.0 && heights[2]==0.0 && heights[3]==0.0);
+check(image.pixelAt(1,0,0)==255);
+""",10,p)
+
+    run("model", """
+Model3D model;
+check(!model.createHeightmap(1,2,[0.0,1.0],1.0,1.0));
+check(!model.createHeightmap(2,2,[0.0,1.0],1.0,1.0));
+check(!model.createHeightmap(2,2,[0.0,0.0,0.0,1.1],1.0,1.0));
+check(!model.createHeightmap(2,2,[0.0,0.0,0.0,1.0],0.0,1.0));
+check(!model.createHeightmap(2,2,[0.0,0.0,0.0,1.0],1.0,-1.0));
+check(model.createHeightmap(2,2,[0.0,0.0,0.0,0.0],2.0,4.0));
+check(model.meshVertices(0)==4 && model.faces(0)==2);
+check(model.vertexAt(0,0,0)==-1.0 && model.vertexAt(0,0,1)==1.0);
+check(model.vertexAt(0,3,0)==1.0 && model.vertexAt(0,3,1)==-1.0);
+check(model.hasNormals(0));
+float normals[12];
+check(model.exportNormals(0,normals));
+check(normals[0]==0.0 && normals[1]==0.0 && normals[2]==1.0);
+float uv[8];
+check(model.exportUV(0,uv));
+check(uv[0]==0.0 && uv[1]==1.0 && uv[6]==1.0 && uv[7]==0.0);
+check(model.createHeightmap(2,2,[0.0,1.0,0.0,1.0],2.0,4.0));
+check(model.vertexAt(0,1,2)==4.0 && model.vertexAt(0,2,2)==0.0);
+check(model.exportNormals(0,normals));
+check(Math.fabs(normals[0]+0.89442719)<0.00001 && Math.fabs(normals[2]-0.44721359)<0.00001);
+check(!model.createHeightmap(513,2,[0.0],1.0,1.0));
+check(model.vertexAt(0,1,2)==4.0);
+check(model.createHeightmap(3,2,[0.0,0.0,0.0,0.0,0.0,0.0],1.0,0.0));
+check(model.meshVertices(0)==6 && model.faces(0)==4);
+""",22,p)
