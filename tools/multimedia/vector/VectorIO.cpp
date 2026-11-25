@@ -597,6 +597,39 @@ CK_DLL_MFUN(vector_image_import_rects) {
         if(p->replaceShapes(w,h,std::move(shapes))) { p->reset(); RETURN->v_int=1; }
     } catch(...) {}
 }
+CK_DLL_MFUN(vector_image_audio_samples) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),channels=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        if(!p||!a||w<1||h<1||w>4096||h>4096||w*h>4194304||
+           (channels!=1&&channels!=2)||API->object->array_float_size(a)!=w*h*channels) return;
+        auto surface=p->rasterize(w,h);
+        if(!surface) return;
+        auto *data=cairo_image_surface_get_data(surface.get());
+        int stride=cairo_image_surface_get_stride(surface.get());
+        if(!data) return;
+        for(int y=0;y<h;++y) for(int x=0;x<w;++x) {
+            uint32_t v; std::memcpy(&v,data+static_cast<size_t>(y)*stride+x*4,4);
+            unsigned alpha=v>>24;
+            auto component=[&](int c) {
+                unsigned q=(v>>(16-8*c))&255;
+                return alpha?std::min(255u,(q*255+alpha/2)/alpha)/255.0:0.0;
+            };
+            double r=component(0),g=component(1),b=component(2),aNorm=alpha/255.0;
+            size_t i=static_cast<size_t>(y)*w+x;
+            if(channels==1) {
+                double lum=0.2126*r+0.7152*g+0.0722*b;
+                API->object->array_float_set_idx(a,i,std::clamp(2*lum-1,-1.0,1.0)*aNorm);
+            } else {
+                API->object->array_float_set_idx(a,2*i,(r+g-1)*aNorm);
+                API->object->array_float_set_idx(a,2*i+1,(b+g-1)*aNorm);
+            }
+        }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(VectorIO) {
     QUERY->setname(QUERY, "VectorIO");
     QUERY->begin_class(QUERY, "VectorIO", "Object");
@@ -708,6 +741,11 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_arg(QUERY,"int[]","alpha");
+    QUERY->add_mfun(QUERY,vector_image_audio_samples,"int","exportAudioSamples");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_arg(QUERY,"float[]","samples");
     QUERY->add_mfun(QUERY,vector_image_export_frame,"int","exportFrame");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
