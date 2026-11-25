@@ -2780,3 +2780,27 @@ check(Math.fabs(lighting[6]-32.0)<0.00001);
 check(model.exportMaterial(mat,props));
 check(Math.fabs(props[3]-0.5)<0.00001);
 """,16,p)
+
+
+    run("model", """
+Model3D model;
+float values[10];
+float small[3];
+check(!model.exportNodeTRS(0,values));
+check(model.createMesh([0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0],[0,1,2]));
+check(model.exportNodeTRS(0,values));
+check(values[0]==0.0 && values[6]==1.0 && values[7]==1.0 && values[8]==1.0 && values[9]==1.0);
+check(!model.exportNodeTRS(0,small));
+check(model.setSkin(0,1,[1.0,1.0,1.0]));
+check(model.setBonePose(0,0,2.0,3.0,4.0,0.0,0.0,90.0));
+check(model.exportNodeTRS(1,values));
+check(Math.fabs(values[0]-2.0)<0.00001 && Math.fabs(values[1]-3.0)<0.00001 && Math.fabs(values[2]-4.0)<0.00001);
+check(Math.fabs(Math.fabs(values[5])-0.70710678)<0.00001 && Math.fabs(Math.fabs(values[6])-0.70710678)<0.00001);
+check(!model.exportNodeTRS(2,values));
+check(Math.fabs(values[0]-2.0)<0.00001);
+check(model.resetPose(0));
+check(model.exportNodeTRS(1,values));
+check(Math.fabs(values[0])<0.00001 && Math.fabs(values[6]-1.0)<0.00001);
+check(model.load("scenehierarchy/model.gltf"));
+check(model.exportNodeTRS(0,values));
+""",17,p)
