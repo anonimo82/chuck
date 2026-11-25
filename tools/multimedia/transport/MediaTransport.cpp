@@ -1,9 +1,7 @@
 #include "MediaSession.h"
 #include "MediaPCMBuffer.h"
 #include "MediaAudioMidi.h"
-#include "MediaRasterStream.h"
-#include "MediaVector.h"
-#include "MediaModel.h"
+#include "MediaGraphics.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -743,6 +741,19 @@ CK_DLL_SFUN(md_decode) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+CK_DLL_SFUN(gr_inspect) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;mediawire::Header h;uint64_t a=0,b=0;
+        if(!exact(dst,API,6)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire))return;
+        int kind=mediawire::graphicsKind(wire,h,a,b);
+        if(!kind)return;
+        const uint64_t fields[]={static_cast<uint64_t>(kind),h.stream,h.sequence,h.timestamp,a,b};
+        for(size_t i=0;i<6;++i)API->object->array_int_set_idx(dst,i,fields[i]);
+        RETURN->v_int=kind;
+    } catch(...) {}
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -1095,5 +1106,10 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"float[]","xyz");
     QUERY->add_arg(QUERY,"int[]","indices");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaGraphics","Object");
+    QUERY->add_sfun(QUERY,gr_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
     return QUERY->end_class(QUERY);
 }
