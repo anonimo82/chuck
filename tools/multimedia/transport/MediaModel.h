@@ -35,7 +35,8 @@ inline bool decodeModel(const Bytes &wire,Header &h,std::vector<double> &xyz,std
     Header candidate;Bytes p;
     if(!decode(wire,candidate,p)||candidate.type!=3||candidate.stream==0xffffffffu||
        p.size()<modelHeader||p[0]!='C'||p[1]!='K'||p[2]!='M'||p[3]!='D'||p[4]!=1||p[5]!=1||p[6]||p[7])return false;
-    auto v=get(p,8,4),t=get(p,12,4),n=modelPacketSize(v,t);
+    auto v=get(p,8,4),t=get(p,12,4);
+    auto n=modelPacketSize(v,t);
     if(!n||n!=wire.size())return false;
     std::vector<double> coords(v*3);std::vector<uint32_t> tris(t*3);
     for(size_t i=0;i<coords.size();++i) {
