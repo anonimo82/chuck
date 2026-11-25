@@ -18,6 +18,7 @@
     "text-frame-native",
     "text-accessibility",
     "text-flow-txt",
-    "text-flow-interop"
+    "text-flow-interop",
+    "text-flow-performance"
   ]
 }
