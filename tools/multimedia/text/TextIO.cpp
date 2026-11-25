@@ -2404,6 +2404,87 @@ CK_DLL_MFUN(text_doc_load_native) {
 }
 
 namespace {
+constexpr size_t flowNativeLimit=2*1024*1024;
+bool flowNativePath(const std::string &p) {
+    return p.size()>=7&&p.substr(p.size()-7)==".ckflow"&&p.find('\0')==std::string::npos;
+}
+bool encodeFlow(const FrameFlow &flow,NativeWriter &w) {
+    const unsigned char magic[]={'C','K','T','X','F','L','O','W'};
+    w.data.insert(w.data.end(),magic,magic+8); w.u32(1);
+    w.str(flow.source.text); w.u32(static_cast<uint32_t>(flow.source.baseBytes)); w.style(flow.source.style);
+    w.u32(static_cast<uint32_t>(flow.source.runs.size()));
+    for(const auto &run:flow.source.runs) { w.str(run.text); w.style(run.style); }
+    w.u32(static_cast<uint32_t>(flow.frames.size()));
+    for(const auto &f:flow.frames) {
+        w.u32(f.x); w.u32(f.y); w.u32(f.width); w.u32(f.height); w.u32(f.page);
+        const auto &b=f.box;
+        w.real(b.paddingLeft); w.real(b.paddingRight); w.real(b.paddingTop); w.real(b.paddingBottom);
+        w.real(b.borderWidth); w.u32(static_cast<uint32_t>(b.borderColor)); w.u32(static_cast<uint32_t>(b.backgroundColor)); w.real(b.opacity);
+    }
+    return w.data.size()<=flowNativeLimit;
+}
+bool decodeFlow(const std::vector<unsigned char> &data,FrameFlow &flow) {
+    if(data.size()<12||data.size()>flowNativeLimit||std::memcmp(data.data(),"CKTXFLOW",8)!=0) return false;
+    NativeReader rd{data}; rd.pos=8;
+    if(rd.u32()!=1) return false;
+    auto &p=flow.source;
+    p.text=rd.str(65536); p.baseBytes=rd.bounded(0,static_cast<uint32_t>(p.text.size()));
+    if(!rd.ok||!validText(p.text.substr(0,p.baseBytes),65536)||!rd.style(p.style)) return false;
+    auto nr=rd.bounded(0,1024); size_t offset=p.baseBytes;
+    for(uint32_t i=0;rd.ok&&i<nr;++i) {
+        Run run; run.text=rd.str(65536);
+        if(!rd.ok||run.text.empty()||run.text.size()>p.text.size()-offset||p.text.compare(offset,run.text.size(),run.text)!=0||!rd.style(run.style)) return false;
+        offset+=run.text.size(); p.runs.push_back(std::move(run));
+    }
+    if(!rd.ok||offset!=p.text.size()) return false;
+    auto nf=rd.bounded(0,256);
+    for(uint32_t i=0;rd.ok&&i<nf;++i) {
+        FrameStyle f;
+        f.x=rd.bounded(0,4095); f.y=rd.bounded(0,4095);
+        f.width=rd.bounded(1,4096); f.height=rd.bounded(1,4096); f.page=rd.bounded(0,4095);
+        auto &b=f.box;
+        b.paddingLeft=rd.real(0,512); b.paddingRight=rd.real(0,512);
+        b.paddingTop=rd.real(0,512); b.paddingBottom=rd.real(0,512);
+        b.borderWidth=rd.real(0,128); b.borderColor=rd.color(false); b.backgroundColor=rd.color(true); b.opacity=rd.real(0,1);
+        flow.frames.push_back(std::move(f));
+    }
+    return rd.ok&&rd.pos==data.size();
+}
+}
+CK_DLL_MFUN(text_flow_save_native) {
+    RETURN->v_int=0;
+    try {
+        auto *p=flowState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(!p||!flowNativePath(path)) return;
+        NativeWriter w; if(!encodeFlow(*p,w)) return;
+        FILE *f=mediaio::openNew(path.c_str()); if(!f) return;
+        bool ok=std::fwrite(w.data.data(),1,w.data.size(),f)==w.data.size();
+        if(std::fclose(f)!=0) ok=false;
+        if(!ok) { std::remove(path.c_str()); return; }
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_MFUN(text_flow_load_native) {
+    RETURN->v_int=0;
+    try {
+        auto *p=flowState(SELF,API); auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(!p||!flowNativePath(path)) return;
+        std::unique_ptr<FILE,decltype(&std::fclose)> f(std::fopen(path.c_str(),"rb"),std::fclose);
+        if(!f) return;
+        std::vector<unsigned char> data; unsigned char chunk[16384];
+        for(;;) {
+            size_t n=std::fread(chunk,1,sizeof(chunk),f.get());
+            if(n>flowNativeLimit-data.size()) return;
+            data.insert(data.end(),chunk,chunk+n);
+            if(n<sizeof(chunk)) { if(std::ferror(f.get())||!std::feof(f.get())) return; break; }
+        }
+        FrameFlow next;
+        if(!decodeFlow(data,next)) return;
+        *p=std::move(next); RETURN->v_int=1;
+    } catch(...) {}
+}
+
+namespace {
 constexpr size_t txtLimit=8*1024*1024;
 bool txtPath(const std::string &p) {
     return p.size()>=4&&p.substr(p.size()-4)==".txt"&&p.find('\0')==std::string::npos;
@@ -2800,6 +2881,10 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,text_flow_ready,"int","ready");
     QUERY->add_mfun(QUERY,text_flow_layout,"int","layout");
+    QUERY->add_mfun(QUERY,text_flow_save_native,"int","saveNative");
+    QUERY->add_arg(QUERY,"string","path");
+    QUERY->add_mfun(QUERY,text_flow_load_native,"int","loadNative");
+    QUERY->add_arg(QUERY,"string","path");
     QUERY->add_mfun(QUERY,text_flow_page_count,"int","pageCount");
     QUERY->add_mfun(QUERY,text_flow_export_page,"int","exportPage");
     QUERY->add_arg(QUERY,"int","page");
