@@ -4,6 +4,7 @@
     "transport-pcm",
     "transport-pcm-stream",
     "transport-pcm-buffer",
-    "transport-midi"
+    "transport-midi",
+    "transport-audio-midi"
   ]
 }
