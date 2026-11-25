@@ -54,6 +54,7 @@
     "transport-framing",
     "transport-loopback",
     "transport-session",
-    "transport-endpoints"
+    "transport-endpoints",
+    "transport-consolidation"
   ]
 }
