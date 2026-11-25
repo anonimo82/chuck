@@ -49,16 +49,20 @@ public:
     uint32_t height() const { return used_?ring_[head_].height:0; }
     uint64_t timestamp() const { return used_?ring_[head_].timestamp:0; }
     uint64_t frameIndex() const { return used_?ring_[head_].index:0; }
+    bool adaptive(uint64_t budget){return stream_.adaptive(budget);}
     bool push(const Bytes &wire) {
         if(!configured()) return reject(1);
         Header h; VideoFragment f; Bytes data;
-        if(!decodeVideoFragment(wire,h,f,data)) return reject(2);
+        Bytes raw;
+        if(!decodeVideoFragment(wire,h,f,data)){
+            if(!stream_.normalize(wire,raw)||!decodeVideoFragment(raw,h,f,data))return reject(2);
+        }
         size_t bytes=static_cast<size_t>(videoPixels(f.width,f.height)*4);
         if(!reserved_) {
             if(bytes>budget_) return reject(2);
             if(!freeFrames()||bytes>budget_-queued_) { increment(overruns_); return reject(7); }
         }
-        if(!stream_.push(wire)) return reject(stream_.error());
+        if(!stream_.push(raw.empty()?wire:raw)) return reject(stream_.error());
         if(!reserved_) reserved_=bytes;
         if(stream_.ready()) {
             auto &slot=ring_[(head_+used_)%capacity()];
