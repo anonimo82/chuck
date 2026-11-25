@@ -35,3 +35,7 @@ resample(sampleRate) changes the rate and rounds the frame count to preserve dur
 ## Audio-to-raster visualization
 
 exportWaveform(channel,width,height,int[] pixels) exports an opaque grayscale min/max envelope, one column per time bucket, white waveform on black. Positive amplitudes are at the top. When width exceeds frame count, samples repeat. exportSpectrogram(channel,width,fftSize,floorDb,int[] pixels) outputs width by fftSize/2+1 pixels, linear frequency with DC at bottom and Nyquist at top; time centers are uniformly spaced over the clip. Uses radix-2 FFT, symmetric Hann window, zero padding, coherent-gain-corrected one-sided amplitude and grayscale dBFS mapping from floorDb to 0 dBFS. FFT sizes 32–4096 powers of two; floor -160 to -10 dB. Both use current gain/balance and a selected zero-based channel, straight row-major RGBA8, exact preallocated array size, dimensions <=4096 and <=4194304 pixels. FFT work limited to width*fftSize <=8388608. Failures leave arrays unchanged; audio data is not modified. No additional dependency or realtime guarantee. RasterImage.importPixels can consume these arrays directly. Native validation pending.
+
+## Audio-to-vector waveform
+
+exportEnvelope(channel,count,float[] bounds) writes count interleaved minimum/maximum amplitude pairs, using the same time buckets and gain/balance as exportWaveform. Count 1–4096; exact preallocated size 2*count. Repeats samples when count exceeds frames. Failure leaves output unchanged. Pass bounds to VectorImage.importWaveform; no cross-Chugin native dependency.
