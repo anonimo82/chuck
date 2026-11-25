@@ -4,6 +4,7 @@
     "video-camera-session",
     "video-screen-recording",
     "video-audio-capture",
-    "video-av-recording"
+    "video-av-recording",
+    "video-capture-consolidation"
   ]
 }

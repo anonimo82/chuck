@@ -164,6 +164,8 @@ User-reported Windows Local: expected=174, PASS=174, FAIL=0, missing=0, unreport
 
 #186: explicit audiovisual capture recording using shared VideoWriterState FFV1/PCM Matroska encoder, session-origin alignment, nearest frame-slot validation and sample-grid audio slicing; 60 new headless checks, global 5274, local 241, cadence 19/20. Native and physical validation pending. No automatic missing-frame repair, audio padding or hardware drift correction. No workflow changes.
 
+#187: capture lifecycle inspection and explicit cleanup, bounded rolling PCM via caller-directed discard protecting unwritten AV samples, sample-grid continuity after complete discard, end-to-end recorded video/audio readback and opt-in physical device example. 71 new headless checks, global 5345, local 312, cadence 20/20. Full native validation required before graphics cycle or coverage promotion. Physical device checks remain separate. No workflow changes.
+
 ## Planned capture extension — graphics output
 
 User approved adding direct graphics capture before multimedia transmission, after the current five-PR video cycle and global validation. Plan five functional milestones: (1) OpenGL framebuffer readback with explicit context ownership and canonical RGBA8 orientation, (2) ChuGL integration after verifying its actual rendering backend and readback API, (3) offscreen rendering/capture, (4) deterministic audiovisual recording, (5) consolidation and local validation. Exact PR numbering and supported backend scope depend on feasibility and checkpoint/maintenance PRs. Do not assume ChuGL uses OpenGL. Keep existing capture matrix rubric and report extension progress separately until validated. No workflow changes.
