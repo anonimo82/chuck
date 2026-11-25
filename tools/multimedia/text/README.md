@@ -143,3 +143,7 @@ See [text-flow-example.ck](text-flow-example.ck) for a standalone example of sty
 ## Frame-local hit testing
 
 TextFlow.hitTest(index, x, y) maps a point in frame-local pixel coordinates (origin at the frame's outer top-left, including padding and border) to a zero-based UTF-8 insertion byte offset in the complete source. Uses Pango cluster trailing positions, clipped to the assigned frame range. Within the visible line band, points past the glyphs map to the nearest insertion position. Returns -1 for stale layout, invalid index, nonfinite coordinates, empty frames or points outside the visible text interior. Does not create a cursor, selection, GUI widget or change the source. Native validation pending.
+
+## TextFlow logical selection
+
+setSelection(anchor,focus) accepts zero-based UTF-8 byte boundaries, including the source end and reversed selections; invalid endpoints return 0 and preserve state. selectionAnchor()/selectionFocus() preserve direction; selectionStart()/selectionEnd() return the sorted half-open interval; selectedText() returns its source substring, including overflow. clearSelection() collapses to focus. Selections do not require or invalidate layout. Frame changes and appendRun preserve endpoints; replacing the source via setText, loadTXT, loadNative or exportParagraphToFlow resets selection to zero on success. Selection is transient and not stored in native files. Boundaries are Unicode code-point boundaries, not necessarily grapheme boundaries. No selection highlighting or GUI integration. Native validation pending.
