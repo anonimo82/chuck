@@ -27,6 +27,7 @@
     "text-flow-styled-edit",
     "text-flow-edit-consolidation",
     "vector-shape-edit",
-    "vector-shape-transform"
+    "vector-shape-transform",
+    "vector-shape-style"
   ]
 }
