@@ -9770,7 +9770,7 @@ check(!rx.ready());
 check(rx.playTimestamp()==1041);
 check(MediaMIDI.encode(2,4,1040,144,65,100,m));
 check(!rx.push(m));
-check(rx.error()==5);
+check(rx.error()==4);
 check(midi.encodeEvent(1041,144,65,100,m));
 check(rx.push(m));
 check(!rx.midiDue());
@@ -9782,6 +9782,9 @@ check(event[1]==4 && event[4]==65);
 check(rx.pullAudio(block));
 check(block[0]==1.0 && block[3]==-1.0);
 check(rx.consumedFrames()==4 && rx.pendingMidi()==0);
+check(MediaMIDI.encode(2,5,1042,144,65,100,m));
+check(!rx.push(m));
+check(rx.error()==5);
 rx.clear();
 check(!rx.configured());
 check(rx.pendingMidi()==0 && rx.consumedFrames()==0);
@@ -9822,7 +9825,7 @@ check(rx.pullAudio(block));
 check(block[1]==1.0 && block[2]==-1.0);
 check(rx.playTimestamp()==41);
 server.close(); client.close();
-""",89,p)
+""",92,p)
 
 
 if __name__ == "__main__":
