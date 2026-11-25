@@ -60,3 +60,7 @@ exportPitches(width,height,lowPitch,highPitch,alphaThreshold,scan,int[] pitches)
 ## SVG animation to video
 
 exportFrame(width,height,backgroundRGB,int[] pixels) renders the current SVG with translation, scale, rotation and opacity, then composites Cairo premultiplied RGBA over an opaque RGB background. Output is row-major RGBA8 with alpha 255, suitable for VideoWriter.appendFrame. Dimensions 1–4096, at most 4194304 pixels, exact array length width*height*4, background 0–0xffffff. Invalid inputs leave output unchanged; document and controls are unchanged. Example animate_video.ck animates the existing controls at 25 fps and writes lossless MKV without intermediate files. This animates global transforms, not SVG path morphing or SMIL playback. No new dependencies. Native validation pending.
+
+## Batch editable rectangle import
+
+importRects(width,height,float[] rects) replaces the document with independent SVG rectangles from groups of six values x,y,width,height,packed RGB,opacity. Canvas dimensions 1–4096; up to 4096 rectangles, finite coordinates within +/-1000000, positive extents, integral RGB 0–0xffffff, opacity 0–1. Out-of-canvas geometry is clipped by the viewport. Empty array creates an empty canvas. Success resets controls; failure preserves document and controls. Compatible with MidiSequence.exportPianoRollRects. No new dependency. Native validation pending.
