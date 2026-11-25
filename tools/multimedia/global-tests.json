@@ -62,6 +62,7 @@
     "transport-midi",
     "transport-audio-midi",
     "transport-raster",
-    "transport-raster-stream"
+    "transport-raster-stream",
+    "transport-vector"
   ]
 }
