@@ -1,4 +1,5 @@
 #include "MediaSession.h"
+#include "MediaPCM.h"
 #include "chuck_dl.h"
 #include <utility>
 #include "MediaFrame.h"
@@ -223,6 +224,58 @@ CK_DLL_MFUN(session_receivedPackets) { auto *p=session(SELF,API); RETURN->v_int=
 CK_DLL_MFUN(session_sentBytes) { auto *p=session(SELF,API); RETURN->v_int=p?p->sentBytes():0; }
 CK_DLL_MFUN(session_receivedBytes) { auto *p=session(SELF,API); RETURN->v_int=p?p->receivedBytes():0; }
 CK_DLL_MFUN(session_transportError) { auto *p=session(SELF,API); RETURN->v_int=p?p->transportError():0; }
+CK_DLL_SFUN(pcm_size) {
+    auto rate=GET_NEXT_INT(ARGS),channels=GET_NEXT_INT(ARGS),frames=GET_NEXT_INT(ARGS);
+    RETURN->v_int=mediawire::pcmPacketSize(rate,channels,frames);
+}
+CK_DLL_SFUN(pcm_encode) {
+    RETURN->v_int=0;
+    try {
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS);
+        auto rate=GET_NEXT_INT(ARGS),channels=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(!a||stream<1||static_cast<uint64_t>(stream)>=0xffffffffu||seq<0||
+           static_cast<uint64_t>(seq)>0xffffffffu||ts<0||rate<8000||rate>192000||channels<1||channels>8) return;
+        auto n=API->object->array_float_size(a);
+        if(n<=0||n%channels) return;
+        auto frames=n/channels;
+        auto bytes=mediawire::pcmPacketSize(rate,channels,frames);
+        if(!bytes||!exact(dst,API,bytes)) return;
+        std::vector<double> samples(static_cast<size_t>(n));
+        for(t_CKINT i=0;i<n;++i) samples[i]=API->object->array_float_get_idx(a,i);
+        mediawire::Header h{4,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)};
+        mediawire::PcmInfo info{static_cast<uint32_t>(rate),static_cast<uint32_t>(channels),static_cast<uint32_t>(frames)};
+        mediawire::Bytes wire;
+        if(mediawire::encodePcm(h,info,samples,wire)) { write(dst,API,wire); RETURN->v_int=1; }
+    } catch(...) {}
+}
+CK_DLL_SFUN(pcm_inspect) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto meta=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Header h; mediawire::PcmInfo info; mediawire::Bytes wire; std::vector<double> samples;
+        if(!exact(meta,API,6)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodePcm(wire,h,info,samples)) return;
+        const uint64_t fields[]={h.stream,h.sequence,h.timestamp,info.rate,info.channels,info.frames};
+        for(size_t i=0;i<6;++i) API->object->array_int_set_idx(meta,i,fields[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
+CK_DLL_SFUN(pcm_decode) {
+    RETURN->v_int=0;
+    try {
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Header h; mediawire::PcmInfo info; mediawire::Bytes wire; std::vector<double> samples;
+        if(!dst||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodePcm(wire,h,info,samples)||
+           API->object->array_float_size(dst)!=static_cast<t_CKINT>(samples.size())) return;
+        for(size_t i=0;i<samples.size();++i) API->object->array_float_set_idx(dst,i,samples[i]);
+        RETURN->v_int=1;
+    } catch(...) {}
+}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -324,5 +377,25 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_mfun(QUERY,session_error,"int","error");
     QUERY->add_mfun(QUERY,session_mask,"int","mediaMask");
     QUERY->add_mfun(QUERY,session_limit,"int","payloadLimit");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaPCM","Object");
+    QUERY->add_sfun(QUERY,pcm_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_arg(QUERY,"int","frames");
+    QUERY->add_sfun(QUERY,pcm_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","sampleRate");
+    QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,pcm_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,pcm_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"float[]","samples");
     return QUERY->end_class(QUERY);
 }

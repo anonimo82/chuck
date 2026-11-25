@@ -55,6 +55,7 @@
     "transport-loopback",
     "transport-session",
     "transport-endpoints",
-    "transport-consolidation"
+    "transport-consolidation",
+    "transport-pcm"
   ]
 }

@@ -205,3 +205,7 @@ Working estimate accepted by user: 25 functional PRs in five cycles, subject to 
 ## Validation checkpoint after #199
 
 User-reported Windows Local: expected=407, PASS=407, FAIL=0, missing=0, unreported=0, extra=0, suites=1/1, status=PASS. All five shared transport groups validated. Cumulative validated checks 6037; last Full baseline remains 5345 after #187. Transmission cycle 1 complete (5/25 functional PRs), global functional cadence 10/20, local cadence resets to 0/5. Clear validated local groups; retain global manifest unchanged. Matrix coverage remains 88.89% (47 O, 2 P, 5 M, 2 N/A): generic framing and transport do not yet establish media-specific transmission. Actual cross-host operation, authentication, encryption and hard-realtime behavior are not certified. Next functional cycle: waveform audio and MIDI transmission/reception. No workflow changes.
+
+## Transmission cycle 2 — Waveform and MIDI
+
+#201: CKAP v1 PCM16 waveform packets, interleaved 1–8 channels, 8–192 kHz, bounded sample validation and metadata inspection, bidirectional negotiated session integration. 82 new checks, global 6119, local 82, cadence 11/20. Native validation pending; quantization is lossy. Sequential streaming, buffering, synchronization and device integration remain pending. No workflow changes.
