@@ -2753,3 +2753,30 @@ check(model.embeddedBaseColorFormat(model.materialAt(0),0)=="");
     assert (p/"embedded.png").read_bytes()==png
     assert not (p/"embedded.jpg").exists()
     assert not (p/"wrong.png").exists()
+
+
+    (p/"lighting.mtl").write_text("newmtl surface\nKd 0.2 0.4 0.6\nKs 0.1 0.3 0.5\nKe 0.1 0.2 0.3\nNs 32\nd 0.5\n")
+    (p/"lighting.obj").write_text("mtllib lighting.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl surface\nf 1 2 3\n")
+    run("model", """
+Model3D model;
+float lighting[8];
+float props[6];
+float small[3];
+check(!model.exportMaterialLighting(0,lighting));
+check(model.createMesh([0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0],[0,1,2]));
+check(model.addMaterial("surface",0.2,0.4,0.6,0.5)==1);
+check(model.exportMaterialLighting(1,lighting));
+check(lighting[0]==0.0 && lighting[1]==0.0 && lighting[2]==0.0);
+check(Math.fabs(lighting[3]-0.2)<0.00001 && lighting[6]==64.0 && lighting[7]==0.0);
+check(!model.exportMaterialLighting(1,small));
+check(!model.exportMaterialLighting(-1,lighting));
+check(lighting[6]==64.0);
+check(model.load("lighting.obj"));
+model.materialAt(0) => int mat;
+check(model.exportMaterialLighting(mat,lighting));
+check(Math.fabs(lighting[0]-0.1)<0.00001 && Math.fabs(lighting[2]-0.3)<0.00001);
+check(Math.fabs(lighting[3]-0.1)<0.00001 && Math.fabs(lighting[5]-0.5)<0.00001);
+check(Math.fabs(lighting[6]-32.0)<0.00001);
+check(model.exportMaterial(mat,props));
+check(Math.fabs(props[3]-0.5)<0.00001);
+""",16,p)
