@@ -31,6 +31,7 @@
     "vector-shape-style",
     "vector-shape-group",
     "vector-editable-svg",
-    "midi-capture-events"
+    "midi-capture-events",
+    "midi-capture-save"
   ]
 }
