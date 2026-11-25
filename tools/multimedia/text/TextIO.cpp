@@ -442,7 +442,7 @@ CK_DLL_MFUN(text_doc_measure_document) {
         std::unique_ptr<cairo_surface_t,decltype(&cairo_surface_destroy)> surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1),cairo_surface_destroy);
         if(cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS) return;
         std::unique_ptr<cairo_t,decltype(&cairo_destroy)> cr(cairo_create(surface.get()),cairo_destroy);
-        if(cairo_status(cr.get())!=CARO_STATUS_SUCCESS) return;
+        if(cairo_status(cr.get())!=CAIRO_STATUS_SUCCESS) return;
         int maxW=0; int64_t totalH=0;
         for(const auto &p:d->paragraphs) {
             int w=0,h=0; if(!paragraphDimensions(cr.get(),p,width,w,h)) return;
