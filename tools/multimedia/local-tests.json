@@ -2,6 +2,7 @@
   "version": 1,
   "groups": [
     "text-page-breaks",
-    "text-recent"
+    "text-recent",
+    "text-page-furniture"
   ]
 }

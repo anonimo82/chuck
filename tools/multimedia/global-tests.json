@@ -6,6 +6,7 @@
     "legacy",
     "text-core",
     "text-recent",
-    "text-page-breaks"
+    "text-page-breaks",
+    "text-page-furniture"
   ]
 }

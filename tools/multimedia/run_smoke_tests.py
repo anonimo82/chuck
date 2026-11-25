@@ -10,7 +10,7 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 SUITES = ("raster/test_raster.py", "audio/test_audio.py", "test_multimedia.py")
-GROUPS = ("raster", "audio", "legacy", "text-core", "text-recent", "text-page-breaks")
+GROUPS = ("raster", "audio", "legacy", "text-core", "text-recent", "text-page-breaks", "text-page-furniture")
 MARKER = re.compile(r"SMOKE_COUNTS (\d+) (\d+) (\d+)")
 START = re.compile(r"SMOKE_EXPECTED (\d+)")
 

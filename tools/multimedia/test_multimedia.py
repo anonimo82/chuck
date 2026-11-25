@@ -5704,8 +5704,68 @@ check(doc.pageCount(page)==1);
         assert not (p / "invalid-break.pdf").exists()
 
 
+
+def text_page_furniture():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", """
+TextDocument doc;
+TextPage page;
+TextStyle style;
+TextParagraphStyle flow;
+check(page.width(160)==160);
+check(page.height(120)==120);
+check(page.headerHeight()==0 && page.footerHeight()==0);
+check(page.backgroundColor(-1)==-1);
+check(!page.setHeader("Header",style,0));
+check(!page.setFooter("Footer",style,2049));
+check(style.color(0xff0000)==0xff0000);
+check(page.setHeader("Header",style,30));
+check(style.color(0x0000ff)==0x0000ff);
+check(page.setFooter("Footer",style,30));
+check(page.headerHeight()==30 && page.footerHeight()==30);
+check(style.color(0)==0);
+check(doc.addParagraph("First",style));
+check(doc.addParagraph("Second",style));
+check(flow.marginBottom(25)==25);
+check(doc.setParagraphLayout(0,flow));
+check(doc.setParagraphLayout(1,flow));
+check(doc.pageCount(page)==2);
+int pixels[160*120*4];
+for(0=>int j;j<2;j++) {
+    check(doc.exportPage(page,j,pixels));
+    0=>int redInk; 0=>int blueInk;
+    for(0=>int i;i<160*120;i++) {
+        if(pixels[4*i+3]>0 && i/160<30 && pixels[4*i]>200 && pixels[4*i+2]<20) redInk++;
+        if(pixels[4*i+3]>0 && i/160>=90 && pixels[4*i+2]>200 && pixels[4*i]<20) blueInk++;
+    }
+    check(redInk>0 && blueInk>0);
+}
+check(doc.savePDF("bands.pdf",page));
+check(doc.savePagePNG("bands.png",page,1));
+check(!page.setHeader("Bad",style,-1));
+check(page.headerHeight()==30);
+check(page.setHeader("Too short",style,1));
+check(doc.pageCount(page)==-1);
+check(!doc.savePDF("bad-bands.pdf",page));
+check(page.setHeader("Header",style,100));
+check(doc.pageCount(page)==-1);
+page.clearHeader();
+page.clearFooter();
+check(page.headerHeight()==0 && page.footerHeight()==0);
+check(doc.pageCount(page)==1);
+doc.clear();
+check(page.setFooter("Footer",style,30));
+check(doc.pageCount(page)==1);
+check(doc.exportPage(page,0,pixels));
+""",36,p)
+        assert (p / "bands.pdf").read_bytes().startswith(b"%PDF-")
+        assert (p / "bands.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert not (p / "bad-bands.pdf").exists()
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
