@@ -7589,8 +7589,82 @@ check(recorder.stop(1));
 check(recorder.durationAt(1)==1);
 """,57,p)
 
+
+def text_capture_unicode():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("text", r"""
+TextCapture buffer;
+check(buffer.text()=="");
+check(buffer.bytes()==0);
+check(buffer.characters()==0);
+check(buffer.lines()==1);
+check(buffer.cursor()==0);
+check(!buffer.backspace());
+check(!buffer.deleteForward());
+check(!buffer.seek(-1));
+check(buffer.insert("A"));
+check(buffer.insertCodepoint(233));
+check(buffer.insertCodepoint(128512));
+check(buffer.text()=="Aé😀");
+check(buffer.bytes()==7);
+check(buffer.characters()==3);
+check(buffer.cursor()==7);
+check(!buffer.seek(2));
+check(!buffer.seek(4));
+check(!buffer.seek(8));
+check(buffer.cursor()==7);
+check(buffer.backspace());
+check(buffer.text()=="Aé");
+check(buffer.cursor()==3);
+check(buffer.seek(1));
+check(buffer.deleteForward());
+check(buffer.text()=="A");
+check(buffer.cursor()==1);
+check(buffer.newline());
+check(buffer.lines()==2);
+check(buffer.insert("second"));
+check(buffer.lines()==2);
+check(buffer.characters()==8);
+check(buffer.seek(0));
+check(buffer.insertCodepoint(937));
+check(buffer.text()=="ΩA\nsecond");
+check(buffer.cursor()==2);
+check(buffer.bytes()==10);
+check(buffer.seek(4));
+check(buffer.backspace());
+check(buffer.text()=="ΩAsecond");
+check(buffer.lines()==1);
+check(!buffer.insertCodepoint(0));
+check(!buffer.insertCodepoint(-1));
+check(!buffer.insertCodepoint(55296));
+check(!buffer.insertCodepoint(1114112));
+check(buffer.text()=="ΩAsecond");
+check(buffer.cursor()==3);
+check(buffer.insert(""));
+check(buffer.cursor()==3);
+TextCapture other;
+check(other.insert("independent"));
+check(buffer.text()=="ΩAsecond");
+buffer.clear();
+check(buffer.text()=="");
+check(buffer.cursor()==0);
+check(buffer.lines()==1);
+check(other.text()=="independent");
+check(buffer.insertCodepoint(101));
+check(buffer.insertCodepoint(769));
+check(buffer.characters()==2);
+check(buffer.bytes()==3);
+check(buffer.backspace());
+check(buffer.text()=="e");
+check(buffer.seek(0));
+check(buffer.deleteForward());
+check(buffer.bytes()==0);
+check(!buffer.deleteForward());
+""",64,p)
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
