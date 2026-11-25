@@ -1,10 +1,4 @@
 {
   "version": 1,
-  "groups": [
-    "transport-pcm",
-    "transport-pcm-stream",
-    "transport-pcm-buffer",
-    "transport-midi",
-    "transport-audio-midi"
-  ]
+  "groups": []
 }
