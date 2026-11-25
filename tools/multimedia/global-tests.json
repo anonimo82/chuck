@@ -11,6 +11,7 @@
     "text-page-numbers",
     "text-split-paragraphs",
     "text-split-tables",
-    "text-frame-foundation"
+    "text-frame-foundation",
+    "text-frame-flow"
   ]
 }
