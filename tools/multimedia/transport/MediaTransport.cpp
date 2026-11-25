@@ -1,3 +1,4 @@
+#include "MediaVideoSender.h"
 #include "MediaRasterAuto.h"
 #include "MediaSession.h"
 #include "MediaPCMBuffer.h"
@@ -1505,6 +1506,36 @@ CK_DLL_MFUN(rss_row){auto *p=rsSender(SELF,API);RETURN->v_int=p?p->row():0;}
 CK_DLL_MFUN(rss_next){auto *p=rsSender(SELF,API);RETURN->v_int=p?p->nextSequence():0;}
 CK_DLL_MFUN(rss_size){auto *p=rsSender(SELF,API);RETURN->v_int=p?p->packetSize():0;}
 CK_DLL_MFUN(rss_peek){RETURN->v_int=0;auto *p=rsSender(SELF,API);auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));if(p&&p->packetSize()&&exact(dst,API,p->packetSize())){write(dst,API,p->packet());RETURN->v_int=1;}}
+namespace {t_CKUINT videoSenderOffset=0;
+mediawire::VideoFragmentSender *videoSender(Chuck_Object *self,CK_DL_API API){return reinterpret_cast<mediawire::VideoFragmentSender*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,videoSenderOffset)));}}
+CK_DLL_CTOR(vsend_ctor){OBJ_MEMBER_UINT(SELF,videoSenderOffset)=0;try{OBJ_MEMBER_UINT(SELF,videoSenderOffset)=reinterpret_cast<uintptr_t>(new mediawire::VideoFragmentSender);}catch(...){}}
+CK_DLL_DTOR(vsend_dtor){delete videoSender(SELF,API);OBJ_MEMBER_UINT(SELF,videoSenderOffset)=0;}
+CK_DLL_MFUN(vsend_clear){if(auto *p=videoSender(SELF,API))p->clear();}
+CK_DLL_MFUN(vsend_configure){
+    RETURN->v_int=0;
+    auto s=GET_NEXT_INT(ARGS),q=GET_NEXT_INT(ARGS),f=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS),l=GET_NEXT_INT(ARGS);
+    auto *p=videoSender(SELF,API);
+    if(p&&s>0&&q>=0&&f>=0&&t>=0&&l>0)RETURN->v_int=p->configure(s,q,f,t,l);
+}
+CK_DLL_MFUN(vsend_begin){
+    RETURN->v_int=0;try{
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS),t=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));auto *p=videoSender(SELF,API);
+        auto n=mediawire::videoPixels(w,h);mediawire::Bytes pixels;
+        if(p&&w>0&&h>0&&t>=0&&n&&exact(a,API,4*n)&&read(a,API,4*n,pixels))RETURN->v_int=p->begin(w,h,t,pixels);
+    }catch(...){}
+}
+CK_DLL_MFUN(vsend_prepare){RETURN->v_int=0;try{if(auto *p=videoSender(SELF,API))RETURN->v_int=p->prepare();}catch(...){}}
+CK_DLL_MFUN(vsend_commit){auto *p=videoSender(SELF,API);RETURN->v_int=p&&p->commit();}
+CK_DLL_MFUN(vsend_peek){RETURN->v_int=0;auto *p=videoSender(SELF,API);auto a=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));if(p&&p->packetSize()&&exact(a,API,p->packetSize())){write(a,API,p->packet());RETURN->v_int=1;}}
+CK_DLL_MFUN(vsend_configured){auto *p=videoSender(SELF,API);RETURN->v_int=p?p->configured():0;}
+CK_DLL_MFUN(vsend_busy){auto *p=videoSender(SELF,API);RETURN->v_int=p?p->busy():0;}
+CK_DLL_MFUN(vsend_nextSequence){auto *p=videoSender(SELF,API);RETURN->v_int=p?p->nextSequence():0;}
+CK_DLL_MFUN(vsend_nextFrame){auto *p=videoSender(SELF,API);RETURN->v_int=p?p->nextFrame():0;}
+CK_DLL_MFUN(vsend_sentPixels){auto *p=videoSender(SELF,API);RETURN->v_int=p?p->sentPixels():0;}
+CK_DLL_MFUN(vsend_completed){auto *p=videoSender(SELF,API);RETURN->v_int=p?p->completed():0;}
+CK_DLL_MFUN(vsend_maxFragmentPixels){auto *p=videoSender(SELF,API);RETURN->v_int=p?p->maxFragmentPixels():0;}
+CK_DLL_MFUN(vsend_packetSize){auto *p=videoSender(SELF,API);RETURN->v_int=p?p->packetSize():0;}
 CK_DLL_QUERY(MediaTransport) {
     QUERY->setname(QUERY,"MediaTransport");
     QUERY->begin_class(QUERY,"MediaTransport","Object");
@@ -1891,6 +1922,36 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","pixels");
     QUERY->add_arg(QUERY,"int[]","packet");
     if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaVideoFragmentSender","Object");
+    videoSenderOffset=QUERY->add_mvar(QUERY,"int","@videoFragmentSenderNative",FALSE);
+    if(videoSenderOffset==CK_INVALID_OFFSET)return FALSE;
+    QUERY->add_ctor(QUERY,vsend_ctor);
+    QUERY->add_dtor(QUERY,vsend_dtor);
+    QUERY->add_mfun(QUERY,vsend_clear,"void","clear");
+    QUERY->add_mfun(QUERY,vsend_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","firstSequence");
+    QUERY->add_arg(QUERY,"int","firstFrame");
+    QUERY->add_arg(QUERY,"int","originUs");
+    QUERY->add_arg(QUERY,"int","payloadLimit");
+    QUERY->add_mfun(QUERY,vsend_begin,"int","beginFrame");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_mfun(QUERY,vsend_prepare,"int","prepare");
+    QUERY->add_mfun(QUERY,vsend_commit,"int","commit");
+    QUERY->add_mfun(QUERY,vsend_peek,"int","peek");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,vsend_configured,"int","configured");
+    QUERY->add_mfun(QUERY,vsend_busy,"int","busy");
+    QUERY->add_mfun(QUERY,vsend_nextSequence,"int","nextSequence");
+    QUERY->add_mfun(QUERY,vsend_nextFrame,"int","nextFrame");
+    QUERY->add_mfun(QUERY,vsend_sentPixels,"int","sentPixels");
+    QUERY->add_mfun(QUERY,vsend_completed,"int","completed");
+    QUERY->add_mfun(QUERY,vsend_maxFragmentPixels,"int","maxFragmentPixels");
+    QUERY->add_mfun(QUERY,vsend_packetSize,"int","packetSize");
+    if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaVideoStream","Object");
     vsOffset=QUERY->add_mvar(QUERY,"int","@videoStreamNative",FALSE);
     if(vsOffset==CK_INVALID_OFFSET) return FALSE;

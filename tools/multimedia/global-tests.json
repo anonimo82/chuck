@@ -79,6 +79,7 @@
     "transport-raster-png",
     "transport-raster-photo",
     "transport-raster-compressed-fragments",
-    "transport-raster-auto"
+    "transport-raster-auto",
+    "transport-video-auto-fragments"
   ]
 }
