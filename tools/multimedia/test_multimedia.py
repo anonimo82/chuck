@@ -5626,7 +5626,14 @@ check(doc.savePDF("text-pdf-rich.pdf",page));
     for name, pages in (("text-pdf-empty.pdf",1), ("text-pdf-transparent.pdf",1), ("text-pdf-three.pdf",3), ("text-pdf-invalid.pdf",3), ("text-pdf-rich.pdf",1)):
         pdf = (p / name).read_bytes()
         assert pdf.startswith(b"%PDF-") and pdf.rstrip().endswith(b"%%EOF"), name
-        assert len(re.findall(rb"/Type\s*/Page\b",pdf)) == pages, name
-        assert len(re.findall(rb"/MediaBox\s*\[\s*0\s+0\s+180\s+90\s*\]",pdf)) == pages, name
+        # Cairo 1.18+ may store page dictionaries in compressed PDF object streams.
+        import zlib
+        chunks = [pdf]
+        for stream in re.finditer(rb"(?m)^\d+\s+\d+\s+obj\s*\r?\n<<\s*/Type\s*/ObjStm\b([^>]*?)>>\s*\r?\nstream\r?\n", pdf):
+            assert re.search(rb"/Filter\s*/FlateDecode\b", stream.group(1)), name
+            chunks.append(zlib.decompress(pdf[stream.end():]))
+        objects = b"\n".join(chunks)
+        assert len(re.findall(rb"/Type\s*/Page\b",objects)) == pages, name
+        assert len(re.findall(rb"/MediaBox\s*\[\s*0\s+0\s+180\s+90\s*\]",objects)) == pages, name
     assert not (p / "text-pdf-wrong.svg").exists()
     assert not (p / "text-pdf-oversize.pdf").exists()
