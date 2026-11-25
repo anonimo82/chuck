@@ -1,0 +1,121 @@
+name: Multimedia CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/multimedia/**'
+      - 'src/**'
+      - '.github/workflows/multimedia-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/multimedia/**'
+      - 'src/**'
+      - '.github/workflows/multimedia-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: Multimedia / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bison flex cmake ninja-build pkg-config libsndfile1-dev libpulse-dev libasound2-dev libmagickwand-dev librsvg2-dev libcairo2-dev libassimp-dev libpango1.0-dev libglib2.0-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev ffmpeg
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja pkg-config imagemagick librsvg cairo assimp libsndfile pango glib ffmpeg
+      - name: Build VM and all eight chugins
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            if [[ "$RUNNER_OS" == Linux ]]; then
+              make -C src -j2 linux-pulse
+            else
+              make -C src -j2 mac
+            fi
+            git clone --depth 1 https://github.com/craigsapp/midifile.git "$RUNNER_TEMP/midifile"
+            git -C "$RUNNER_TEMP/midifile" rev-parse HEAD
+            cmake -S tools/multimedia -B build/multimedia-ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DMIDIFILE_SOURCE_DIR="$RUNNER_TEMP/midifile"
+            cmake --build build/multimedia-ci --parallel 2
+            cmake --install build/multimedia-ci --prefix "$RUNNER_TEMP/multimedia-install"
+          } 2>&1 | tee multimedia-build.log
+      - name: Run native smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CHUCK_EXE="$GITHUB_WORKSPACE/src/chuck"
+          export CHUGIN_DIR="$RUNNER_TEMP/multimedia-install/chugins"
+          {
+            "$CHUCK_EXE" --version
+            python3 tools/multimedia/raster/test_raster.py
+            python3 tools/multimedia/audio/test_audio.py
+            python3 tools/multimedia/test_multimedia.py
+            echo "All multimedia smoke tests passed."
+          } 2>&1 | tee multimedia-test.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: multimedia-logs-${{ matrix.os }}
+          path: multimedia-*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  windows:
+    name: Multimedia / Windows
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          location: C:\msys64
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-imagemagick
+            mingw-w64-ucrt-x86_64-librsvg
+            mingw-w64-ucrt-x86_64-cairo
+            mingw-w64-ucrt-x86_64-assimp
+            mingw-w64-ucrt-x86_64-libsndfile
+            mingw-w64-ucrt-x86_64-pango
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-ffmpeg
+      - name: Build Windows VM
+        shell: pwsh
+        run: |
+          MSBuild.exe /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 src/visual-studio/chuck.vcxproj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and test multimedia
+        shell: pwsh
+        run: |
+          $cmake = (Get-Command cmake.exe -ErrorAction Stop).Source
+          $chuck = (Resolve-Path src/visual-studio/x64/Release/chuck.exe).Path
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/multimedia/build-and-test.ps1 -MsysRoot C:\msys64 -ChuckExe $chuck -CMakeExe $cmake
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: multimedia-logs-windows
+          path: tools/multimedia/build-and-test.log
+          if-no-files-found: warn
+          retention-days: 14

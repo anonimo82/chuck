@@ -33,3 +33,7 @@ From the repository root, with a matching ChucK binary built at src/chuck:
     make -C tools/multimedia install MIDIFILE=/absolute/path/to/midifile PREFIX=/absolute/path/to/chugins
 
 Use chuck --chugin-path:/absolute/path/to/chugins with your script. The install target copies six binaries and may replace previous copies in the chosen prefix. See each module README for API limitations. Windows build remains pending. Smoke tests are not exhaustive format or security tests. CI and local native compilation results have not yet been verified.
+
+## Automated multimedia CI
+
+The separate Multimedia CI workflow runs on relevant pull requests, pushes to main and manual dispatch. Linux and macOS use the unified CMake build (all eight modules); Windows reuses build-and-test.ps1 with MSYS2 UCRT64 dependencies and a runner-native CMake. Each job uploads its build/test log even on failure. The checks are independent of the existing core workflows; a red job is not a successful validation. The optional graphical ChuGL bridge is not covered by these headless jobs. MIDI dependency is currently fetched from upstream HEAD; the checkout SHA is logged for diagnosis. Runner compatibility and first-run results remain to be verified.
