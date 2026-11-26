@@ -915,6 +915,48 @@ CK_DLL_SFUN(sn_decode){
         RETURN->v_int=1;
     }catch(...){}
 }
+CK_DLL_SFUN(ar_size){auto k=GET_NEXT_INT(ARGS);RETURN->v_int=mediawire::animationRecordPacketSize(k);}
+CK_DLL_SFUN(ar_encode){
+    RETURN->v_int=0;try{
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS);
+        auto kind=GET_NEXT_INT(ARGS),model=GET_NEXT_INT(ARGS),target=GET_NEXT_INT(ARGS),index=GET_NEXT_INT(ARGS),aux=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto n=mediawire::animationRecordValues(kind);
+        if(!n||!a||API->object->array_float_size(a)!=static_cast<t_CKINT>(n)||
+           !exact(dst,API,mediawire::animationRecordPacketSize(kind))||
+           stream<=0||stream>=0xffffffffull||seq<0||seq>0xffffffffull||ts<0||
+           model<0||target<0||index<0||aux< -1||(aux==-1&&kind!=1)||
+           (aux!=-1&&static_cast<uint64_t>(aux)>=mediawire::noModelId))return;
+        mediawire::AnimationRecord info{static_cast<uint64_t>(kind),static_cast<uint64_t>(model),static_cast<uint64_t>(target),
+            static_cast<uint64_t>(index),aux==-1?mediawire::noModelId:static_cast<uint64_t>(aux)};
+        std::vector<double> v(n);for(size_t i=0;i<n;++i)v[i]=API->object->array_float_get_idx(a,i);
+        mediawire::Bytes wire;
+        if(mediawire::encodeAnimationRecord({3,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},info,v,wire)){
+            write(dst,API,wire);RETURN->v_int=1;
+        }
+    }catch(...){}
+}
+CK_DLL_SFUN(ar_inspect){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;mediawire::Header h;mediawire::AnimationRecord a;std::vector<double> v;
+        if(!exact(dst,API,9)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||!mediawire::decodeAnimationRecord(wire,h,a,v))return;
+        const t_CKINT fields[]={static_cast<t_CKINT>(h.stream),static_cast<t_CKINT>(h.sequence),static_cast<t_CKINT>(h.timestamp),
+            static_cast<t_CKINT>(a.kind),static_cast<t_CKINT>(a.model),static_cast<t_CKINT>(a.target),static_cast<t_CKINT>(a.index),
+            a.aux==mediawire::noModelId?-1:static_cast<t_CKINT>(a.aux),static_cast<t_CKINT>(v.size())};
+        for(size_t i=0;i<9;++i)API->object->array_int_set_idx(dst,i,fields[i]);RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(ar_decode){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;mediawire::Header h;mediawire::AnimationRecord info;std::vector<double> v;
+        if(!a||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||!mediawire::decodeAnimationRecord(wire,h,info,v)||
+           API->object->array_float_size(a)!=static_cast<t_CKINT>(v.size()))return;
+        for(size_t i=0;i<v.size();++i)API->object->array_float_set_idx(a,i,v[i]);RETURN->v_int=1;
+    }catch(...){}
+}
 CK_DLL_SFUN(gr_inspect) {
     RETURN->v_int=0;
     try {
@@ -2205,6 +2247,27 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"float[]","matrix");
     QUERY->add_arg(QUERY,"int[]","bindings");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaModelAnimation","Object");
+    QUERY->add_sfun(QUERY,ar_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","kind");
+    QUERY->add_sfun(QUERY,ar_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","kind");
+    QUERY->add_arg(QUERY,"int","modelId");
+    QUERY->add_arg(QUERY,"int","targetId");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"int","aux");
+    QUERY->add_arg(QUERY,"float[]","values");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,ar_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,ar_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"float[]","values");
     if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaVideoFrame","Object");
     QUERY->add_sfun(QUERY,vf_size,"int","packetSize");
