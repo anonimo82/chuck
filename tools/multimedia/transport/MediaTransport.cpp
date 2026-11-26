@@ -957,6 +957,59 @@ CK_DLL_SFUN(ar_decode){
         for(size_t i=0;i<v.size();++i)API->object->array_float_set_idx(a,i,v[i]);RETURN->v_int=1;
     }catch(...){}
 }
+namespace {
+t_CKUINT modelAssemblerOffset=0;
+mediawire::ModelAssembler* modelAssembler(Chuck_Object* self,CK_DL_API API){
+    return reinterpret_cast<mediawire::ModelAssembler*>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,modelAssemblerOffset)));
+}
+}
+CK_DLL_SFUN(mf_size){RETURN->v_int=mediawire::modelFragmentPacketSize(GET_NEXT_INT(ARGS));}
+CK_DLL_SFUN(mf_encode){
+    RETURN->v_int=0;try{
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS);
+        uint64_t a[5];for(auto& x:a)x=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(stream<=0||stream>=0xffffffffull||seq<0||seq>0xffffffffull||ts<0||!src)return;
+        auto count=API->object->array_int_size(src);if(count<=0)return;
+        mediawire::Header h{3,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)};
+        mediawire::ModelFragmentInfo f{a[0],a[1],a[2],a[3],a[4]};
+        if(!mediawire::validModelFragment(h,f,count)||!exact(dst,API,mediawire::modelFragmentPacketSize(count)))return;
+        mediawire::Bytes data,wire;
+        if(read(src,API,count,data)&&mediawire::encodeModelFragment(h,f,data,wire)){write(dst,API,wire);RETURN->v_int=1;}
+    }catch(...){}
+}
+CK_DLL_SFUN(mf_inspect){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire,data;mediawire::Header h;mediawire::ModelFragmentInfo f;
+        if(!exact(dst,API,9)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||!mediawire::decodeModelFragment(wire,h,f,data))return;
+        const uint64_t fields[]={h.stream,h.sequence,h.timestamp,f.resource,f.format,f.total,f.offset,f.first,data.size()};
+        for(size_t i=0;i<9;++i)API->object->array_int_set_idx(dst,i,fields[i]);RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(mf_decode){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire,data;mediawire::Header h;mediawire::ModelFragmentInfo f;
+        if(!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||!mediawire::decodeModelFragment(wire,h,f,data)||!exact(dst,API,data.size()))return;
+        write(dst,API,data);RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_CTOR(mfa_ctor){OBJ_MEMBER_UINT(SELF,modelAssemblerOffset)=0;try{OBJ_MEMBER_UINT(SELF,modelAssemblerOffset)=reinterpret_cast<uintptr_t>(new mediawire::ModelAssembler);}catch(...){}}
+CK_DLL_DTOR(mfa_dtor){delete modelAssembler(SELF,API);OBJ_MEMBER_UINT(SELF,modelAssemblerOffset)=0;}
+CK_DLL_MFUN(mfa_reset){if(auto* p=modelAssembler(SELF,API))p->reset();}
+CK_DLL_MFUN(mfa_size){auto* p=modelAssembler(SELF,API);RETURN->v_int=p?p->size():0;}
+CK_DLL_MFUN(mfa_ready){auto* p=modelAssembler(SELF,API);RETURN->v_int=p&&p->ready();}
+CK_DLL_MFUN(mfa_push){
+    RETURN->v_int=0;try{auto* p=modelAssembler(SELF,API);auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;if(p&&read(src,API,mediawire::headerSize+mediawire::maxPayload,wire))RETURN->v_int=p->push(wire);
+    }catch(...){}
+}
+CK_DLL_MFUN(mfa_copy){
+    RETURN->v_int=0;try{auto* p=modelAssembler(SELF,API);auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(p&&p->ready()&&exact(dst,API,p->size())){write(dst,API,p->data());RETURN->v_int=1;}
+    }catch(...){}
+}
 CK_DLL_SFUN(gr_inspect) {
     RETURN->v_int=0;
     try {
@@ -2268,6 +2321,40 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_sfun(QUERY,ar_decode,"int","decode");
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"float[]","values");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaModelFragment","Object");
+    QUERY->add_sfun(QUERY,mf_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","bytes");
+    QUERY->add_sfun(QUERY,mf_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","resourceId");
+    QUERY->add_arg(QUERY,"int","format");
+    QUERY->add_arg(QUERY,"int","total");
+    QUERY->add_arg(QUERY,"int","offset");
+    QUERY->add_arg(QUERY,"int","firstSequence");
+    QUERY->add_arg(QUERY,"int[]","data");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,mf_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,mf_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","data");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaModelAssembler","Object");
+    modelAssemblerOffset=QUERY->add_mvar(QUERY,"int","@modelAssemblerNative",FALSE);
+    if(modelAssemblerOffset==CK_INVALID_OFFSET)return FALSE;
+    QUERY->add_ctor(QUERY,mfa_ctor);
+    QUERY->add_dtor(QUERY,mfa_dtor);
+    QUERY->add_mfun(QUERY,mfa_reset,"void","reset");
+    QUERY->add_mfun(QUERY,mfa_size,"int","size");
+    QUERY->add_mfun(QUERY,mfa_ready,"int","ready");
+    QUERY->add_mfun(QUERY,mfa_push,"int","push");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_mfun(QUERY,mfa_copy,"int","copy");
+    QUERY->add_arg(QUERY,"int[]","data");
     if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaVideoFrame","Object");
     QUERY->add_sfun(QUERY,vf_size,"int","packetSize");
