@@ -867,6 +867,54 @@ CK_DLL_SFUN(txm_decode){
         write(dst,API,pixels);RETURN->v_int=1;
     }catch(...){}
 }
+CK_DLL_SFUN(sn_size){auto n=GET_NEXT_INT(ARGS);RETURN->v_int=mediawire::sceneNodePacketSize(n);}
+CK_DLL_SFUN(sn_encode){
+    RETURN->v_int=0;try{
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS);
+        auto scene=GET_NEXT_INT(ARGS),node=GET_NEXT_INT(ARGS),parent=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(!a||!src||API->object->array_float_size(a)!=16||stream<=0||stream>=0xffffffffull||seq<0||seq>0xffffffffull||
+           ts<0||scene<0||node<0||parent< -1||(parent!=-1&&static_cast<uint64_t>(parent)>=0xffffffffull))return;
+        mediawire::SceneNodeInfo n{static_cast<uint64_t>(scene),static_cast<uint64_t>(node),parent==-1?mediawire::noModelId:static_cast<uint64_t>(parent)};
+        auto count=API->object->array_int_size(src);
+        if(count<0||count%2||!mediawire::sceneNodeInfoValid(n)||!mediawire::sceneNodePacketSize(count/2)||
+           !exact(dst,API,mediawire::sceneNodePacketSize(count/2)))return;
+        std::vector<double> matrix(16);std::vector<uint32_t> refs(count);
+        for(size_t i=0;i<16;++i)matrix[i]=API->object->array_float_get_idx(a,i);
+        for(size_t i=0;i<refs.size();++i){
+            auto x=API->object->array_int_get_idx(src,i);
+            if(x==-1&&i%2){refs[i]=0xffffffffu;continue;}
+            if(x<0||x>=0xffffffffull)return;refs[i]=static_cast<uint32_t>(x);
+        }
+        mediawire::Bytes wire;
+        if(mediawire::encodeSceneNode({3,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},n,matrix,refs,wire)){
+            write(dst,API,wire);RETURN->v_int=1;
+        }
+    }catch(...){}
+}
+CK_DLL_SFUN(sn_inspect){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;mediawire::Header h;mediawire::SceneNodeInfo n;std::vector<double> m;std::vector<uint32_t> refs;
+        if(!exact(dst,API,7)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||!mediawire::decodeSceneNode(wire,h,n,m,refs))return;
+        const t_CKINT fields[]={static_cast<t_CKINT>(h.stream),static_cast<t_CKINT>(h.sequence),static_cast<t_CKINT>(h.timestamp),
+            static_cast<t_CKINT>(n.scene),static_cast<t_CKINT>(n.node),n.parent==mediawire::noModelId?-1:static_cast<t_CKINT>(n.parent),static_cast<t_CKINT>(refs.size()/2)};
+        for(size_t i=0;i<7;++i)API->object->array_int_set_idx(dst,i,fields[i]);RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(sn_decode){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;mediawire::Header h;mediawire::SceneNodeInfo n;std::vector<double> m;std::vector<uint32_t> refs;
+        if(!a||API->object->array_float_size(a)!=16||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||
+           !mediawire::decodeSceneNode(wire,h,n,m,refs)||!exact(dst,API,refs.size()))return;
+        for(size_t i=0;i<16;++i)API->object->array_float_set_idx(a,i,m[i]);
+        for(size_t i=0;i<refs.size();++i)API->object->array_int_set_idx(dst,i,refs[i]==0xffffffffu?-1:static_cast<t_CKINT>(refs[i]));
+        RETURN->v_int=1;
+    }catch(...){}
+}
 CK_DLL_SFUN(gr_inspect) {
     RETURN->v_int=0;
     try {
@@ -2136,6 +2184,27 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_sfun(QUERY,txm_decode,"int","decode");
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"int[]","pixels");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaSceneNode","Object");
+    QUERY->add_sfun(QUERY,sn_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","bindings");
+    QUERY->add_sfun(QUERY,sn_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","sceneId");
+    QUERY->add_arg(QUERY,"int","nodeId");
+    QUERY->add_arg(QUERY,"int","parentId");
+    QUERY->add_arg(QUERY,"float[]","matrix");
+    QUERY->add_arg(QUERY,"int[]","bindings");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,sn_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,sn_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"float[]","matrix");
+    QUERY->add_arg(QUERY,"int[]","bindings");
     if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaVideoFrame","Object");
     QUERY->add_sfun(QUERY,vf_size,"int","packetSize");
