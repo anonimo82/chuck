@@ -200,4 +200,56 @@ inline bool decodeSceneNode(const Bytes& wire,Header& h,SceneNodeInfo& n,std::ve
     for(size_t i=0;i<refs.size();++i){auto id=get(p,sceneNodeHeader+4*i,4);if(i%2==0&&id==noModelId)return false;refs[i]=static_cast<uint32_t>(id);}
     h=candidate;n=info;m.swap(matrix);bindings.swap(refs);return true;
 }
+
+// CKAN v1: explicit skeletal/morph resource records with finite binary32 values.
+// Kinds: 1 bone definition (parent + inverse bind), 2 vertex weights,
+// 3 bone TRS key, 4 morph position delta, 5 morph weight key.
+constexpr size_t animationRecordHeader=40;
+struct AnimationRecord{uint64_t kind=0,model=0,target=0,index=0,aux=0;};
+inline size_t animationRecordValues(uint64_t kind){
+    switch(kind){case 1:return 16;case 2:return 1;case 3:return 11;case 4:return 3;case 5:return 2;default:return 0;}
+}
+inline size_t animationRecordPacketSize(uint64_t kind){
+    auto n=animationRecordValues(kind);return n?headerSize+animationRecordHeader+4*n:0;
+}
+inline bool animationRecordValid(const AnimationRecord& a,const std::vector<double>& v){
+    auto n=animationRecordValues(a.kind);
+    if(!n||v.size()!=n||a.model>=noModelId||a.target>=noModelId||a.index>=noModelId||a.aux>noModelId)return false;
+    for(double x:v)if(!std::isfinite(x)||std::abs(x)>std::numeric_limits<float>::max())return false;
+    switch(a.kind){
+        case 1:return (a.aux==noModelId||a.aux<a.index)&&sceneMatrixValid(v);
+        case 2:return a.aux<noModelId&&v[0]>0&&v[0]<=1;
+        case 3:{
+            if(a.aux>=noModelId||v[0]<0||v[0]>1e6)return false;
+            double q=0;for(size_t i=4;i<8;++i)q+=v[i]*v[i];
+            return std::abs(q-1.0)<=1e-5;
+        }
+        case 4:return a.aux==0;
+        case 5:return a.aux==0&&v[0]>=0&&v[0]<=1e6&&v[1]>=0&&v[1]<=1;
+        default:return false;
+    }
+}
+inline bool encodeAnimationRecord(const Header& h,const AnimationRecord& a,const std::vector<double>& v,Bytes& out){
+    if(h.type!=3||!valid(h)||h.stream==noModelId||!animationRecordValid(a,v))return false;
+    std::vector<double> quantized;quantized.reserve(v.size());
+    for(double x:v)quantized.push_back(static_cast<float>(x));
+    if(!animationRecordValid(a,quantized))return false;
+    Bytes p(animationRecordHeader+4*v.size());p[0]='C';p[1]='K';p[2]='A';p[3]='N';p[4]=1;p[5]=static_cast<uint8_t>(a.kind);
+    put(p,8,a.model,4);put(p,12,a.target,4);put(p,16,a.index,4);put(p,20,a.aux,4);
+    for(size_t i=0;i<v.size();++i){float x=static_cast<float>(v[i]);uint32_t bits;std::memcpy(&bits,&x,4);put(p,animationRecordHeader+4*i,bits,4);}
+    return encode(h,p,out);
+}
+inline bool decodeAnimationRecord(const Bytes& wire,Header& h,AnimationRecord& a,std::vector<double>& v){
+    Header candidate;Bytes p;
+    if(!decode(wire,candidate,p)||candidate.type!=3||candidate.stream==noModelId||p.size()<animationRecordHeader||
+       p[0]!='C'||p[1]!='K'||p[2]!='A'||p[3]!='N'||p[4]!=1||p[6]||p[7]||
+       get(p,24,4)||get(p,28,4)||get(p,32,4)||get(p,36,4))return false;
+    AnimationRecord info{p[5],get(p,8,4),get(p,12,4),get(p,16,4),get(p,20,4)};
+    auto n=animationRecordValues(info.kind);
+    if(!n||animationRecordPacketSize(info.kind)!=wire.size())return false;
+    std::vector<double> data(n);
+    for(size_t i=0;i<n;++i){uint32_t bits=static_cast<uint32_t>(get(p,animationRecordHeader+4*i,4));float x;std::memcpy(&x,&bits,4);data[i]=x;}
+    if(!animationRecordValid(info,data))return false;
+    h=candidate;a=info;v.swap(data);return true;
+}
 }
