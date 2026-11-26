@@ -87,6 +87,7 @@
     "transport-video-consolidation",
     "transport-mesh-attributes",
     "transport-model-materials",
-    "transport-scene-nodes"
+    "transport-scene-nodes",
+    "transport-model-animation"
   ]
 }
