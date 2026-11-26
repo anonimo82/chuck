@@ -88,6 +88,7 @@
     "transport-mesh-attributes",
     "transport-model-materials",
     "transport-scene-nodes",
-    "transport-model-animation"
+    "transport-model-animation",
+    "transport-model-fragments"
   ]
 }
