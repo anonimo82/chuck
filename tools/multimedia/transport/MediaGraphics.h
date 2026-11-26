@@ -40,7 +40,9 @@ inline int graphicsKind(const Bytes &wire,Header &h,uint64_t &a,uint64_t &b) {
             if(decodeMeshAttributes(wire,candidate,vertices,mask,xyz,indices)){kind=10;x=vertices;y=indices.size()/3;}
             else if(decodeMaterial(wire,candidate,vertices,xyz)){kind=11;x=vertices;y=14;}
             else {ModelTexture t;Bytes pixels;if(decodeModelTexture(wire,candidate,t,pixels)){kind=12;x=t.width;y=t.height;}
-                else {SceneNodeInfo n;if(decodeSceneNode(wire,candidate,n,xyz,indices)){kind=13;x=n.node;y=indices.size()/2;}}
+                else {SceneNodeInfo n;if(decodeSceneNode(wire,candidate,n,xyz,indices)){kind=13;x=n.node;y=indices.size()/2;}
+                    else {AnimationRecord a;if(decodeAnimationRecord(wire,candidate,a,xyz)){kind=14;x=a.kind;y=xyz.size();}}
+                }
             }
         }
     }
