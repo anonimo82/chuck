@@ -86,6 +86,7 @@
     "transport-video-interframe",
     "transport-video-consolidation",
     "transport-mesh-attributes",
-    "transport-model-materials"
+    "transport-model-materials",
+    "transport-scene-nodes"
   ]
 }
