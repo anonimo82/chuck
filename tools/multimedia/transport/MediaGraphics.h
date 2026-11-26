@@ -38,6 +38,8 @@ inline int graphicsKind(const Bytes &wire,Header &h,uint64_t &a,uint64_t &b) {
         if(decodeModel(wire,candidate,xyz,indices)) {kind=4;x=xyz.size()/3;y=indices.size()/3;}
         else {uint64_t vertices=0,mask=0;
             if(decodeMeshAttributes(wire,candidate,vertices,mask,xyz,indices)){kind=10;x=vertices;y=indices.size()/3;}
+            else if(decodeMaterial(wire,candidate,vertices,xyz)){kind=11;x=vertices;y=14;}
+            else {ModelTexture t;Bytes pixels;if(decodeModelTexture(wire,candidate,t,pixels)){kind=12;x=t.width;y=t.height;}}
         }
     }
     if(kind){h=candidate;a=x;b=y;}
