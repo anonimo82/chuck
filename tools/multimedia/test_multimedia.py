@@ -12018,8 +12018,87 @@ for(0=>int mask;mask<32;mask++){
 """,551,p)
 
 
+def transport_model_materials():
+    with tempfile.TemporaryDirectory() as directory:
+        p = pathlib.Path(directory)
+        run("transport", """
+float factors[14]; float recovered[14];
+[0.25,0.5,0.75,1.0,0.5,0.25,0.0,0.125,0.25,0.5,0.5,0.5,64.0,1.0] @=> factors;
+int mat[MediaModelMaterial.packetSize()]; int meta[4]; int routeMeta[6]; int texMeta[8];
+MediaRouter router;
+check(router.configure(4));
+check(router.addStream(9,3,0,100));
+check(MediaModelMaterial.packetSize()==104);
+check(MediaModelMaterial.encode(9,0,100,7,factors,mat));
+check(MediaModelMaterial.inspect(mat,meta));
+check(meta[0]==9 && meta[1]==0 && meta[2]==100 && meta[3]==7);
+check(MediaModelMaterial.decode(mat,recovered));
+for(0=>int i;i<14;i++) check(factors[i]==recovered[i]);
+check(MediaGraphics.inspect(mat,routeMeta)==11);
+check(routeMeta[4]==7 && routeMeta[5]==14);
+check(MediaPacket.inspect(mat,routeMeta)==19);
+check(router.route(mat,routeMeta)==19);
+check(!router.route(mat,routeMeta));
+check(!MediaModelMaterial.encode(9,0,100,-1,factors,mat));
+check(!MediaModelMaterial.encode(9,0,100,7,[0.0],mat));
+check(!MediaModelMaterial.encode(9,0,100,7,factors,[0]));
+check(!MediaModelMaterial.decode(mat,[0.0]));
+check(!MediaModelMaterial.inspect(mat,[0]));
+for(0=>int i;i<14;i++){
+    factors[i]=>float saved;
+    -1.0=>factors[i];
+    check(!MediaModelMaterial.encode(9,0,100,7,factors,mat));
+    10001.0=>factors[i];
+    check(!MediaModelMaterial.encode(9,0,100,7,factors,mat));
+    saved=>factors[i];
+}
+0.5=>factors[13];
+check(!MediaModelMaterial.encode(9,0,100,7,factors,mat));
+1.0=>factors[13];
+check(MediaModelMaterial.inspect(mat,meta));
+check(MediaModelTexture.packetSize(2,2)==80);
+check(MediaModelTexture.packetSize(0,2)==0);
+check(MediaModelTexture.packetSize(-1,2)==0);
+check(MediaModelTexture.packetSize(512,512)==0);
+check(MediaModelTexture.packetSize(511,512)>0);
+int pixels[16]; int decodedPixels[16];
+for(0=>int i;i<16;i++) i*17=>pixels[i];
+for(1=>int slot;slot<=6;slot++){
+    int packet[80];
+    check(MediaModelTexture.encode(9,slot,100+slot,slot,7,slot,2,2,pixels,packet));
+    check(MediaModelTexture.inspect(packet,texMeta));
+    check(texMeta[0]==9 && texMeta[1]==slot && texMeta[2]==100+slot && texMeta[3]==slot);
+    check(texMeta[4]==7 && texMeta[5]==slot && texMeta[6]==2 && texMeta[7]==2);
+    check(MediaModelTexture.decode(packet,decodedPixels));
+    for(0=>int i;i<16;i++) check(decodedPixels[i]==pixels[i]);
+    check(MediaGraphics.inspect(packet,routeMeta)==12);
+    check(routeMeta[4]==2 && routeMeta[5]==2);
+    check(MediaPacket.inspect(packet,routeMeta)==20);
+    check(router.route(packet,routeMeta)==20);
+    check(!router.route(packet,routeMeta));
+    check(!MediaModelTexture.encode(9,slot,100,slot,7,0,2,2,pixels,packet));
+    check(!MediaModelTexture.encode(9,slot,100,slot,7,7,2,2,pixels,packet));
+    check(!MediaModelTexture.encode(9,slot,100,slot,-1,slot,2,2,pixels,packet));
+    check(!MediaModelTexture.encode(9,slot,100,-1,7,slot,2,2,pixels,packet));
+    check(!MediaModelTexture.encode(9,slot,100,slot,7,slot,2,2,[0],packet));
+    check(!MediaModelTexture.decode(packet,[0]));
+    check(!MediaModelTexture.inspect(packet,[0]));
+    256=>pixels[0];
+    check(!MediaModelTexture.encode(9,slot,100,slot,7,slot,2,2,pixels,packet));
+    0=>pixels[0];
+    check(MediaModelTexture.inspect(packet,texMeta));
+    0=>packet[35];
+    check(!MediaModelTexture.inspect(packet,texMeta));
+    check(!MediaPacket.inspect(packet,routeMeta));
+}
+0=>mat[35];
+check(!MediaModelMaterial.inspect(mat,meta));
+check(!MediaPacket.inspect(mat,routeMeta));
+""",290,p)
+
+
 if __name__ == "__main__":
-    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing, "transport-loopback": transport_loopback, "transport-session": transport_session, "transport-endpoints": transport_endpoints, "transport-consolidation": transport_consolidation, "transport-pcm": transport_pcm, "transport-pcm-stream": transport_pcm_stream, "transport-pcm-buffer": transport_pcm_buffer, "transport-midi": transport_midi, "transport-audio-midi": transport_audio_midi, "transport-raster": transport_raster, "transport-raster-stream": transport_raster_stream, "transport-vector": transport_vector, "transport-model": transport_model, "transport-graphics": transport_graphics, "transport-video-frame": transport_video_frame, "transport-video-stream": transport_video_stream, "transport-video-buffer": transport_video_buffer, "transport-audio-video": transport_audio_video, "transport-av-consolidation": transport_av_consolidation, "transport-text": transport_text, "transport-text-fragments": transport_text_fragments, "transport-text-buffer": transport_text_buffer, "transport-heterogeneous": transport_heterogeneous, "transport-raster-lossless": transport_raster_lossless, "transport-raster-png": transport_raster_png, "transport-raster-photo": transport_raster_photo, "transport-raster-compressed-fragments": transport_raster_compressed_fragments, "transport-raster-auto": transport_raster_auto, "transport-video-auto-fragments": transport_video_auto_fragments, "transport-video-high-resolution": transport_video_high_resolution, "transport-video-intraframe": transport_video_intraframe, "transport-video-interframe": transport_video_interframe, "transport-video-consolidation": transport_video_consolidation, "transport-mesh-attributes": transport_mesh_attributes}
+    groups = {"legacy": legacy, "text-core": text_core, "text-recent": text_recent, "text-page-breaks": text_page_breaks, "text-page-furniture": text_page_furniture, "text-page-numbers": text_page_numbers, "text-split-paragraphs": text_split_paragraphs, "text-split-tables": text_split_tables, "text-frame-foundation": text_frame_foundation, "text-frame-flow": text_frame_flow, "text-frame-mixed": text_frame_mixed, "text-frame-render": text_frame_render, "text-frame-native": text_frame_native, "text-accessibility": text_accessibility, "text-flow-txt": text_flow_txt, "text-flow-interop": text_flow_interop, "text-flow-performance": text_flow_performance, "text-flow-consolidation": text_flow_consolidation, "text-flow-hit-test": text_flow_hit_test, "text-flow-selection": text_flow_selection, "text-flow-edit": text_flow_edit, "text-flow-styled-edit": text_flow_styled_edit, "text-flow-edit-consolidation": text_flow_edit_consolidation, "vector-shape-edit": vector_shape_edit, "vector-shape-transform": vector_shape_transform, "vector-shape-style": vector_shape_style, "vector-shape-group": vector_shape_group, "vector-editable-svg": vector_editable_svg, "midi-capture-events": midi_capture_events, "midi-capture-save": midi_capture_save, "midi-capture-session": midi_capture_session, "text-capture-unicode": text_capture_unicode, "text-capture-integration": text_capture_integration, "raster-capture-foundation": raster_capture_foundation, "raster-camera-capture": raster_camera_capture, "raster-screen-capture": raster_screen_capture, "raster-capture-image": raster_capture_image, "raster-capture-consolidation": raster_capture_consolidation, "video-camera-session": video_camera_session, "video-screen-recording": video_screen_recording, "video-audio-capture": video_audio_capture, "video-av-recording": video_av_recording, "video-capture-consolidation": video_capture_consolidation, "video-opengl-framebuffer": video_opengl_framebuffer, "video-chugl-texture": video_chugl_texture, "video-offscreen-render": video_offscreen_render, "video-indexed-av": video_indexed_av, "video-graphics-consolidation": video_graphics_consolidation, "transport-framing": transport_framing, "transport-loopback": transport_loopback, "transport-session": transport_session, "transport-endpoints": transport_endpoints, "transport-consolidation": transport_consolidation, "transport-pcm": transport_pcm, "transport-pcm-stream": transport_pcm_stream, "transport-pcm-buffer": transport_pcm_buffer, "transport-midi": transport_midi, "transport-audio-midi": transport_audio_midi, "transport-raster": transport_raster, "transport-raster-stream": transport_raster_stream, "transport-vector": transport_vector, "transport-model": transport_model, "transport-graphics": transport_graphics, "transport-video-frame": transport_video_frame, "transport-video-stream": transport_video_stream, "transport-video-buffer": transport_video_buffer, "transport-audio-video": transport_audio_video, "transport-av-consolidation": transport_av_consolidation, "transport-text": transport_text, "transport-text-fragments": transport_text_fragments, "transport-text-buffer": transport_text_buffer, "transport-heterogeneous": transport_heterogeneous, "transport-raster-lossless": transport_raster_lossless, "transport-raster-png": transport_raster_png, "transport-raster-photo": transport_raster_photo, "transport-raster-compressed-fragments": transport_raster_compressed_fragments, "transport-raster-auto": transport_raster_auto, "transport-video-auto-fragments": transport_video_auto_fragments, "transport-video-high-resolution": transport_video_high_resolution, "transport-video-intraframe": transport_video_intraframe, "transport-video-interframe": transport_video_interframe, "transport-video-consolidation": transport_video_consolidation, "transport-mesh-attributes": transport_mesh_attributes, "transport-model-materials": transport_model_materials}
     selected = os.environ.get("MULTIMEDIA_TEST_GROUPS", ",".join(groups)).split(",")
     if not selected or len(set(selected)) != len(selected) or any(g not in groups for g in selected):
         raise SystemExit("Invalid multimedia test groups")
