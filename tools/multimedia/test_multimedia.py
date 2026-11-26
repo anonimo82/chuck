@@ -12004,9 +12004,9 @@ for(0=>int mask;mask<32;mask++){
     check(router.route(packet,routeMeta)==18);
     check(!router.route(packet,routeMeta));
     check(MediaMeshAttributes.decode(packet,decoded,result));
-    1=>int same;
-    for(0=>int i;i<attrs.size();i++) if(decoded[i]!=attrs[i]) 0=>same;
-    check(same);
+    1=>int attributesMatch;
+    for(0=>int i;i<attrs.size();i++) if(decoded[i]!=attrs[i]) 0=>attributesMatch;
+    check(attributesMatch);
     check(result[0]==0 && result[1]==1 && result[2]==2);
     check(!MediaMeshAttributes.decode(packet,decoded,[0]));
     check(!MediaMeshAttributes.encode(9,mask,100,3,mask,attrs,[0,1,3],packet));
