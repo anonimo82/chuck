@@ -158,4 +158,46 @@ inline bool decodeModelTexture(const Bytes& wire,Header& h,ModelTexture& t,Bytes
     if(!validModelTexture(info)||modelTexturePacketSize(info.width,info.height)!=wire.size())return false;
     Bytes data(p.begin()+textureHeader,p.end());h=candidate;t=info;pixels.swap(data);return true;
 }
+
+// CKSN v1: scene/node identifiers, parent (-1 root), row-major local affine
+// matrix, then mesh/material ID pairs. Parent must precede child by node ID.
+constexpr size_t sceneNodeHeader=88;
+constexpr uint64_t noModelId=0xffffffffull;
+struct SceneNodeInfo{uint64_t scene=0,node=0,parent=noModelId;};
+inline size_t sceneNodePacketSize(uint64_t bindings){
+    if(bindings>(maxPayload-sceneNodeHeader)/8)return 0;
+    return headerSize+sceneNodeHeader+8*bindings;
+}
+inline bool sceneNodeInfoValid(const SceneNodeInfo& n){
+    return n.scene<noModelId&&n.node<noModelId&&(n.parent==noModelId||n.parent<n.node);
+}
+inline bool sceneMatrixValid(const std::vector<double>& m){
+    if(m.size()!=16)return false;
+    for(double x:m)if(!std::isfinite(x)||std::abs(x)>std::numeric_limits<float>::max())return false;
+    return m[12]==0&&m[13]==0&&m[14]==0&&m[15]==1;
+}
+inline bool encodeSceneNode(const Header& h,const SceneNodeInfo& n,const std::vector<double>& m,
+                            const std::vector<uint32_t>& bindings,Bytes& out){
+    if(h.type!=3||!valid(h)||h.stream==noModelId||!sceneNodeInfoValid(n)||!sceneMatrixValid(m)||bindings.size()%2)return false;
+    auto bytes=sceneNodePacketSize(bindings.size()/2);if(!bytes)return false;
+    for(size_t i=0;i<bindings.size();i+=2)if(bindings[i]==noModelId)return false;
+    Bytes p(bytes-headerSize);p[0]='C';p[1]='K';p[2]='S';p[3]='N';p[4]=1;
+    put(p,8,n.scene,4);put(p,12,n.node,4);put(p,16,n.parent,4);put(p,20,bindings.size()/2,4);
+    for(size_t i=0;i<16;++i){float x=static_cast<float>(m[i]);uint32_t bits;std::memcpy(&bits,&x,4);put(p,24+4*i,bits,4);}
+    for(size_t i=0;i<bindings.size();++i)put(p,sceneNodeHeader+4*i,bindings[i],4);
+    return encode(h,p,out);
+}
+inline bool decodeSceneNode(const Bytes& wire,Header& h,SceneNodeInfo& n,std::vector<double>& m,
+                            std::vector<uint32_t>& bindings){
+    Header candidate;Bytes p;
+    if(!decode(wire,candidate,p)||candidate.type!=3||candidate.stream==noModelId||
+       p.size()<sceneNodeHeader||p[0]!='C'||p[1]!='K'||p[2]!='S'||p[3]!='N'||p[4]!=1||p[5]||p[6]||p[7])return false;
+    SceneNodeInfo info{get(p,8,4),get(p,12,4),get(p,16,4)};auto count=get(p,20,4);
+    if(!sceneNodeInfoValid(info)||sceneNodePacketSize(count)!=wire.size())return false;
+    std::vector<double> matrix(16);std::vector<uint32_t> refs(2*count);
+    for(size_t i=0;i<16;++i){uint32_t bits=static_cast<uint32_t>(get(p,24+4*i,4));float x;std::memcpy(&x,&bits,4);matrix[i]=x;}
+    if(!sceneMatrixValid(matrix))return false;
+    for(size_t i=0;i<refs.size();++i){auto id=get(p,sceneNodeHeader+4*i,4);if(i%2==0&&id==noModelId)return false;refs[i]=static_cast<uint32_t>(id);}
+    h=candidate;n=info;m.swap(matrix);bindings.swap(refs);return true;
+}
 }
