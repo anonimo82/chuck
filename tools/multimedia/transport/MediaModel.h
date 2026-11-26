@@ -252,4 +252,63 @@ inline bool decodeAnimationRecord(const Bytes& wire,Header& h,AnimationRecord& a
     if(!animationRecordValid(info,data))return false;
     h=candidate;a=info;v.swap(data);return true;
 }
+
+// CKMF v1: bounded large model resource, opaque byte slices with resource ID.
+// Resource format 1 = RGBA8 (width/height in resource header), 2 = application-defined binary.
+// All fragments share stream, timestamp, resource ID, format, total and first sequence.
+constexpr size_t modelFragmentHeader=32,maxModelResource=16*1024*1024;
+struct ModelFragmentInfo{uint64_t resource=0,format=0,total=0,offset=0,first=0;};
+inline size_t modelFragmentPacketSize(uint64_t n){
+    return n&&n<=maxPayload-modelFragmentHeader?headerSize+modelFragmentHeader+n:0;
+}
+inline bool validModelFragment(const Header& h,const ModelFragmentInfo& f,size_t n){
+    return valid(h)&&h.type==3&&h.stream!=noModelId&&f.resource<noModelId&&
+        (f.format==1||f.format==2)&&f.total<=maxModelResource&&f.offset<f.total&&n<=f.total-f.offset&&
+        modelFragmentPacketSize(n)&&f.first<=h.sequence&&((f.offset==0)==(f.first==h.sequence));
+}
+inline bool encodeModelFragment(const Header& h,const ModelFragmentInfo& f,const Bytes& data,Bytes& out){
+    if(!validModelFragment(h,f,data.size()))return false;
+    Bytes p(modelFragmentHeader+data.size());p[0]='C';p[1]='K';p[2]='M';p[3]='F';p[4]=1;p[5]=static_cast<uint8_t>(f.format);
+    put(p,8,f.resource,4);put(p,12,f.total,4);put(p,16,f.offset,4);put(p,20,f.first,4);
+    std::copy(data.begin(),data.end(),p.begin()+modelFragmentHeader);return encode(h,p,out);
+}
+inline bool decodeModelFragment(const Bytes& wire,Header& h,ModelFragmentInfo& f,Bytes& data){
+    Header c;Bytes p;
+    if(!decode(wire,c,p)||p.size()<=modelFragmentHeader||p[0]!='C'||p[1]!='K'||p[2]!='M'||p[3]!='F'||
+       p[4]!=1||p[6]||p[7]||get(p,24,4)||get(p,28,4))return false;
+    ModelFragmentInfo info{get(p,8,4),p[5],get(p,12,4),get(p,16,4),get(p,20,4)};
+    if(!validModelFragment(c,info,p.size()-modelFragmentHeader))return false;
+    Bytes bytes(p.begin()+modelFragmentHeader,p.end());h=c;f=info;data.swap(bytes);return true;
+}
+// Format 1 canonical texture resource: CKTX v1 payload (without CKMP envelope),
+// with the same metadata and RGBA8 layout as the single-packet texture.
+inline bool validLargeTexture(const Bytes& p){
+    if(p.size()<textureHeader||p[0]!='C'||p[1]!='K'||p[2]!='T'||p[3]!='X'||p[4]!=1||
+       p[6]||p[7]||get(p,24,4)||get(p,28,4))return false;
+    auto w=get(p,16,4),h=get(p,20,4);
+    constexpr uint64_t limit=(maxModelResource-textureHeader)/4;
+    return get(p,8,4)<noModelId&&get(p,12,4)<noModelId&&p[5]>=1&&p[5]<=6&&
+        w&&h&&w<=limit&&h<=limit/w&&p.size()==textureHeader+4*w*h;
+}
+class ModelAssembler {
+    Header h_{};ModelFragmentInfo f_{};Bytes data_;
+public:
+    void reset(){h_={};f_={};Bytes().swap(data_);}
+    size_t size()const{return data_.size();}
+    bool ready()const{return f_.total&&data_.size()==f_.total;}
+    const Bytes& data()const{return data_;}
+    int push(const Bytes& wire){
+        if(ready())return 0;
+        Header h;ModelFragmentInfo f;Bytes d;
+        if(!decodeModelFragment(wire,h,f,d)||f.offset!=data_.size())return 0;
+        if(f.offset&&(h.stream!=h_.stream||h.timestamp!=h_.timestamp||f.resource!=f_.resource||
+           f.format!=f_.format||f.total!=f_.total||f.first!=f_.first||h_.sequence==0xffffffffu||h.sequence!=h_.sequence+1))return 0;
+        if(f.offset+d.size()==f.total&&f.format==1){
+            Bytes complete=data_;complete.insert(complete.end(),d.begin(),d.end());
+            if(!validLargeTexture(complete)||get(complete,8,4)!=f.resource)return 0;
+            data_.swap(complete);
+        }else data_.insert(data_.end(),d.begin(),d.end());
+        h_=h;f_=f;return ready()?2:1;
+    }
+};
 }
