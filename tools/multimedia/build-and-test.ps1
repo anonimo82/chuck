@@ -9,6 +9,7 @@ function Run-Native {
     & $Program @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$Program failed: $LASTEXITCODE" }
 }
+$originalPath = $env:PATH
 try {
     $bin = Join-Path $MsysRoot "ucrt64/bin"
     if (!$CMakeExe) {
@@ -90,6 +91,10 @@ try {
             }
         }
     }
+    # Isolate validation, not build-tool or ChucK discovery. Keep MSYS2 git
+    # available for the smoke runner and UCRT64 ffmpeg for media fixtures.
+    $env:PATH = "$bin;$MsysRoot\usr\bin;$env:SystemRoot\System32;$env:SystemRoot"
+    Write-Host "Isolated validation PATH: $env:PATH"
     Run-Native $env:CHUCK_EXE @("--version")
     $previousPreference = $ErrorActionPreference
     try {
@@ -110,4 +115,7 @@ try {
     Run-Native "$bin/python.exe" $smokeArgs
     if ($Mode -in @("Local","Incremental")) { Write-Host "Local smoke validation finished; see summary for PASS or SKIP." }
     else { Write-Host "All multimedia smoke tests passed." }
-} finally { Stop-Transcript }
+} finally {
+    $env:PATH = $originalPath
+    Stop-Transcript
+}
