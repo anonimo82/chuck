@@ -1,5 +1,6 @@
 #pragma once
 #include "MediaFrame.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -102,5 +103,59 @@ inline bool decodeMeshAttributes(const Bytes& wire,Header& h,uint64_t& v,uint64_
         if(index>=vertices)return false;tris[i]=static_cast<uint32_t>(index);
     }
     h=candidate;v=vertices;mask=m;values.swap(data);indices.swap(tris);return true;
+}
+
+// CKMT v1: material ID, six PBR factors and eight lighting factors.
+// CKTX v1: texture ID, material ID, semantic slot, UV channel zero, RGBA8.
+constexpr size_t materialHeader=72, textureHeader=32;
+inline bool materialFactorsValid(const std::vector<double>& v){
+    if(v.size()!=14)return false;
+    for(size_t i=0;i<v.size();++i){
+        if(!std::isfinite(v[i])||v[i]<0||v[i]>(i==12?10000.0:1.0))return false;
+        if(i==13&&v[i]!=0&&v[i]!=1)return false;
+    }
+    return true;
+}
+inline bool encodeMaterial(const Header& h,uint64_t id,const std::vector<double>& v,Bytes& out){
+    if(h.type!=3||!valid(h)||h.stream==0xffffffffu||id>=0xffffffffull||!materialFactorsValid(v))return false;
+    Bytes p(materialHeader);p[0]='C';p[1]='K';p[2]='M';p[3]='T';p[4]=1;
+    put(p,8,id,4);
+    for(size_t i=0;i<v.size();++i){float x=static_cast<float>(v[i]);uint32_t bits;std::memcpy(&bits,&x,4);put(p,16+4*i,bits,4);}
+    return encode(h,p,out);
+}
+inline bool decodeMaterial(const Bytes& wire,Header& h,uint64_t& id,std::vector<double>& v){
+    Header candidate;Bytes p;
+    if(!decode(wire,candidate,p)||candidate.type!=3||candidate.stream==0xffffffffu||
+       p.size()!=materialHeader||p[0]!='C'||p[1]!='K'||p[2]!='M'||p[3]!='T'||p[4]!=1||
+       p[5]||p[6]||p[7]||get(p,12,4)||get(p,8,4)==0xffffffffull)return false;
+    std::vector<double> data(14);
+    for(size_t i=0;i<data.size();++i){uint32_t bits=static_cast<uint32_t>(get(p,16+4*i,4));float x;std::memcpy(&x,&bits,4);data[i]=x;}
+    if(!materialFactorsValid(data))return false;
+    h=candidate;id=get(p,8,4);v.swap(data);return true;
+}
+struct ModelTexture{uint64_t id=0,material=0,slot=0,width=0,height=0;};
+inline size_t modelTexturePacketSize(uint64_t w,uint64_t h){
+    constexpr uint64_t limit=(maxPayload-textureHeader)/4;
+    if(!w||!h||w>limit||h>limit/w)return 0;
+    return headerSize+textureHeader+4*w*h;
+}
+inline bool validModelTexture(const ModelTexture& t){
+    return t.id<0xffffffffull&&t.material<0xffffffffull&&t.slot>=1&&t.slot<=6&&modelTexturePacketSize(t.width,t.height);
+}
+inline bool encodeModelTexture(const Header& h,const ModelTexture& t,const Bytes& pixels,Bytes& out){
+    if(h.type!=3||!valid(h)||h.stream==0xffffffffu||!validModelTexture(t)||pixels.size()!=4*t.width*t.height)return false;
+    Bytes p(textureHeader+pixels.size());p[0]='C';p[1]='K';p[2]='T';p[3]='X';p[4]=1;p[5]=static_cast<uint8_t>(t.slot);
+    put(p,8,t.id,4);put(p,12,t.material,4);put(p,16,t.width,4);put(p,20,t.height,4);
+    std::copy(pixels.begin(),pixels.end(),p.begin()+textureHeader);
+    return encode(h,p,out);
+}
+inline bool decodeModelTexture(const Bytes& wire,Header& h,ModelTexture& t,Bytes& pixels){
+    Header candidate;Bytes p;
+    if(!decode(wire,candidate,p)||candidate.type!=3||candidate.stream==0xffffffffu||
+       p.size()<textureHeader||p[0]!='C'||p[1]!='K'||p[2]!='T'||p[3]!='X'||p[4]!=1||
+       p[6]||p[7]||get(p,24,4)||get(p,28,4))return false;
+    ModelTexture info{get(p,8,4),get(p,12,4),p[5],get(p,16,4),get(p,20,4)};
+    if(!validModelTexture(info)||modelTexturePacketSize(info.width,info.height)!=wire.size())return false;
+    Bytes data(p.begin()+textureHeader,p.end());h=candidate;t=info;pixels.swap(data);return true;
 }
 }
