@@ -803,6 +803,70 @@ CK_DLL_SFUN(ma_decode){
         RETURN->v_int=1;
     }catch(...){}
 }
+CK_DLL_SFUN(mt_size){RETURN->v_int=mediawire::headerSize+mediawire::materialHeader;}
+CK_DLL_SFUN(mt_encode){
+    RETURN->v_int=0;try{
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS),id=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        if(!a||API->object->array_float_size(a)!=14||!exact(dst,API,mediawire::headerSize+mediawire::materialHeader)||
+           stream<=0||stream>=0xffffffffull||seq<0||seq>0xffffffffull||ts<0||id<0||id>=0xffffffffull)return;
+        std::vector<double> values(14);for(size_t i=0;i<14;++i)values[i]=API->object->array_float_get_idx(a,i);
+        mediawire::Bytes wire;
+        if(mediawire::encodeMaterial({3,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},id,values,wire)){
+            write(dst,API,wire);RETURN->v_int=1;
+        }
+    }catch(...){}
+}
+CK_DLL_SFUN(mt_inspect){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;mediawire::Header h;uint64_t id=0;std::vector<double> values;
+        if(!exact(dst,API,4)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||!mediawire::decodeMaterial(wire,h,id,values))return;
+        const uint64_t fields[]={h.stream,h.sequence,h.timestamp,id};
+        for(size_t i=0;i<4;++i)API->object->array_int_set_idx(dst,i,fields[i]);RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(mt_decode){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire;mediawire::Header h;uint64_t id=0;std::vector<double> values;
+        if(!a||API->object->array_float_size(a)!=14||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||!mediawire::decodeMaterial(wire,h,id,values))return;
+        for(size_t i=0;i<14;++i)API->object->array_float_set_idx(a,i,values[i]);RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(txm_size){auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);RETURN->v_int=mediawire::modelTexturePacketSize(w,h);}
+CK_DLL_SFUN(txm_encode){
+    RETURN->v_int=0;try{
+        auto stream=GET_NEXT_INT(ARGS),seq=GET_NEXT_INT(ARGS),ts=GET_NEXT_INT(ARGS);
+        uint64_t a[5];for(auto& x:a)x=GET_NEXT_INT(ARGS);
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::ModelTexture t{a[0],a[1],a[2],a[3],a[4]};
+        if(stream<=0||stream>=0xffffffffull||seq<0||seq>0xffffffffull||ts<0||!mediawire::validModelTexture(t)||
+           !exact(dst,API,mediawire::modelTexturePacketSize(t.width,t.height))||!exact(src,API,4*t.width*t.height))return;
+        mediawire::Bytes pixels,wire;
+        if(read(src,API,4*t.width*t.height,pixels)&&mediawire::encodeModelTexture({3,static_cast<uint32_t>(stream),static_cast<uint32_t>(seq),static_cast<uint64_t>(ts)},t,pixels,wire)){
+            write(dst,API,wire);RETURN->v_int=1;
+        }
+    }catch(...){}
+}
+CK_DLL_SFUN(txm_inspect){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire,pixels;mediawire::Header h;mediawire::ModelTexture t;
+        if(!exact(dst,API,8)||!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||!mediawire::decodeModelTexture(wire,h,t,pixels))return;
+        const uint64_t fields[]={h.stream,h.sequence,h.timestamp,t.id,t.material,t.slot,t.width,t.height};
+        for(size_t i=0;i<8;++i)API->object->array_int_set_idx(dst,i,fields[i]);RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(txm_decode){
+    RETURN->v_int=0;try{
+        auto src=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS)),dst=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        mediawire::Bytes wire,pixels;mediawire::Header h;mediawire::ModelTexture t;
+        if(!read(src,API,mediawire::headerSize+mediawire::maxPayload,wire)||!mediawire::decodeModelTexture(wire,h,t,pixels)||!exact(dst,API,pixels.size()))return;
+        write(dst,API,pixels);RETURN->v_int=1;
+    }catch(...){}
+}
 CK_DLL_SFUN(gr_inspect) {
     RETURN->v_int=0;
     try {
@@ -2034,6 +2098,44 @@ CK_DLL_QUERY(MediaTransport) {
     QUERY->add_arg(QUERY,"int[]","packet");
     QUERY->add_arg(QUERY,"float[]","attributes");
     QUERY->add_arg(QUERY,"int[]","indices");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaModelMaterial","Object");
+    QUERY->add_sfun(QUERY,mt_size,"int","packetSize");
+    QUERY->add_sfun(QUERY,mt_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","materialId");
+    QUERY->add_arg(QUERY,"float[]","factors");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,mt_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,mt_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"float[]","factors");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaModelTexture","Object");
+    QUERY->add_sfun(QUERY,txm_size,"int","packetSize");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_sfun(QUERY,txm_encode,"int","encode");
+    QUERY->add_arg(QUERY,"int","stream");
+    QUERY->add_arg(QUERY,"int","sequence");
+    QUERY->add_arg(QUERY,"int","timestampUs");
+    QUERY->add_arg(QUERY,"int","textureId");
+    QUERY->add_arg(QUERY,"int","materialId");
+    QUERY->add_arg(QUERY,"int","slot");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int[]","pixels");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_sfun(QUERY,txm_inspect,"int","inspect");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","metadata");
+    QUERY->add_sfun(QUERY,txm_decode,"int","decode");
+    QUERY->add_arg(QUERY,"int[]","packet");
+    QUERY->add_arg(QUERY,"int[]","pixels");
     if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"MediaVideoFrame","Object");
     QUERY->add_sfun(QUERY,vf_size,"int","packetSize");
