@@ -4,6 +4,7 @@
     "transport-model-materials",
     "transport-scene-nodes",
     "transport-model-animation",
-    "transport-model-fragments"
+    "transport-model-fragments",
+    "transport-final-consolidation"
   ]
 }

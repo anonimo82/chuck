@@ -85,3 +85,39 @@ MediaModel carries one indexed triangle mesh as CKMP type 3, CKMD v1. Payload he
 ## Graphics consolidation (PR #212)
 
 MediaGraphics.inspect(packet,metadata[6]) validates the complete graphics payload and returns 1 CKRA, 2 CKRF, 3 CKVG, 4 CKMD, or 0 on failure. Metadata: kind,stream,sequence,timestamp,a,b; a/b are width/height for raster and fragments, SVG byte length/0 for vector, vertex/triangle counts for model. Output unchanged on failure. This is dispatch/validation, not a renderer or SVG sanitizer. A session mask of 7 negotiates all three graphics media types; use the corresponding decoder or fragment receiver after inspection. CKRF explicitly rejects exhausted sequence/image counters. Geometry remains mesh-only; no automatic graphics playback scheduling, cross-host certification or compression. No wire format changes.
+
+## Final transmission consolidation (#258)
+
+All CKMP v1 types remain stable: 1 raster, 2 vector, 3 model, 4 PCM, 5 MIDI, 6 video, 7 text. Session mask bits are 1,2,4,8,16,32,64 respectively. MediaPacket.inspect and MediaRouter.route return stable kinds (0 invalid):
+
+| Kind | Payload |
+|---:|---|
+|1|CKRA raster|
+|2|CKRF raster fragment|
+|3|CKVG SVG source|
+|4|CKMD indexed mesh|
+|5|PCM|
+|6|MIDI|
+|7|Video frame|
+|8|CKVS video strip|
+|9|Text|
+|10|Text fragment|
+|11|Lossless RLE raster|
+|12|PNG raster|
+|13|JPEG raster|
+|14|WebP raster|
+|15|Compressed raster fragment|
+|16|CKVC compressed video strip|
+|17|CKVD video delta|
+|18|CKMA attributed mesh|
+|19|CKMT material|
+|20|CKTX v1 model texture (type 3)|
+|21|CKSN scene node|
+|22|CKAN animation record|
+|23|CKMF model fragment|
+
+MediaGraphics kinds 1–15 map to heterogeneous kinds 1,2,3,4,11,12,13,14,15,18,19,20,21,22,23. Metadata for MediaPacket and MediaRouter: kind,type,stream,sequence,timestampUs,payloadBytes. Router enforces per-stream sequence and nondecreasing timestamps, not cross-stream synchronization; different streams may interleave. Session negotiation is by media mask and payload limit, not codec capabilities. A receiver must separately enable adaptive video if needed. CRC is corruption detection, not authentication. No encryption, authentication, guaranteed realtime latency, automatic retransmission or cross-platform/network certification is implied.
+
+Model material factors: base RGB, opacity, metallic, roughness, emission RGB, specular RGB, shininess, two-sided. Texture slots 1–6: base color, normal, metallic-roughness, emissive, occlusion, specular. CKTX v1 type 3 is distinct from text fragment CKTX v2 type 7. CKSN has scene/node/parent identifiers, row-major local affine matrix, mesh/material ID pairs; parent -1 means root, material -1 means absent. CKAN record kinds 1 inverse bind/parent, 2 vertex weight, 3 TRS key (seconds, XYZ translation, XYZW quaternion, XYZ scale), 4 XYZ morph delta, 5 morph weight key. Caller manages resource registry, associations, animation interpolation and deformation. CKMF format 1 reconstructs a canonical CKTX payload without CKMP envelope, up to 16 MiB; format 2 is opaque caller-defined bytes. Fragment ordering is strict, one active resource per assembler, explicit reset between resources. No automatic scene reconstruction, large mesh serialization or concurrent-resource manager. Untrusted resources require independent application validation.
+
+The final integration smoke group exercises all seven media types and recent model packet kinds through a local negotiated session; native results remain pending until reported. Earlier specialized tests remain in the global manifest.
