@@ -12022,8 +12022,8 @@ def transport_model_materials():
     with tempfile.TemporaryDirectory() as directory:
         p = pathlib.Path(directory)
         run("transport", """
-float factors[14]; float recovered[14];
-[0.25,0.5,0.75,1.0,0.5,0.25,0.0,0.125,0.25,0.5,0.5,0.5,64.0,1.0] @=> factors;
+float recovered[14];
+[0.25,0.5,0.75,1.0,0.5,0.25,0.0,0.125,0.25,0.5,0.5,0.5,64.0,1.0] @=> float factors[];
 int mat[MediaModelMaterial.packetSize()]; int meta[4]; int routeMeta[6]; int texMeta[8];
 MediaRouter router;
 check(router.configure(4));
