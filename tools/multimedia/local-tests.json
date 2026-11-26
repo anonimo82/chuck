@@ -2,6 +2,7 @@
   "version": 1,
   "groups": [
     "transport-model-materials",
-    "transport-scene-nodes"
+    "transport-scene-nodes",
+    "transport-model-animation"
   ]
 }
