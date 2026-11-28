@@ -3022,6 +3022,36 @@ CK_DLL_MFUN(text_doc_import_capture) {
     } catch(...) {}
 }
 
+namespace {
+std::vector<std::string> availableFontFamilies(){
+    std::vector<std::string> names;
+    auto *map=pango_cairo_font_map_get_default();
+    if(!map)return names;
+    PangoFontFamily **families=nullptr;int count=0;
+    pango_font_map_list_families(map,&families,&count);
+    std::unique_ptr<PangoFontFamily*,decltype(&g_free)> guard(families,&g_free);
+    for(int i=0;i<count;i++){
+        auto *name=pango_font_family_get_name(families[i]);
+        if(name&&*name)names.emplace_back(name);
+    }
+    std::sort(names.begin(),names.end());
+    names.erase(std::unique(names.begin(),names.end()),names.end());
+    return names;
+}
+}
+CK_DLL_SFUN(text_font_count){
+    RETURN->v_int=-1;
+    try{RETURN->v_int=static_cast<t_CKINT>(availableFontFamilies().size());}catch(...){}
+}
+CK_DLL_SFUN(text_font_family){
+    std::string result;
+    try{
+        auto i=GET_NEXT_INT(ARGS);
+        auto names=availableFontFamilies();
+        if(i>=0&&static_cast<size_t>(i)<names.size())result=names[i];
+    }catch(...){}
+    RETURN->v_string=API->object->create_string(VM,result.c_str(),FALSE);
+}
 CK_DLL_QUERY(TextIO) {
     QUERY->setname(QUERY,"TextIO");
     QUERY->begin_class(QUERY,"TextIO","Object");
@@ -3049,6 +3079,11 @@ CK_DLL_QUERY(TextIO) {
     QUERY->add_arg(QUERY,"int","key");
     QUERY->add_mfun(QUERY,text_capture_clear,"void","clear");
     if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaFonts","Object");
+    QUERY->add_sfun(QUERY,text_font_count,"int","familyCount");
+    QUERY->add_sfun(QUERY,text_font_family,"string","familyAt");
+    QUERY->add_arg(QUERY,"int","familyIndex");
+    if(!QUERY->end_class(QUERY))return FALSE;
     QUERY->begin_class(QUERY,"TextStyle","Object");
     styleOffset=QUERY->add_mvar(QUERY,"int","@textStyleNative",FALSE);
     if(styleOffset==CK_INVALID_OFFSET) return FALSE;
