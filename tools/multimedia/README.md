@@ -14,29 +14,27 @@ Then load WAV with SndBuf, PNG with ChuGL Texture, OBJ with ChuGL GModel. For Ch
 
 The tool refuses existing primary output files. Assimp can create sidecar files, so use a fresh output directory for models. Conversion can lose metadata, animation, materials, transparency, audio channels or quality. Only conversions supported by the installed backend will succeed. Use offline, not on the real-time audio thread.
 
-## Remaining work
-
-- Native Chugin bindings for image decoding/encoding, scene import/export and media streaming.
-- SVG vector representation and export (currently rasterization only).
-- MIDI file writing and editing; existing MidiFileIn is unchanged.
-- Automated round-trip tests with fixtures across Linux, Windows and macOS.
-- Exact runtime capability enumeration and codec/licensing review before distributing binaries.
-
 ## Native Chugins and unified build (experimental)
 
-Six optional modules now exist in raster, vector, model, audio, midi and video. On Linux install build-essential, pkg-config, libmagickwand-dev, librsvg2-dev, libcairo2-dev, libassimp-dev, libsndfile1-dev (>= 1.2.0), libavformat-dev, libavcodec-dev, libavutil-dev, libswscale-dev and ffmpeg. On macOS the equivalent Homebrew libraries are imagemagick, librsvg, cairo, assimp, libsndfile, ffmpeg and pkg-config. Obtain https://github.com/craigsapp/midifile separately (revision not yet pinned).
+The native multimedia implementation is optional and separate from the offline CLI above. The unified CMake build defines ten modules: RasterIO, VectorIO, ModelIO, AudioIO, MidiFileIO, VideoIO, SubtitleIO, KeyframeIO, TextIO and MediaTransport. See the module documentation for API and format limitations. Native application project formats such as .blend are not supported inputs to ModelIO; actual codec and importer availability still depends on installed libraries.
 
-From the repository root, with a matching ChucK binary built at src/chuck:
+On Windows x64, use the MSYS2 UCRT64 environment and the provided setup and build scripts. Install dependencies once (or when required):
 
-    make -C tools/multimedia MIDIFILE=/absolute/path/to/midifile
-    make -C tools/multimedia test MIDIFILE=/absolute/path/to/midifile
-    make -C tools/multimedia install MIDIFILE=/absolute/path/to/midifile PREFIX=/absolute/path/to/chugins
+    powershell -ExecutionPolicy Bypass -File tools/multimedia/setup-windows.ps1
 
-Use chuck --chugin-path:/absolute/path/to/chugins with your script. The install target copies six binaries and may replace previous copies in the chosen prefix. See each module README for API limitations. Windows build remains pending. Smoke tests are not exhaustive format or security tests. CI and local native compilation results have not yet been verified.
+The build-and-test script configures CMake and Ninja, builds and installs all ten Chugins, stages runtime DLLs, probes the modules with ChucK, and invokes the selected smoke suites. Its local build directory is build/multimedia-windows. Supply -ChuckExe if ChucK is not discoverable; it must be compatible with the Chugin API. MIDI dependency checkout SHA is logged, but the upstream revision is not pinned.
 
-## Automated multimedia CI
+On Linux and macOS, the unified CMake build requires a C++17 compiler, CMake 3.20+, pkg-config, ImageMagick MagickWand, librsvg 2.46+, Cairo, Assimp, libsndfile 1.2+, PangoCairo, GLib, FFmpeg libraries (including libswresample), libpng, libjpeg and libwebp, and a checkout of https://github.com/craigsapp/midifile. FFmpeg CLI and Python 3 are needed for smoke tests. Optional camera, screen and OpenGL capture depend on the platform and available libraries.
 
-The separate Multimedia CI workflow runs on relevant pull requests, pushes to main and manual dispatch. Linux and macOS use the unified CMake build (all eight modules); Windows reuses build-and-test.ps1 with MSYS2 UCRT64 dependencies and a runner-native CMake. Each job uploads its build/test log even on failure. The checks are independent of the existing core workflows; a red job is not a successful validation. The optional graphical ChuGL bridge is not covered by these headless jobs. MIDI dependency is currently fetched from upstream HEAD; the checkout SHA is logged for diagnosis. Runner compatibility and first-run results remain to be verified.
+    cmake -S tools/multimedia -B build/multimedia -DMIDIFILE_SOURCE_DIR=/absolute/path/to/midifile
+    cmake --build build/multimedia
+    cmake --install build/multimedia --prefix /absolute/path/to/install
+
+The installed Chugins are in the chugins subdirectory. The older Makefile covers only six modules and is not the complete build path for the current smoke suites. The Windows local validation results do not establish equivalent Linux or macOS runtime coverage. Smoke tests are not exhaustive format or security tests.
+
+## Validation policy
+
+GitHub Actions are not used for the current development cycle; run validation locally. No workflow is required to execute these scripts.
 
 ### Native smoke-test summary
 
@@ -46,11 +44,11 @@ The Windows build-and-test script now invokes run_smoke_tests.py, which runs the
 
 The repository maintains two versioned lists: global-tests.json (all registered groups) and local-tests.json (current cycle's new groups and explicitly selected regression groups). A group is an independently executable collection of tests and its fixture dependencies. Every new group must be registered in the runner and test dispatcher, added to both manifests in the same PR, and retained in global-tests.json permanently. Existing tests must not be copied or removed to change selection.
 
-Use -Mode Local (or its compatibility alias -Mode Incremental) every five functional PRs, -Mode Full every twenty functional PRs instead of Local, and -Mode Full after structural/shared changes when appropriate. The cadence is a development policy, not an automatic counter. The default remains Full for compatibility and unchanged CI. The old -Since option remains accepted with Incremental and conservatively selects Full rather than inferring tests from a Git diff.
+During the expansion cycle, use -Mode Local (or its compatibility alias -Mode Incremental) after every ten added functional families, and -Mode Full when each source application’s approved functional scope is complete, resetting the family counter for the next cycle. Run additional targeted or Full validation after corrective or shared structural changes when necessary. The cadence is a development policy, not an automatic counter. The default remains Full for compatibility. The old -Since option remains accepted with Incremental and conservatively selects Full rather than inferring tests from a Git diff.
 
 Use -Mode Failed to retry the previously attempted group selection plus the current local manifest. A diagnostic -Group selection does not certify the cycle. The runner records attempts and successful clean commits in the existing local build state file. An empty local manifest reports SKIP (zero tests), not PASS. The runner never edits tracked manifests: after a successful cycle validation is reported and checked against the selected commit and expected count, the next infrastructure/functional PR clears the local list; on failure it remains intact. This keeps the working tree clean and avoids silently clearing tests on other developers' machines. Full validation can also close the current local cycle.
 
-Baseline at introduction: 3330 native checks, all three suites passed, local list empty. Verify manifest selection without building or launching ChucK:
+Historical baseline at manifest introduction: 3330 native checks; current counts depend on the checked-out revision and selected groups. Verify manifest selection without building or launching ChucK:
 
     python tools/multimedia/run_smoke_tests.py --mode Full --list
     python tools/multimedia/run_smoke_tests.py --mode Local --list
