@@ -4,6 +4,7 @@
     "color-conversions",
     "color-indexed",
     "value-curves",
-    "resource-primitives"
+    "resource-primitives",
+    "file-state"
   ]
 }
