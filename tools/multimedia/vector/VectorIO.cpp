@@ -458,6 +458,65 @@ bool updateGeometry(std::string &s,const std::vector<double> &v) {
     return true;
 }
 }
+// Canonical editable path subset: explicit absolute M,L,Q,C,Z commands.
+// Existing H/V paths remain accepted by the legacy editable importer.
+namespace {
+bool canonicalPath(const std::string &input,std::string &output) {
+    if(input.empty()||input.size()>1024*1024)return false;
+    std::istringstream in(input);in.imbue(std::locale::classic());
+    auto o=svgStream();bool active=false,drawn=false;size_t count=0;
+    char cmd;
+    while(in>>cmd){
+        if(++count>4096)return false;
+        int n=0;
+        if(cmd=='M'){n=2;active=true;}
+        else if(cmd=='Z'){if(!active||!drawn)return false;active=false;}
+        else if(active&&(cmd=='L'||cmd=='Q'||cmd=='C')){n=cmd=='L'?2:cmd=='Q'?4:6;drawn=true;}
+        else return false;
+        if(count>1)o<<' ';
+        o<<cmd;
+        for(int i=0;i<n;i++){
+            double v;if(!(in>>v)||!coord(v))return false;
+            o<<' '<<v;
+        }
+        if(cmd=='M')drawn=false;
+    }
+    if(!in.eof()||count==0)return false;
+    output=o.str();return true;
+}
+}
+CK_DLL_MFUN(vector_image_add_path) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API);
+        auto raw=GET_NEXT_STRING_SAFE(ARGS);
+        auto rgb=GET_NEXT_INT(ARGS);auto alpha=GET_NEXT_FLOAT(ARGS);
+        std::string d;
+        if(!p||!color(rgb,alpha)||!canonicalPath(raw,d))return;
+        RETURN->v_int=p->addShape("<path d=\""+d+"\""+style(rgb,alpha,false)+"/>");
+    }catch(...){}
+}
+CK_DLL_MFUN(vector_image_get_path) {
+    std::string d;
+    try {
+        auto *s=shapeAt(vectorState(SELF,API),GET_NEXT_INT(ARGS));
+        if(s&&shapeTag(*s)=="path")shapeAttribute(*s,"d",d);
+    }catch(...){}
+    RETURN->v_string=API->object->create_string(VM,d.c_str(),FALSE);
+}
+CK_DLL_MFUN(vector_image_set_path) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API);auto i=GET_NEXT_INT(ARGS);
+        auto raw=GET_NEXT_STRING_SAFE(ARGS);
+        auto *s=shapeAt(p,i);std::string d;
+        if(!s||shapeTag(*s)!="path"||!canonicalPath(raw,d))return;
+        auto next=p->shapes;
+        if(!replaceAttribute(next[i],"d",d))return;
+        RETURN->v_int=p->replaceShapes(p->canvasW,p->canvasH,std::move(next));
+    }catch(...){}
+}
+
 CK_DLL_MFUN(vector_image_shape_type) {
     std::string tag;
     try { if(auto *s=shapeAt(vectorState(SELF,API),GET_NEXT_INT(ARGS))) tag=shapeTag(*s); } catch(...) {}
@@ -848,8 +907,10 @@ struct EditableParser {
            (tag=="line"&&v[0]!=-1)) return false;
         if(tag=="path") {
             std::string d;
-            return shapeAttribute(s,"d",d)&&!d.empty()&&d.size()<=1024*1024&&
-                d.find_first_not_of("0123456789.eE+- ,\t\r\nMHVZ")==std::string::npos;
+            if(!shapeAttribute(s,"d",d)||d.empty()||d.size()>1024*1024)return false;
+            std::string normalized;
+            if(canonicalPath(d,normalized))return replaceAttribute(s,"d",normalized);
+            return d.find_first_not_of("0123456789.eE+- ,\t\r\nMHVZ")==std::string::npos;
         }
         // Lines without explicit stroke-width use the SVG default.
         if(tag=="line"&&!putAttribute(s,"stroke-width",numberAttribute(v[4]))) return false;
@@ -1279,6 +1340,15 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_arg(QUERY,"float[]","points");
     QUERY->add_arg(QUERY,"int","rgb");
     QUERY->add_arg(QUERY,"float","alpha");
+    QUERY->add_mfun(QUERY,vector_image_add_path,"int","addPath");
+    QUERY->add_arg(QUERY,"string","commands");
+    QUERY->add_arg(QUERY,"int","rgb");
+    QUERY->add_arg(QUERY,"float","alpha");
+    QUERY->add_mfun(QUERY,vector_image_get_path,"string","getPath");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,vector_image_set_path,"int","setPath");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_arg(QUERY,"string","commands");
     QUERY->add_mfun(QUERY,vector_image_count,"int","shapes");
     QUERY->add_mfun(QUERY,vector_image_remove,"int","removeShape");
     QUERY->add_arg(QUERY,"int","index");
