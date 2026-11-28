@@ -1,15 +1,6 @@
 {
   "version": 1,
   "groups": [
-    "geometry-guides",
-    "geometry-transforms",
-    "geometry-deformation",
-    "geometry-raster-warp",
-    "geometry-projection",
-    "geometry-vector-paths",
-    "geometry-path-operations",
-    "geometry-selection-paths",
-    "analysis-numeric",
-    "analysis-raster"
+    "color-conversions"
   ]
 }

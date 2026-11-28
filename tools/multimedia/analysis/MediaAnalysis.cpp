@@ -87,6 +87,79 @@ CK_DLL_SFUN(stats_compare){
         API->object->array_float_set_idx(out,0,a1);API->object->array_float_set_idx(out,1,a2);RETURN->v_int=1;
     }catch(...){}
 }
+namespace {
+double srgbDecode(double v){return v<=0.04045?v/12.92:std::pow((v+0.055)/1.055,2.4);}
+double srgbEncode(double v){return v<=0.0031308?12.92*v:1.055*std::pow(v,1.0/2.4)-0.055;}
+bool unit(double v){return std::isfinite(v)&&v>=0&&v<=1;}
+double hueWrap(double v){v=std::fmod(v,360.0);return v<0?v+360:v;}
+double labF(double v){constexpr double d=6.0/29;return v>d*d*d?std::cbrt(v):v/(3*d*d)+4.0/29;}
+double labInv(double v){constexpr double d=6.0/29;return v>d?v*v*v:3*d*d*(v-4.0/29);}
+bool colorConvert(int source,int dest,const double in[3],double out[3]){
+    for(int i=0;i<3;i++)if(!std::isfinite(in[i]))return false;
+    double r=0,g=0,b=0;
+    if(source==0||source==1){
+        if(!unit(in[0])||!unit(in[1])||!unit(in[2]))return false;
+        r=in[0];g=in[1];b=in[2];
+        if(source==1){r=srgbEncode(r);g=srgbEncode(g);b=srgbEncode(b);}
+    }else if(source==2||source==3){
+        if(!unit(in[1])||!unit(in[2]))return false;
+        double h=hueWrap(in[0])/60,s=in[1],v=in[2];
+        double c=source==2?v*s:(1-std::abs(2*v-1))*s;
+        double x=c*(1-std::abs(std::fmod(h,2.0)-1)),m=source==2?v-c:v-c/2;
+        if(h<1){r=c;g=x;}else if(h<2){r=x;g=c;}else if(h<3){g=c;b=x;}
+        else if(h<4){g=x;b=c;}else if(h<5){r=x;b=c;}else{r=c;b=x;}
+        r+=m;g+=m;b+=m;
+    }else if(source==4||source==5){
+        double L=in[0],a=in[1],bb=in[2];
+        if(L<0||L>100)return false;
+        if(source==5){if(a<0)return false;double h=hueWrap(bb)*std::acos(-1.0)/180;bb=a*std::sin(h);a*=std::cos(h);}
+        // Direct Lab/LCH conversion preserves out-of-sRGB colors.
+        if(dest==4||dest==5){
+            out[0]=L;out[1]=dest==4?a:std::hypot(a,bb);
+            out[2]=dest==4?bb:(out[1]==0?0:hueWrap(std::atan2(bb,a)*180/std::acos(-1.0)));
+            return std::isfinite(out[1])&&std::isfinite(out[2]);
+        }
+        double fy=(L+16)/116,xx=0.95047*labInv(fy+a/500),yy=labInv(fy),zz=1.08883*labInv(fy-bb/200);
+        double lr=3.2404542*xx-1.5371385*yy-0.4985314*zz;
+        double lg=-0.9692660*xx+1.8760108*yy+0.0415560*zz;
+        double lb=0.0556434*xx-0.2040259*yy+1.0572252*zz;
+        if(!std::isfinite(lr)||!std::isfinite(lg)||!std::isfinite(lb))return false;
+        r=srgbEncode(std::clamp(lr,0.0,1.0));g=srgbEncode(std::clamp(lg,0.0,1.0));b=srgbEncode(std::clamp(lb,0.0,1.0));
+    }else return false;
+    r=std::clamp(r,0.0,1.0);g=std::clamp(g,0.0,1.0);b=std::clamp(b,0.0,1.0);
+    if(dest==0){out[0]=r;out[1]=g;out[2]=b;}
+    else if(dest==1){out[0]=srgbDecode(r);out[1]=srgbDecode(g);out[2]=srgbDecode(b);}
+    else if(dest==2||dest==3){
+        double maxv=std::max({r,g,b}),minv=std::min({r,g,b}),d=maxv-minv,h=0,l=(maxv+minv)/2;
+        if(d>0){if(maxv==r)h=(g-b)/d;else if(maxv==g)h=(b-r)/d+2;else h=(r-g)/d+4;}
+        out[0]=hueWrap(h*60);out[1]=d==0?0:(dest==2?d/maxv:d/(1-std::abs(2*l-1)));out[2]=dest==2?maxv:l;
+        out[1]=std::clamp(out[1],0.0,1.0);
+    }else if(dest==4||dest==5){
+        double lr=srgbDecode(r),lg=srgbDecode(g),lb=srgbDecode(b);
+        double fx=labF((0.4124564*lr+0.3575761*lg+0.1804375*lb)/0.95047);
+        double fy=labF(0.2126729*lr+0.7151522*lg+0.0721750*lb);
+        double fz=labF((0.0193339*lr+0.1191920*lg+0.9503041*lb)/1.08883);
+        double a=500*(fx-fy),bb=200*(fy-fz);
+        out[0]=std::clamp(116*fy-16,0.0,100.0);out[1]=dest==4?a:std::hypot(a,bb);
+        out[2]=dest==4?bb:(out[1]==0?0:hueWrap(std::atan2(bb,a)*180/std::acos(-1.0)));
+    }else if(dest==6){out[0]=out[1]=out[2]=srgbEncode(std::clamp(0.2126*srgbDecode(r)+0.7152*srgbDecode(g)+0.0722*srgbDecode(b),0.0,1.0));}
+    else return false;
+    return std::isfinite(out[0])&&std::isfinite(out[1])&&std::isfinite(out[2]);
+}
+}
+CK_DLL_SFUN(color_convert){
+    RETURN->v_int=0;
+    auto source=GET_NEXT_INT(ARGS),dest=GET_NEXT_INT(ARGS);
+    auto input=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+    auto output=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+    if(!input||!output||source<0||source>5||dest<0||dest>6||
+       API->object->array_float_size(input)!=3||API->object->array_float_size(output)!=3)return;
+    double in[3],out[3];for(int i=0;i<3;i++)in[i]=API->object->array_float_get_idx(input,i);
+    if(!colorConvert(static_cast<int>(source),static_cast<int>(dest),in,out))return;
+    for(int i=0;i<3;i++)API->object->array_float_set_idx(output,i,out[i]);
+    RETURN->v_int=1;
+}
+
 CK_DLL_QUERY(MediaAnalysis){
     QUERY->setname(QUERY,"MediaAnalysis");
     QUERY->begin_class(QUERY,"MediaAnalysis","Object");
@@ -110,5 +183,12 @@ CK_DLL_QUERY(MediaAnalysis){
     QUERY->add_arg(QUERY,"float[]","first");
     QUERY->add_arg(QUERY,"float[]","other");
     QUERY->add_arg(QUERY,"float[]","result");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaColor","Object");
+    QUERY->add_sfun(QUERY,color_convert,"int","convertColor");
+    QUERY->add_arg(QUERY,"int","sourceSpace");
+    QUERY->add_arg(QUERY,"int","destinationSpace");
+    QUERY->add_arg(QUERY,"float[]","inputColor");
+    QUERY->add_arg(QUERY,"float[]","outputColor");
     return QUERY->end_class(QUERY);
 }
