@@ -1,6 +1,4 @@
 {
   "version": 1,
-  "groups": [
-    "legacy"
-  ]
+  "groups": ["geometry-guides"]
 }

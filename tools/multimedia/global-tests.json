@@ -90,6 +90,7 @@
     "transport-scene-nodes",
     "transport-model-animation",
     "transport-model-fragments",
-    "transport-final-consolidation"
+    "transport-final-consolidation",
+    "geometry-guides"
   ]
 }
