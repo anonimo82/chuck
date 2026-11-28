@@ -2,6 +2,7 @@
   "version": 1,
   "groups": [
     "geometry-guides",
-    "geometry-transforms"
+    "geometry-transforms",
+    "geometry-deformation"
   ]
 }

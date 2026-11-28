@@ -4,6 +4,7 @@
 #include <limits>
 #include <new>
 #include <vector>
+#include <utility>
 
 namespace {
 struct Guide { t_CKINT axis; double position; bool relative; };
@@ -178,6 +179,143 @@ CK_DLL_MFUN(transform_invert) {
     *t=adj;RETURN->v_int=1;
 }
 
+namespace {
+struct Delta { double x=0,y=0; };
+struct Deformation {
+    size_t width=0,height=0;
+    double ox=0,oy=0,sx=1,sy=1;
+    std::vector<Delta> points;
+};
+t_CKUINT fieldOffset=0;
+Deformation *field(Chuck_Object *self, CK_DL_API API) {
+    return reinterpret_cast<Deformation *>(static_cast<uintptr_t>(OBJ_MEMBER_UINT(self,fieldOffset)));
+}
+bool pointIndex(const Deformation *f,t_CKINT x,t_CKINT y,size_t &i) {
+    if(!f||x<0||y<0||static_cast<size_t>(x)>=f->width||static_cast<size_t>(y)>=f->height)return false;
+    i=static_cast<size_t>(y)*f->width+static_cast<size_t>(x);return true;
+}
+Delta mixDelta(Delta a,Delta b,double u) {
+    return {a.x*(1-u)+b.x*u,a.y*(1-u)+b.y*u};
+}
+bool sampleField(const Deformation *f,double x,double y,Delta &d) {
+    if(!f||f->points.empty()||!geo_finite(x)||!geo_finite(y))return false;
+    double u=(x-f->ox)/f->sx,v=(y-f->oy)/f->sy;
+    if(!geo_finite(u)||!geo_finite(v))return false;
+    if(u<0||v<0||u>f->width-1||v>f->height-1){d={};return true;}
+    size_t a=static_cast<size_t>(std::floor(u)),b=static_cast<size_t>(std::floor(v));
+    size_t c=a+1<f->width?a+1:a,e=b+1<f->height?b+1:b;
+    d=mixDelta(mixDelta(f->points[b*f->width+a],f->points[b*f->width+c],u-a),
+               mixDelta(f->points[e*f->width+a],f->points[e*f->width+c],u-a),v-b);
+    return geo_finite(d.x)&&geo_finite(d.y);
+}
+// Operations act on the displacement grid, not directly on media.
+bool brush(Deformation *f,int mode,double cx,double cy,double radius,double a,double b) {
+    if(!f||f->points.empty()||!geo_finite(cx)||!geo_finite(cy)||!geo_finite(radius)||radius<=0||
+       !geo_finite(a)||!geo_finite(b)||(mode>=3&&(a<0||a>1)))return false;
+    try {
+        auto next=f->points;
+        for(size_t y=0;y<f->height;y++)for(size_t x=0;x<f->width;x++){
+            size_t i=y*f->width+x;
+            double dx=f->ox+x*f->sx-cx,dy=f->oy+y*f->sy-cy;
+            double distance=std::hypot(dx,dy);
+            if(distance>=radius)continue;
+            double w=1-distance/radius;
+            Delta d=next[i];
+            if(mode==0){d.x+=a*w;d.y+=b*w;}
+            else if(mode==1){d.x+=dx*a*w;d.y+=dy*a*w;}
+            else if(mode==2){
+                double c=std::cos(a*w),s=std::sin(a*w);
+                d.x+=(c-1)*dx-s*dy;d.y+=s*dx+(c-1)*dy;
+            }else if(mode==3){
+                // Smooth using the original grid, including the center.
+                Delta mean{};int n=0;
+                for(int oy=-1;oy<=1;oy++)for(int ox=-1;ox<=1;ox++){
+                    size_t j;
+                    if(pointIndex(f,static_cast<t_CKINT>(x)+ox,static_cast<t_CKINT>(y)+oy,j)) {
+                        mean.x+=f->points[j].x/9;mean.y+=f->points[j].y/9;n++;
+                    }
+                }
+                mean.x*=9.0/n;mean.y*=9.0/n;
+                d=mixDelta(d,mean,a*w);
+            }else{d.x*=1-a*w;d.y*=1-a*w;}
+            if(!geo_finite(d.x)||!geo_finite(d.y))return false;
+            next[i]=d;
+        }
+        f->points.swap(next);return true;
+    }catch(...){return false;}
+}
+}
+CK_DLL_CTOR(field_ctor) {
+    OBJ_MEMBER_UINT(SELF,fieldOffset)=reinterpret_cast<uintptr_t>(new(std::nothrow) Deformation);
+}
+CK_DLL_DTOR(field_dtor) {
+    delete field(SELF,API);OBJ_MEMBER_UINT(SELF,fieldOffset)=0;
+}
+CK_DLL_MFUN(field_configure) {
+    RETURN->v_int=0;auto *f=field(SELF,API);
+    auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+    auto ox=GET_NEXT_FLOAT(ARGS),oy=GET_NEXT_FLOAT(ARGS),sx=GET_NEXT_FLOAT(ARGS),sy=GET_NEXT_FLOAT(ARGS);
+    if(!f||w<2||h<2||w>1024||h>1024||!geo_finite(ox)||!geo_finite(oy)||
+       !geo_finite(sx)||!geo_finite(sy)||sx<=0||sy<=0||
+       !geo_finite(ox+(w-1)*sx)||!geo_finite(oy+(h-1)*sy))return;
+    try {
+        Deformation next;
+        next.width=w;next.height=h;next.ox=ox;next.oy=oy;next.sx=sx;next.sy=sy;
+        next.points.resize(static_cast<size_t>(w)*static_cast<size_t>(h));
+        *f=std::move(next);RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_MFUN(field_width) {auto *f=field(SELF,API);RETURN->v_int=f?f->width:0;}
+CK_DLL_MFUN(field_height) {auto *f=field(SELF,API);RETURN->v_int=f?f->height:0;}
+CK_DLL_MFUN(field_set) {
+    RETURN->v_int=0;auto *f=field(SELF,API);
+    auto x=GET_NEXT_INT(ARGS),y=GET_NEXT_INT(ARGS);
+    auto dx=GET_NEXT_FLOAT(ARGS),dy=GET_NEXT_FLOAT(ARGS);size_t i;
+    if(pointIndex(f,x,y,i)&&geo_finite(dx)&&geo_finite(dy)){f->points[i]={dx,dy};RETURN->v_int=1;}
+}
+CK_DLL_MFUN(field_point_x) {
+    RETURN->v_float=invalid();auto *f=field(SELF,API);
+    auto x=GET_NEXT_INT(ARGS),y=GET_NEXT_INT(ARGS);size_t i;
+    if(pointIndex(f,x,y,i))RETURN->v_float=f->points[i].x;
+}
+CK_DLL_MFUN(field_point_y) {
+    RETURN->v_float=invalid();auto *f=field(SELF,API);
+    auto x=GET_NEXT_INT(ARGS),y=GET_NEXT_INT(ARGS);size_t i;
+    if(pointIndex(f,x,y,i))RETURN->v_float=f->points[i].y;
+}
+CK_DLL_MFUN(field_sample_x) {
+    RETURN->v_float=invalid();auto x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS);Delta d;
+    if(sampleField(field(SELF,API),x,y,d))RETURN->v_float=d.x;
+}
+CK_DLL_MFUN(field_sample_y) {
+    RETURN->v_float=invalid();auto x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS);Delta d;
+    if(sampleField(field(SELF,API),x,y,d))RETURN->v_float=d.y;
+}
+CK_DLL_MFUN(field_clear) {
+    if(auto *f=field(SELF,API))for(auto &p:f->points)p={};
+}
+CK_DLL_MFUN(field_move) {
+    auto x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS),r=GET_NEXT_FLOAT(ARGS);
+    auto dx=GET_NEXT_FLOAT(ARGS),dy=GET_NEXT_FLOAT(ARGS);
+    RETURN->v_int=brush(field(SELF,API),0,x,y,r,dx,dy);
+}
+CK_DLL_MFUN(field_radial) {
+    auto x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS),r=GET_NEXT_FLOAT(ARGS),s=GET_NEXT_FLOAT(ARGS);
+    RETURN->v_int=brush(field(SELF,API),1,x,y,r,s,0);
+}
+CK_DLL_MFUN(field_twist) {
+    auto x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS),r=GET_NEXT_FLOAT(ARGS),s=GET_NEXT_FLOAT(ARGS);
+    RETURN->v_int=brush(field(SELF,API),2,x,y,r,s,0);
+}
+CK_DLL_MFUN(field_smooth) {
+    auto x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS),r=GET_NEXT_FLOAT(ARGS),s=GET_NEXT_FLOAT(ARGS);
+    RETURN->v_int=brush(field(SELF,API),3,x,y,r,s,0);
+}
+CK_DLL_MFUN(field_erase) {
+    auto x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS),r=GET_NEXT_FLOAT(ARGS),s=GET_NEXT_FLOAT(ARGS);
+    RETURN->v_int=brush(field(SELF,API),4,x,y,r,s,0);
+}
+
 CK_DLL_QUERY(MediaGeometry) {
     QUERY->setname(QUERY,"MediaGeometry");
     QUERY->begin_class(QUERY,"MediaGeometry","Object");
@@ -235,5 +373,63 @@ CK_DLL_QUERY(MediaGeometry) {
     QUERY->add_arg(QUERY,"float","x");
     QUERY->add_arg(QUERY,"float","y");
     QUERY->add_mfun(QUERY,transform_invert,"int","invert");
+    if(!QUERY->end_class(QUERY)) return FALSE;
+    QUERY->begin_class(QUERY,"MediaDeformation2D","Object");
+    fieldOffset=QUERY->add_mvar(QUERY,"int","@deformationNative",FALSE);
+    if(fieldOffset==CK_INVALID_OFFSET) return FALSE;
+    QUERY->add_ctor(QUERY,field_ctor);QUERY->add_dtor(QUERY,field_dtor);
+    QUERY->add_mfun(QUERY,field_configure,"int","configure");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"float","originX");
+    QUERY->add_arg(QUERY,"float","originY");
+    QUERY->add_arg(QUERY,"float","spacingX");
+    QUERY->add_arg(QUERY,"float","spacingY");
+    QUERY->add_mfun(QUERY,field_width,"int","width");
+    QUERY->add_mfun(QUERY,field_height,"int","height");
+    QUERY->add_mfun(QUERY,field_set,"int","setPoint");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"float","dx");
+    QUERY->add_arg(QUERY,"float","dy");
+    QUERY->add_mfun(QUERY,field_point_x,"float","pointX");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_mfun(QUERY,field_point_y,"float","pointY");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_mfun(QUERY,field_sample_x,"float","sampleX");
+    QUERY->add_arg(QUERY,"float","x");
+    QUERY->add_arg(QUERY,"float","y");
+    QUERY->add_mfun(QUERY,field_sample_y,"float","sampleY");
+    QUERY->add_arg(QUERY,"float","x");
+    QUERY->add_arg(QUERY,"float","y");
+    QUERY->add_mfun(QUERY,field_clear,"void","clear");
+    QUERY->add_mfun(QUERY,field_move,"int","move");
+    QUERY->add_arg(QUERY,"float","x");
+    QUERY->add_arg(QUERY,"float","y");
+    QUERY->add_arg(QUERY,"float","radius");
+    QUERY->add_arg(QUERY,"float","dx");
+    QUERY->add_arg(QUERY,"float","dy");
+    QUERY->add_mfun(QUERY,field_radial,"int","radial");
+    QUERY->add_arg(QUERY,"float","x");
+    QUERY->add_arg(QUERY,"float","y");
+    QUERY->add_arg(QUERY,"float","radius");
+    QUERY->add_arg(QUERY,"float","strength");
+    QUERY->add_mfun(QUERY,field_twist,"int","twist");
+    QUERY->add_arg(QUERY,"float","x");
+    QUERY->add_arg(QUERY,"float","y");
+    QUERY->add_arg(QUERY,"float","radius");
+    QUERY->add_arg(QUERY,"float","radians");
+    QUERY->add_mfun(QUERY,field_smooth,"int","smooth");
+    QUERY->add_arg(QUERY,"float","x");
+    QUERY->add_arg(QUERY,"float","y");
+    QUERY->add_arg(QUERY,"float","radius");
+    QUERY->add_arg(QUERY,"float","strength");
+    QUERY->add_mfun(QUERY,field_erase,"int","erase");
+    QUERY->add_arg(QUERY,"float","x");
+    QUERY->add_arg(QUERY,"float","y");
+    QUERY->add_arg(QUERY,"float","radius");
+    QUERY->add_arg(QUERY,"float","strength");
     return QUERY->end_class(QUERY);
 }
