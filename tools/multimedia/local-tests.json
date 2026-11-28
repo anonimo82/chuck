@@ -9,6 +9,7 @@
     "geometry-vector-paths",
     "geometry-path-operations",
     "geometry-selection-paths",
-    "analysis-numeric"
+    "analysis-numeric",
+    "analysis-raster"
   ]
 }
