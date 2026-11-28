@@ -4,6 +4,9 @@
 #include <cmath>
 #include <limits>
 #include <vector>
+#include <filesystem>
+#include <chrono>
+#include <string>
 namespace {
 using Arr=Chuck_DL_Api::ArrayFloat;
 using IntArr=Chuck_DL_Api::ArrayInt;
@@ -378,6 +381,64 @@ CK_DLL_SFUN(gradient_sample){
         RETURN->v_int=1;
     }catch(...){}
 }
+namespace {
+namespace fs=std::filesystem;
+// Explicit file-level backup/restore, not session serialization.
+// Refuse symlinks and non-regular files; stage on the destination filesystem.
+bool copyMediaFile(const std::string &source,const std::string &destination,t_CKINT overwrite){
+    if(source.empty()||destination.empty()||(overwrite!=0&&overwrite!=1))return false;
+    fs::path src=fs::u8path(source),dst=fs::u8path(destination);
+    std::error_code ec;
+    if(!fs::is_regular_file(fs::symlink_status(src,ec))||ec)return false;
+    auto dstStatus=fs::symlink_status(dst,ec);
+    if(ec&&ec!=std::errc::no_such_file_or_directory)return false;
+    ec.clear();
+    if(fs::exists(dstStatus)){
+        if(!overwrite||!fs::is_regular_file(dstStatus)||fs::equivalent(src,dst,ec)||ec)return false;
+    }else if(dstStatus.type()!=fs::file_type::not_found)return false;
+    auto parent=dst.parent_path();if(parent.empty())parent=".";
+    // A private staging directory prevents accidental truncation of an existing file.
+    fs::path staging;
+    for(unsigned attempt=0;attempt<128;attempt++){
+        auto id=std::chrono::steady_clock::now().time_since_epoch().count();
+        staging=parent/(".media-copy-"+std::to_string(id)+"-"+std::to_string(attempt));
+        ec.clear();
+        if(fs::create_directory(staging,ec))break;
+        if(ec&&ec!=std::errc::file_exists)return false;
+        staging.clear();
+    }
+    if(staging.empty())return false;
+    struct Cleanup{fs::path p;~Cleanup(){std::error_code e;fs::remove_all(p,e);}} cleanup{staging};
+    auto staged=staging/"payload";
+    if(!fs::copy_file(src,staged,fs::copy_options::none,ec)||ec)return false;
+    // For no-overwrite use atomic exclusive hard-link creation, not a check-then-rename.
+    if(!overwrite){fs::create_hard_link(staged,dst,ec);return !ec;}
+    // C++17 rename replaces a regular destination where supported; failure preserves it.
+    auto current=fs::symlink_status(dst,ec);
+    if(ec&&ec!=std::errc::no_such_file_or_directory)return false;
+    if(fs::exists(current)&&!fs::is_regular_file(current))return false;
+    ec.clear();fs::rename(staged,dst,ec);return !ec;
+}
+}
+CK_DLL_SFUN(media_file_copy){
+    RETURN->v_int=0;
+    try{
+        auto source=GET_NEXT_STRING_SAFE(ARGS);
+        auto destination=GET_NEXT_STRING_SAFE(ARGS);
+        auto overwrite=GET_NEXT_INT(ARGS);
+        RETURN->v_int=copyMediaFile(source,destination,overwrite)?1:0;
+    }catch(...){}
+}
+CK_DLL_SFUN(media_file_exists){
+    RETURN->v_int=0;
+    try{
+        auto path=GET_NEXT_STRING_SAFE(ARGS);
+        if(path.empty())return;
+        std::error_code ec;
+        RETURN->v_int=fs::is_regular_file(fs::symlink_status(fs::u8path(path),ec))&&!ec;
+    }catch(...){}
+}
+
 CK_DLL_QUERY(MediaAnalysis){
     QUERY->setname(QUERY,"MediaAnalysis");
     QUERY->begin_class(QUERY,"MediaAnalysis","Object");
@@ -453,5 +514,17 @@ CK_DLL_QUERY(MediaAnalysis){
     QUERY->add_arg(QUERY,"float","samplePosition");
     QUERY->add_arg(QUERY,"int","interpolationMode");
     QUERY->add_arg(QUERY,"float[]","outputColor");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaFileState","Object");
+    QUERY->add_sfun(QUERY,media_file_copy,"int","backup");
+    QUERY->add_arg(QUERY,"string","sourcePath");
+    QUERY->add_arg(QUERY,"string","backupPath");
+    QUERY->add_arg(QUERY,"int","overwrite");
+    QUERY->add_sfun(QUERY,media_file_copy,"int","restore");
+    QUERY->add_arg(QUERY,"string","backupPath");
+    QUERY->add_arg(QUERY,"string","destinationPath");
+    QUERY->add_arg(QUERY,"int","overwrite");
+    QUERY->add_sfun(QUERY,media_file_exists,"int","regularFile");
+    QUERY->add_arg(QUERY,"string","filePath");
     return QUERY->end_class(QUERY);
 }
