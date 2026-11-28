@@ -93,6 +93,7 @@
     "transport-final-consolidation",
     "geometry-guides",
     "geometry-transforms",
-    "geometry-deformation"
+    "geometry-deformation",
+    "geometry-raster-warp"
   ]
 }
