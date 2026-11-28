@@ -274,6 +274,80 @@ CK_DLL_SFUN(palette_reorder){
     }catch(...){}
 }
 
+namespace {
+bool curveRead(CK_DL_API API,Arr knots,Arr ordinates,t_CKINT mode,std::vector<double>&xs,std::vector<double>&ys){
+    if(mode<0||mode>2||!knots||!ordinates)return false;
+    auto n=API->object->array_float_size(knots);
+    if(n<2||n>65536||API->object->array_float_size(ordinates)!=n)return false;
+    if(!readValues(API,knots,xs)||!readValues(API,ordinates,ys))return false;
+    for(size_t i=1;i<xs.size();i++)
+        if(xs[i]<=xs[i-1]||!std::isfinite(xs[i]-xs[i-1]))return false;
+    return true;
+}
+double curveEvaluate(const std::vector<double>&xs,const std::vector<double>&ys,double v,t_CKINT mode){
+    if(!std::isfinite(v))return nanValue();
+    if(v<=xs.front())return ys.front();
+    if(v>=xs.back())return ys.back();
+    size_t j=static_cast<size_t>(std::upper_bound(xs.begin(),xs.end(),v)-xs.begin());
+    size_t i=j-1;
+    if(mode==0)return ys[i];
+    double t=(v-xs[i])/(xs[j]-xs[i]);
+    if(mode==2)t=t*t*(3-2*t);
+    return ys[i]*(1-t)+ys[j]*t;
+}
+}
+CK_DLL_SFUN(curve_evaluate){
+    RETURN->v_float=nanValue();
+    try{
+        auto knots=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto ordinates=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto v=GET_NEXT_FLOAT(ARGS);
+        auto mode=GET_NEXT_INT(ARGS);
+        std::vector<double> xs,ys;
+        if(!curveRead(API,knots,ordinates,mode,xs,ys))return;
+        RETURN->v_float=curveEvaluate(xs,ys,v,mode);
+    }catch(...){}
+}
+CK_DLL_SFUN(curve_apply){
+    RETURN->v_int=0;
+    try{
+        auto knots=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto ordinates=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto values=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto mode=GET_NEXT_INT(ARGS);
+        auto output=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        std::vector<double> xs,ys,v;
+        if(!output||!curveRead(API,knots,ordinates,mode,xs,ys)||!readValues(API,values,v)||
+           API->object->array_float_size(output)!=static_cast<t_CKINT>(v.size()))return;
+        for(auto &sampleValue:v){sampleValue=curveEvaluate(xs,ys,sampleValue,mode);if(!std::isfinite(sampleValue))return;}
+        for(size_t i=0;i<v.size();i++)API->object->array_float_set_idx(output,i,v[i]);
+        RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(curve_lut){
+    RETURN->v_int=0;
+    try{
+        auto knots=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto ordinates=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto lo=GET_NEXT_FLOAT(ARGS),hi=GET_NEXT_FLOAT(ARGS);
+        auto mode=GET_NEXT_INT(ARGS);
+        auto output=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        std::vector<double> xs,ys;
+        if(!output||!std::isfinite(lo)||!std::isfinite(hi)||lo>=hi||!std::isfinite(hi-lo)||
+           !curveRead(API,knots,ordinates,mode,xs,ys))return;
+        auto n=API->object->array_float_size(output);
+        if(n<2||n>4194304)return;
+        std::vector<double> v(n);
+        for(t_CKINT i=0;i<n;i++){
+            double t=static_cast<double>(i)/(n-1);
+            v[i]=curveEvaluate(xs,ys,i==n-1?hi:lo+(hi-lo)*t,mode);
+            if(!std::isfinite(v[i]))return;
+        }
+        for(t_CKINT i=0;i<n;i++)API->object->array_float_set_idx(output,i,v[i]);
+        RETURN->v_int=1;
+    }catch(...){}
+}
+
 CK_DLL_QUERY(MediaAnalysis){
     QUERY->setname(QUERY,"MediaAnalysis");
     QUERY->begin_class(QUERY,"MediaAnalysis","Object");
@@ -321,5 +395,25 @@ CK_DLL_QUERY(MediaAnalysis){
     QUERY->add_arg(QUERY,"int[]","imageIndices");
     QUERY->add_arg(QUERY,"int[]","paletteColors");
     QUERY->add_arg(QUERY,"int[]","newOrder");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaCurve","Object");
+    QUERY->add_sfun(QUERY,curve_evaluate,"float","evaluate");
+    QUERY->add_arg(QUERY,"float[]","inputKnots");
+    QUERY->add_arg(QUERY,"float[]","outputKnots");
+    QUERY->add_arg(QUERY,"float","inputValue");
+    QUERY->add_arg(QUERY,"int","interpolationMode");
+    QUERY->add_sfun(QUERY,curve_apply,"int","apply");
+    QUERY->add_arg(QUERY,"float[]","inputKnots");
+    QUERY->add_arg(QUERY,"float[]","outputKnots");
+    QUERY->add_arg(QUERY,"float[]","inputValues");
+    QUERY->add_arg(QUERY,"int","interpolationMode");
+    QUERY->add_arg(QUERY,"float[]","outputValues");
+    QUERY->add_sfun(QUERY,curve_lut,"int","buildLUT");
+    QUERY->add_arg(QUERY,"float[]","inputKnots");
+    QUERY->add_arg(QUERY,"float[]","outputKnots");
+    QUERY->add_arg(QUERY,"float","rangeLow");
+    QUERY->add_arg(QUERY,"float","rangeHigh");
+    QUERY->add_arg(QUERY,"int","interpolationMode");
+    QUERY->add_arg(QUERY,"float[]","outputValues");
     return QUERY->end_class(QUERY);
 }

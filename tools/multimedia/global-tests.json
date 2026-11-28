@@ -102,6 +102,7 @@
     "analysis-numeric",
     "analysis-raster",
     "color-conversions",
-    "color-indexed"
+    "color-indexed",
+    "value-curves"
   ]
 }
