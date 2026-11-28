@@ -108,7 +108,7 @@ CK_DLL_QUERY(MediaAnalysis){
     QUERY->add_arg(QUERY,"int[]","bins");
     QUERY->add_sfun(QUERY,stats_compare,"int","compare");
     QUERY->add_arg(QUERY,"float[]","first");
-    QUERY->add_arg(QUERY,"float[]","second");
+    QUERY->add_arg(QUERY,"float[]","other");
     QUERY->add_arg(QUERY,"float[]","result");
     return QUERY->end_class(QUERY);
 }

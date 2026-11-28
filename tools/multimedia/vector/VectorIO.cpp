@@ -1460,7 +1460,7 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_mfun(QUERY,vector_image_join_paths,"int","joinPaths");
     QUERY->add_arg(QUERY,"int","first");
-    QUERY->add_arg(QUERY,"int","second");
+    QUERY->add_arg(QUERY,"int","other");
     QUERY->add_mfun(QUERY,vector_image_count,"int","shapes");
     QUERY->add_mfun(QUERY,vector_image_remove,"int","removeShape");
     QUERY->add_arg(QUERY,"int","index");
