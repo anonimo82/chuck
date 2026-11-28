@@ -28,3 +28,11 @@ chuck.vcxproj.user
 *.gcno
 *.info
 /report/
+
+# Local multimedia build and validation artifacts
+/build/multimedia-windows/
+/build/multimedia-smoke-state.json
+/tools/multimedia/build-and-test.log
+/tools/multimedia/setup-windows.log
+/tools/multimedia/**/*.chug
+/tools/multimedia/**/__pycache__/
