@@ -517,6 +517,77 @@ CK_DLL_MFUN(vector_image_set_path) {
     }catch(...){}
 }
 
+namespace {
+struct PathSegment { char cmd; double startX,startY; std::array<double,6> v{}; };
+struct PathSub { double x=0,y=0; bool closed=false; std::vector<PathSegment> segments; };
+bool reversePath(const std::string &raw,std::string &out) {
+    std::string canonical;
+    if(!canonicalPath(raw,canonical))return false;
+    std::istringstream in(canonical);in.imbue(std::locale::classic());
+    std::vector<PathSub> subs;double x=0,y=0;char cmd;
+    while(in>>cmd){
+        if(cmd=='M'){
+            in>>x>>y;subs.push_back(PathSub{});subs.back().x=x;subs.back().y=y;
+        }else if(cmd=='Z'){subs.back().closed=true;}
+        else{
+            PathSegment s{cmd,x,y,{}};
+            int n=cmd=='L'?2:cmd=='Q'?4:6;
+            for(int i=0;i<n;i++)in>>s.v[i];
+            x=s.v[n-2];y=s.v[n-1];subs.back().segments.push_back(s);
+        }
+    }
+    auto o=svgStream();
+    for(const auto &sub:subs){
+        if(o.tellp()>0)o<<' ';
+        double endX=sub.x,endY=sub.y;
+        if(!sub.segments.empty()){
+            const auto &s=sub.segments.back();int n=s.cmd=='L'?2:s.cmd=='Q'?4:6;
+            endX=s.v[n-2];endY=s.v[n-1];
+        }
+        o<<"M "<<endX<<' '<<endY;
+        for(auto it=sub.segments.rbegin();it!=sub.segments.rend();++it){
+            const auto &s=*it;o<<' '<<s.cmd;
+            if(s.cmd=='Q')o<<' '<<s.v[0]<<' '<<s.v[1];
+            if(s.cmd=='C')o<<' '<<s.v[2]<<' '<<s.v[3]<<' '<<s.v[0]<<' '<<s.v[1];
+            o<<' '<<s.startX<<' '<<s.startY;
+        }
+        if(sub.closed)o<<" Z";
+    }
+    return canonicalPath(o.str(),out);
+}
+}
+CK_DLL_MFUN(vector_image_reverse_path) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API);auto i=GET_NEXT_INT(ARGS);
+        auto *s=shapeAt(p,i);std::string raw,d;
+        if(!s||shapeTag(*s)!="path"||!shapeAttribute(*s,"d",raw)||!reversePath(raw,d))return;
+        auto next=p->shapes;
+        if(!replaceAttribute(next[i],"d",d))return;
+        RETURN->v_int=p->replaceShapes(p->canvasW,p->canvasH,std::move(next));
+    }catch(...){}
+}
+// Append a second canonical path as distinct subpaths in the first shape.
+// Both shapes must have identical non-geometry attributes (including transform).
+// This is a compound path operation, not a boolean union.
+CK_DLL_MFUN(vector_image_join_paths) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API);auto a=GET_NEXT_INT(ARGS),b=GET_NEXT_INT(ARGS);
+        auto *s=shapeAt(p,a);auto *t=shapeAt(p,b);
+        if(!s||!t||a==b||shapeTag(*s)!="path"||shapeTag(*t)!="path")return;
+        std::string da,db,ca,cb,d,sa=*s,sb=*t;
+        if(!shapeAttribute(*s,"d",da)||!shapeAttribute(*t,"d",db)||
+           !canonicalPath(da,ca)||!canonicalPath(db,cb)||
+           !replaceAttribute(sa,"d","")||!replaceAttribute(sb,"d","")||sa!=sb||
+           !canonicalPath(ca+" "+cb,d))return;
+        auto next=p->shapes;
+        if(!replaceAttribute(next[a],"d",d))return;
+        next.erase(next.begin()+b);
+        RETURN->v_int=p->replaceShapes(p->canvasW,p->canvasH,std::move(next));
+    }catch(...){}
+}
+
 CK_DLL_MFUN(vector_image_shape_type) {
     std::string tag;
     try { if(auto *s=shapeAt(vectorState(SELF,API),GET_NEXT_INT(ARGS))) tag=shapeTag(*s); } catch(...) {}
@@ -1349,6 +1420,11 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_mfun(QUERY,vector_image_set_path,"int","setPath");
     QUERY->add_arg(QUERY,"int","index");
     QUERY->add_arg(QUERY,"string","commands");
+    QUERY->add_mfun(QUERY,vector_image_reverse_path,"int","reversePath");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_mfun(QUERY,vector_image_join_paths,"int","joinPaths");
+    QUERY->add_arg(QUERY,"int","first");
+    QUERY->add_arg(QUERY,"int","second");
     QUERY->add_mfun(QUERY,vector_image_count,"int","shapes");
     QUERY->add_mfun(QUERY,vector_image_remove,"int","removeShape");
     QUERY->add_arg(QUERY,"int","index");
