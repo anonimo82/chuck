@@ -119,3 +119,5 @@ target_link_libraries(MediaTransport PRIVATE PkgConfig::PNG PkgConfig::JPEG PkgC
 if(WIN32)
   target_link_libraries(MediaTransport PRIVATE ws2_32)
 endif()
+
+chugin(MediaGeometry geometry/MediaGeometry.cpp)
