@@ -48,6 +48,8 @@ check(!VectorIO.render("test.svg", "test.png", 4, 4));
 """, 4, p)
     assert (p / "test.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     (p / "triangle.obj").write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")
+    (p / "unsupported.blend").write_bytes((p / "triangle.obj").read_bytes())
+    (p / "unsupported.BLEND").write_bytes((p / "triangle.obj").read_bytes())
     run("model", """
 check(ModelIO.valid("triangle.obj"));
 check(ModelIO.meshes("triangle.obj") == 1);
@@ -55,7 +57,17 @@ check(ModelIO.vertices("triangle.obj") == 3);
 check(ModelIO.convert("triangle.obj", "converted/triangle.stl"));
 check(ModelIO.valid("converted/triangle.stl"));
 check(!ModelIO.convert("triangle.obj", "converted/triangle.stl"));
-""", 6, p)
+check(!ModelIO.valid("unsupported.blend"));
+check(!ModelIO.valid("unsupported.BLEND"));
+check(ModelIO.meshes("unsupported.blend") == -1);
+check(ModelIO.vertices("unsupported.blend") == -1);
+check(!ModelIO.convert("unsupported.blend", "rejected/triangle.stl"));
+Model3D model;
+check(model.load("triangle.obj"));
+check(!model.load("unsupported.blend"));
+check(model.loaded() && model.meshes() == 1 && model.vertices() == 3);
+""", 14, p)
+    assert not (p / "rejected").exists()
     run("midi", """
 check(MidiFileIO.writeNote("note.mid", 60, 100, 480));
 check(MidiFileIO.tracks("note.mid") == 1);
