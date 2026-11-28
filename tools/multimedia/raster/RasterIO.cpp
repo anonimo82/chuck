@@ -502,6 +502,30 @@ bool insideRect(RasterImageState *p,t_CKINT x,t_CKINT y,t_CKINT w,t_CKINT h) {
         static_cast<uint64_t>(h)<=p->input.height-y;
 }
 }
+// Extract one channel or Rec.709 luma from a rectangular region.
+CK_DLL_MFUN(raster_image_analysis_samples) {
+    RETURN->v_int=0;
+    auto *p=imageState(SELF,API);
+    auto x=GET_NEXT_INT(ARGS),y=GET_NEXT_INT(ARGS),w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+    auto channel=GET_NEXT_INT(ARGS),controlled=GET_NEXT_INT(ARGS);
+    auto out=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+    if(!insideRect(p,x,y,w,h)||!out||channel<0||channel>4||
+       (controlled!=0&&controlled!=1))return;
+    size_t count=static_cast<size_t>(w)*h;
+    if(count>4194304||API->object->array_float_size(out)!=static_cast<t_CKINT>(count))return;
+    for(size_t j=0;j<static_cast<size_t>(h);j++)for(size_t i=0;i<static_cast<size_t>(w);i++){
+        size_t pos=((static_cast<size_t>(y)+j)*p->input.width+static_cast<size_t>(x)+i)*4;
+        auto component=[&](int c)->double{
+            double v=p->input.rgba[pos+c];
+            if(controlled)v=std::lround(std::clamp(v*p->controls[c]+(c<3?255*p->controls[4]:0),0.0,255.0));
+            return v;
+        };
+        double value=channel<4?component(channel):0.2126*component(0)+0.7152*component(1)+0.0722*component(2);
+        API->object->array_float_set_idx(out,j*w+i,value);
+    }
+    RETURN->v_int=1;
+}
+
 CK_DLL_MFUN(raster_image_fill) {
     RETURN->v_int=0;
     auto *p=imageState(SELF,API);
@@ -1043,6 +1067,14 @@ CK_DLL_QUERY(RasterIO) {
     QUERY->add_arg(QUERY,"float[]","heights");
     QUERY->add_mfun(QUERY,raster_image_audio_samples,"int","exportAudioSamples");
     QUERY->add_arg(QUERY,"int","channels");
+    QUERY->add_arg(QUERY,"float[]","samples");
+    QUERY->add_mfun(QUERY,raster_image_analysis_samples,"int","analysisSamples");
+    QUERY->add_arg(QUERY,"int","x");
+    QUERY->add_arg(QUERY,"int","y");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int","channel");
+    QUERY->add_arg(QUERY,"int","controlled");
     QUERY->add_arg(QUERY,"float[]","samples");
     QUERY->add_mfun(QUERY,raster_image_export_pixels,"int","exportPixels");
     QUERY->add_arg(QUERY,"int[]","pixels");
