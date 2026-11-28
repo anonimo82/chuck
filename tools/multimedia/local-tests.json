@@ -6,6 +6,7 @@
     "geometry-deformation",
     "geometry-raster-warp",
     "geometry-projection",
-    "geometry-vector-paths"
+    "geometry-vector-paths",
+    "geometry-path-operations"
   ]
 }
