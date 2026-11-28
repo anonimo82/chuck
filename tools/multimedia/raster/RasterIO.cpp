@@ -578,6 +578,85 @@ CK_DLL_MFUN(raster_image_resize) {
         p->input=std::move(next); RETURN->v_int=1;
     } catch(...) {}
 }
+// Inverse-coordinate resampling, shared by matrix and displacement-map adapters.
+// Pixel centers are integer coordinates. Border: 0 transparent, 1 clamp.
+// Filter: 0 nearest, 1 bilinear (premultiplied alpha).
+namespace {
+RGBA warpSample(const RasterPixels &p,double x,double y,int filter,int border) {
+    if(!std::isfinite(x)||!std::isfinite(y))return {};
+    const double maxX=p.width-1,maxY=p.height-1;
+    if(border==1){x=std::clamp(x,0.0,maxX);y=std::clamp(y,0.0,maxY);}
+    if(x< -1 || y< -1 || x>maxX+1 || y>maxY+1)return {};
+    auto pixel=[&](int64_t i,int64_t j)->RGBA{
+        if(i<0||j<0||i>=static_cast<int64_t>(p.width)||j>=static_cast<int64_t>(p.height))return {};
+        size_t n=(static_cast<size_t>(j)*p.width+static_cast<size_t>(i))*4;
+        return {p.rgba[n],p.rgba[n+1],p.rgba[n+2],p.rgba[n+3]};
+    };
+    if(filter==0)return pixel(static_cast<int64_t>(std::floor(x+0.5)),static_cast<int64_t>(std::floor(y+0.5)));
+    auto i=static_cast<int64_t>(std::floor(x)),j=static_cast<int64_t>(std::floor(y));
+    double u=x-i,v=y-j,alpha=0,rgb[3]={};
+    for(int dy=0;dy<2;dy++)for(int dx=0;dx<2;dx++){
+        RGBA q=pixel(i+dx,j+dy);
+        double w=(dx?u:1-u)*(dy?v:1-v)*q[3];
+        alpha+=w;
+        for(int c=0;c<3;c++)rgb[c]+=w*q[c];
+    }
+    RGBA out{};
+    out[3]=static_cast<unsigned char>(std::lround(std::clamp(alpha,0.0,255.0)));
+    if(out[3])for(int c=0;c<3;c++)out[c]=static_cast<unsigned char>(std::lround(std::clamp(rgb[c]/alpha,0.0,255.0)));
+    return out;
+}
+template<class Mapper>
+bool warpRaster(RasterImageState *p,t_CKINT w,t_CKINT h,t_CKINT filter,t_CKINT border,Mapper map){
+    if(!p||!p->input.loaded()||!rasterDimensions(w,h)||filter<0||filter>1||border<0||border>1)return false;
+    RasterPixels next;next.width=w;next.height=h;next.rgba.resize(static_cast<size_t>(w)*h*4);
+    for(size_t y=0;y<next.height;y++)for(size_t x=0;x<next.width;x++){
+        double sx=0,sy=0;
+        RGBA q=map(x,y,sx,sy)?warpSample(p->input,sx,sy,static_cast<int>(filter),static_cast<int>(border)):RGBA{};
+        std::copy(q.begin(),q.end(),next.rgba.begin()+(y*next.width+x)*4);
+    }
+    p->input=std::move(next);return true;
+}
+}
+CK_DLL_MFUN(raster_image_warp_matrix) {
+    RETURN->v_int=0;
+    try {
+        auto *p=imageState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto filter=GET_NEXT_INT(ARGS),border=GET_NEXT_INT(ARGS);
+        if(!a||API->object->array_float_size(a)!=9)return;
+        double m[9];
+        for(int i=0;i<9;i++){m[i]=API->object->array_float_get_idx(a,i);if(!std::isfinite(m[i]))return;}
+        if(m[6]==0&&m[7]==0&&m[8]==0)return;
+        RETURN->v_int=warpRaster(p,w,h,filter,border,[&](double x,double y,double &sx,double &sy){
+            double z=m[6]*x+m[7]*y+m[8];
+            if(!std::isfinite(z)||z==0)return false;
+            sx=(m[0]*x+m[1]*y+m[2])/z;sy=(m[3]*x+m[4]*y+m[5])/z;
+            return std::isfinite(sx)&&std::isfinite(sy);
+        });
+    }catch(...){}
+}
+CK_DLL_MFUN(raster_image_warp_displacement) {
+    RETURN->v_int=0;
+    try {
+        auto *p=imageState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+        auto filter=GET_NEXT_INT(ARGS),border=GET_NEXT_INT(ARGS);
+        if(!a||!rasterDimensions(w,h))return;
+        size_t n=static_cast<size_t>(w)*h*2;
+        if(API->object->array_float_size(a)!=static_cast<t_CKINT>(n))return;
+        for(size_t i=0;i<n;i++)if(!std::isfinite(API->object->array_float_get_idx(a,i)))return;
+        RETURN->v_int=warpRaster(p,w,h,filter,border,[&](double x,double y,double &sx,double &sy){
+            size_t i=(static_cast<size_t>(y)*w+static_cast<size_t>(x))*2;
+            sx=x+API->object->array_float_get_idx(a,i);
+            sy=y+API->object->array_float_get_idx(a,i+1);
+            return std::isfinite(sx)&&std::isfinite(sy);
+        });
+    }catch(...){}
+}
+
 CK_DLL_MFUN(raster_image_composite) {
     RETURN->v_int=0;
     try {
@@ -1017,6 +1096,18 @@ CK_DLL_QUERY(RasterIO) {
     QUERY->add_mfun(QUERY,raster_image_resize,"int","resize");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_mfun(QUERY,raster_image_warp_matrix,"int","warpMatrix");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"float[]","inverseMatrix");
+    QUERY->add_arg(QUERY,"int","filter");
+    QUERY->add_arg(QUERY,"int","border");
+    QUERY->add_mfun(QUERY,raster_image_warp_displacement,"int","warpDisplacement");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"float[]","displacements");
+    QUERY->add_arg(QUERY,"int","filter");
+    QUERY->add_arg(QUERY,"int","border");
     QUERY->add_mfun(QUERY,raster_image_composite,"int","composite");
     QUERY->add_arg(QUERY,"int","x");
     QUERY->add_arg(QUERY,"int","y");
