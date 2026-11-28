@@ -103,6 +103,7 @@
     "analysis-raster",
     "color-conversions",
     "color-indexed",
-    "value-curves"
+    "value-curves",
+    "resource-primitives"
   ]
 }
