@@ -4,6 +4,7 @@
     "geometry-guides",
     "geometry-transforms",
     "geometry-deformation",
-    "geometry-raster-warp"
+    "geometry-raster-warp",
+    "geometry-projection"
   ]
 }

@@ -316,6 +316,38 @@ CK_DLL_MFUN(field_erase) {
     RETURN->v_int=brush(field(SELF,API),4,x,y,r,s,0);
 }
 
+// Equal gaps between ordered items, using caller-supplied total and prefix sizes.
+CK_DLL_SFUN(geo_equal_gap) {
+    RETURN->v_float=invalid();
+    auto first=GET_NEXT_FLOAT(ARGS),last=GET_NEXT_FLOAT(ARGS);
+    auto total=GET_NEXT_FLOAT(ARGS),prefix=GET_NEXT_FLOAT(ARGS);
+    auto count=GET_NEXT_INT(ARGS),index=GET_NEXT_INT(ARGS);
+    if(!geo_finite(first)||!geo_finite(last)||!geo_finite(total)||!geo_finite(prefix)||
+       last<first||total<0||prefix<0||prefix>total||count<2||index<0||index>=count||
+       (index==0&&prefix!=0))return;
+    double gap=(last-first-total)/static_cast<double>(count-1);
+    if(!geo_finite(gap)||gap<0)return;
+    RETURN->v_float=checked(first+prefix+index*gap);
+}
+CK_DLL_SFUN(geo_project) {
+    RETURN->v_int=0;
+    auto a=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+    auto x=GET_NEXT_FLOAT(ARGS),y=GET_NEXT_FLOAT(ARGS),z=GET_NEXT_FLOAT(ARGS);
+    auto result=reinterpret_cast<Chuck_DL_Api::ArrayFloat>(GET_NEXT_OBJECT(ARGS));
+    if(!a||!result||API->object->array_float_size(a)!=16||API->object->array_float_size(result)!=3||
+       !geo_finite(x)||!geo_finite(y)||!geo_finite(z))return;
+    double v[4]={x,y,z,1},q[4]={};
+    for(int i=0;i<4;i++)for(int j=0;j<4;j++){
+        double m=API->object->array_float_get_idx(a,i*4+j);
+        if(!geo_finite(m))return;
+        q[i]+=m*v[j];
+    }
+    if(!geo_finite(q[3])||q[3]==0)return;
+    for(int i=0;i<3;i++){q[i]/=q[3];if(!geo_finite(q[i]))return;}
+    for(int i=0;i<3;i++)API->object->array_float_set_idx(result,i,q[i]);
+    RETURN->v_int=1;
+}
+
 CK_DLL_QUERY(MediaGeometry) {
     QUERY->setname(QUERY,"MediaGeometry");
     QUERY->begin_class(QUERY,"MediaGeometry","Object");
@@ -333,6 +365,19 @@ CK_DLL_QUERY(MediaGeometry) {
     QUERY->add_arg(QUERY,"float","spacingX");QUERY->add_arg(QUERY,"float","spacingY");
     QUERY->add_arg(QUERY,"float","offsetX");QUERY->add_arg(QUERY,"float","offsetY");
     QUERY->add_mfun(QUERY,geo_snap,"float","snap");QUERY->add_arg(QUERY,"int","axis");QUERY->add_arg(QUERY,"float","position");
+    QUERY->add_sfun(QUERY,geo_equal_gap,"float","equalGapPosition");
+    QUERY->add_arg(QUERY,"float","first");
+    QUERY->add_arg(QUERY,"float","last");
+    QUERY->add_arg(QUERY,"float","totalSize");
+    QUERY->add_arg(QUERY,"float","prefixSize");
+    QUERY->add_arg(QUERY,"int","count");
+    QUERY->add_arg(QUERY,"int","index");
+    QUERY->add_sfun(QUERY,geo_project,"int","projectPoint");
+    QUERY->add_arg(QUERY,"float[]","matrix");
+    QUERY->add_arg(QUERY,"float","x");
+    QUERY->add_arg(QUERY,"float","y");
+    QUERY->add_arg(QUERY,"float","z");
+    QUERY->add_arg(QUERY,"float[]","result");
     QUERY->add_sfun(QUERY,geo_align,"float","align");QUERY->add_arg(QUERY,"float","target");
     QUERY->add_arg(QUERY,"float","size");QUERY->add_arg(QUERY,"float","anchor");
     QUERY->add_sfun(QUERY,geo_distribute,"float","distribute");QUERY->add_arg(QUERY,"float","first");
