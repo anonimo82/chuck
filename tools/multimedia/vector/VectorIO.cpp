@@ -1146,6 +1146,42 @@ CK_DLL_MFUN(vector_image_alpha) {
         RETURN->v_int=1;
     } catch(...) {}
 }
+// Convert a thresholded raster selection into a compound path of horizontal
+// runs. Exact at native pixel resolution; no contour simplification.
+CK_DLL_MFUN(vector_image_import_selection) {
+    RETURN->v_int=0;
+    try {
+        auto *p=vectorState(SELF,API);
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto a=reinterpret_cast<Chuck_DL_Api::ArrayInt>(GET_NEXT_OBJECT(ARGS));
+        auto threshold=GET_NEXT_INT(ARGS),rgb=GET_NEXT_INT(ARGS);
+        auto alpha=GET_NEXT_FLOAT(ARGS);
+        if(!p||!a||w<1||w>4096||h<1||h>4096||w*h>4194304||
+           threshold<1||threshold>255||!color(rgb,alpha)||
+           API->object->array_int_size(a)!=w*h)return;
+        std::vector<unsigned char> selected(static_cast<size_t>(w)*h);
+        for(size_t i=0;i<selected.size();i++){
+            auto v=API->object->array_int_get_idx(a,i);
+            if(v<0||v>255)return;
+            selected[i]=v>=threshold;
+        }
+        auto o=svgStream();size_t runs=0;
+        for(int y=0;y<h;y++)for(int x=0;x<w;){
+            if(!selected[static_cast<size_t>(y)*w+x]){x++;continue;}
+            int end=x+1;
+            while(end<w&&selected[static_cast<size_t>(y)*w+end])end++;
+            if(++runs>819)return; // five explicit commands per run, <=4096.
+            if(runs>1)o<<' ';
+            o<<"M "<<x<<' '<<y<<" L "<<end<<' '<<y<<" L "<<end<<' '<<y+1
+             <<" L "<<x<<' '<<y+1<<" Z";
+            x=end;
+        }
+        std::vector<std::string> shapes;
+        if(runs)shapes.push_back("<path d=\""+o.str()+"\""+style(rgb,alpha,false)+"/>");
+        if(p->replaceShapes(w,h,std::move(shapes))){p->reset();RETURN->v_int=1;}
+    }catch(...){}
+}
+
 CK_DLL_MFUN(vector_image_import_pixels) {
     RETURN->v_int=0;
     try {
@@ -1513,6 +1549,13 @@ CK_DLL_QUERY(VectorIO) {
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");
     QUERY->add_arg(QUERY,"float[]","triangles");
+    QUERY->add_mfun(QUERY,vector_image_import_selection,"int","importSelection");
+    QUERY->add_arg(QUERY,"int","width");
+    QUERY->add_arg(QUERY,"int","height");
+    QUERY->add_arg(QUERY,"int[]","mask");
+    QUERY->add_arg(QUERY,"int","threshold");
+    QUERY->add_arg(QUERY,"int","rgb");
+    QUERY->add_arg(QUERY,"float","alpha");
     QUERY->add_mfun(QUERY,vector_image_import_pixels,"int","importPixels");
     QUERY->add_arg(QUERY,"int","width");
     QUERY->add_arg(QUERY,"int","height");

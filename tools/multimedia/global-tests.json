@@ -97,6 +97,7 @@
     "geometry-raster-warp",
     "geometry-projection",
     "geometry-vector-paths",
-    "geometry-path-operations"
+    "geometry-path-operations",
+    "geometry-selection-paths"
   ]
 }
