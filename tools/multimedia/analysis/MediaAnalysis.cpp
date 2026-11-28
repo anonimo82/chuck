@@ -348,6 +348,36 @@ CK_DLL_SFUN(curve_lut){
     }catch(...){}
 }
 
+CK_DLL_SFUN(gradient_sample){
+    RETURN->v_int=0;
+    try{
+        auto knots=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto colors=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        auto position=GET_NEXT_FLOAT(ARGS);
+        auto mode=GET_NEXT_INT(ARGS);
+        auto output=reinterpret_cast<Arr>(GET_NEXT_OBJECT(ARGS));
+        std::vector<double> xs,rgba;
+        if(!output||API->object->array_float_size(output)!=4||!std::isfinite(position)||
+           mode<0||mode>2||!readValues(API,knots,xs)||xs.size()<2||xs.size()>65536||
+           !readValues(API,colors,rgba)||rgba.size()!=4*xs.size())return;
+        for(size_t i=0;i<xs.size();i++)
+            if(!unit(xs[i])||(i&&xs[i]<=xs[i-1]))return;
+        for(double v:rgba)if(!unit(v))return;
+        size_t a=0,b=0;double t=0;
+        if(position>=xs.back())a=b=xs.size()-1;
+        else if(position>xs.front()){
+            b=static_cast<size_t>(std::upper_bound(xs.begin(),xs.end(),position)-xs.begin());a=b-1;
+            if(mode)t=(position-xs[a])/(xs[b]-xs[a]);
+            if(mode==2)t=t*t*(3-2*t);
+        }
+        double alpha=rgba[4*a+3]*(1-t)+rgba[4*b+3]*t;
+        double result[4]={0,0,0,alpha};
+        for(int c=0;c<3;c++)if(alpha>0)
+            result[c]=std::clamp((rgba[4*a+c]*rgba[4*a+3]*(1-t)+rgba[4*b+c]*rgba[4*b+3]*t)/alpha,0.0,1.0);
+        for(int c=0;c<4;c++)API->object->array_float_set_idx(output,c,result[c]);
+        RETURN->v_int=1;
+    }catch(...){}
+}
 CK_DLL_QUERY(MediaAnalysis){
     QUERY->setname(QUERY,"MediaAnalysis");
     QUERY->begin_class(QUERY,"MediaAnalysis","Object");
@@ -415,5 +445,13 @@ CK_DLL_QUERY(MediaAnalysis){
     QUERY->add_arg(QUERY,"float","rangeHigh");
     QUERY->add_arg(QUERY,"int","interpolationMode");
     QUERY->add_arg(QUERY,"float[]","outputValues");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaGradient","Object");
+    QUERY->add_sfun(QUERY,gradient_sample,"int","sampleColor");
+    QUERY->add_arg(QUERY,"float[]","stopPositions");
+    QUERY->add_arg(QUERY,"float[]","stopColors");
+    QUERY->add_arg(QUERY,"float","samplePosition");
+    QUERY->add_arg(QUERY,"int","interpolationMode");
+    QUERY->add_arg(QUERY,"float[]","outputColor");
     return QUERY->end_class(QUERY);
 }
