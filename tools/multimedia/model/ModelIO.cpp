@@ -34,7 +34,7 @@ bool supportedInput(const std::string &path) {
     return ext == ".obj" || ext == ".fbx" || ext == ".gltf" ||
            ext == ".glb" || ext == ".dae" || ext == ".stl" ||
            ext == ".ply" || ext == ".3ds" || ext == ".off" ||
-           ext == ".x3d" || ext == ".blend";
+           ext == ".x3d";
 }
 const aiScene *load(Assimp::Importer &importer, const std::string &path) {
     if(!supportedInput(path) || !fs::is_regular_file(fs::path(path))) return nullptr;
