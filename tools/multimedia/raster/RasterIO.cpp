@@ -370,6 +370,19 @@ CK_DLL_MFUN(raster_image_height) {
     auto *p=imageState(SELF,API);
     RETURN->v_int=p?static_cast<t_CKINT>(p->input.height):0;
 }
+CK_DLL_MFUN(raster_image_copy) {
+    RETURN->v_int=0;
+    try {
+        auto *dst=imageState(SELF,API);
+        auto *obj=GET_NEXT_OBJECT(ARGS);
+        auto overwrite=GET_NEXT_INT(ARGS);
+        if(!dst||!obj||(overwrite!=0&&overwrite!=1))return;
+        auto *src=imageState(obj,API);
+        if(!src||!src->input.loaded()||(!overwrite&&dst->input.loaded()))return;
+        if(src!=dst){RasterImageState copy=*src;*dst=std::move(copy);}
+        RETURN->v_int=1;
+    }catch(...){}
+}
 CK_DLL_MFUN(raster_image_clear) {
     if(auto *p=imageState(SELF,API)) {
         p->input=RasterPixels{};
@@ -1026,6 +1039,9 @@ CK_DLL_QUERY(RasterIO) {
     QUERY->add_mfun(QUERY,raster_image_loaded,"int","loaded");
     QUERY->add_mfun(QUERY,raster_image_width,"int","width");
     QUERY->add_mfun(QUERY,raster_image_height,"int","height");
+    QUERY->add_mfun(QUERY,raster_image_copy,"int","copyFrom");
+    QUERY->add_arg(QUERY,"RasterImage","sourceImage");
+    QUERY->add_arg(QUERY,"int","overwrite");
     QUERY->add_mfun(QUERY,raster_image_clear,"void","clear");
     QUERY->add_mfun(QUERY,raster_image_reset,"void","reset");
     QUERY->add_mfun(QUERY,raster_image_get_red,"float","red");
