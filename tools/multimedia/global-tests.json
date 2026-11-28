@@ -101,6 +101,7 @@
     "geometry-selection-paths",
     "analysis-numeric",
     "analysis-raster",
-    "color-conversions"
+    "color-conversions",
+    "color-indexed"
   ]
 }

@@ -1,5 +1,6 @@
 #include "chuck_dl.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -160,6 +161,119 @@ CK_DLL_SFUN(color_convert){
     RETURN->v_int=1;
 }
 
+namespace {
+bool indexedDimensions(t_CKINT w,t_CKINT h){return w>0&&h>0&&w<=4096&&h<=4096&&w*h<=4194304;}
+using PaletteEntry=std::array<int,4>;
+bool readPalette(CK_DL_API API,IntArr input,std::vector<PaletteEntry>&p){
+    if(!input)return false;
+    auto n=API->object->array_int_size(input);
+    if(n<4||n>1024||n%4)return false;
+    p.resize(n/4);
+    for(t_CKINT i=0;i<n;i++){
+        auto v=API->object->array_int_get_idx(input,i);
+        if(v<0||v>255)return false;
+        p[i/4][i%4]=static_cast<int>(v);
+    }
+    return true;
+}
+size_t nearestColor(const std::vector<PaletteEntry>&p,const double rgba[4]){
+    double best=std::numeric_limits<double>::infinity();size_t idx=0;
+    for(size_t i=0;i<p.size();i++){
+        double d=0;
+        for(int c=0;c<4;c++){double e=rgba[c]-p[i][c];d+=e*e;}
+        if(d<best){best=d;idx=i;}
+    }
+    return idx;
+}
+}
+CK_DLL_SFUN(palette_encode){
+    RETURN->v_int=0;
+    try{
+        auto w=GET_NEXT_INT(ARGS),h=GET_NEXT_INT(ARGS);
+        auto pixels=reinterpret_cast<IntArr>(GET_NEXT_OBJECT(ARGS));
+        auto colors=reinterpret_cast<IntArr>(GET_NEXT_OBJECT(ARGS));
+        auto mode=GET_NEXT_INT(ARGS);
+        auto output=reinterpret_cast<IntArr>(GET_NEXT_OBJECT(ARGS));
+        std::vector<PaletteEntry> p;
+        if(!indexedDimensions(w,h)||!pixels||!output||mode<0||mode>1||!readPalette(API,colors,p))return;
+        size_t n=static_cast<size_t>(w)*h;
+        if(API->object->array_int_size(pixels)!=static_cast<t_CKINT>(4*n)||
+           API->object->array_int_size(output)!=static_cast<t_CKINT>(n))return;
+        std::vector<PaletteEntry> input(n);
+        for(size_t i=0;i<n;i++)for(int c=0;c<4;c++){
+            auto v=API->object->array_int_get_idx(pixels,i*4+c);
+            if(v<0||v>255)return;
+            input[i][c]=static_cast<int>(v);
+        }
+        std::vector<t_CKINT> result(n);
+        // Floyd-Steinberg, left-to-right, RGB error only; alpha remains categorical input.
+        std::vector<std::array<double,3>> row(static_cast<size_t>(w)+2),next(row.size());
+        for(size_t y=0;y<static_cast<size_t>(h);y++){
+            for(size_t x=0;x<static_cast<size_t>(w);x++){
+                size_t i=y*w+x;double rgba[4];
+                for(int c=0;c<4;c++)rgba[c]=std::clamp(static_cast<double>(input[i][c])+(mode&&c<3?row[x+1][c]:0.0),0.0,255.0);
+                size_t k=nearestColor(p,rgba);result[i]=static_cast<t_CKINT>(k);
+                if(mode)for(int c=0;c<3;c++){
+                    double e=rgba[c]-p[k][c];
+                    row[x+2][c]+=e*7/16;next[x][c]+=e*3/16;
+                    next[x+1][c]+=e*5/16;next[x+2][c]+=e/16;
+                }
+            }
+            row.swap(next);std::fill(next.begin(),next.end(),std::array<double,3>{});
+        }
+        for(size_t i=0;i<n;i++)API->object->array_int_set_idx(output,i,result[i]);
+        RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(palette_decode){
+    RETURN->v_int=0;
+    try{
+        auto indices=reinterpret_cast<IntArr>(GET_NEXT_OBJECT(ARGS));
+        auto colors=reinterpret_cast<IntArr>(GET_NEXT_OBJECT(ARGS));
+        auto output=reinterpret_cast<IntArr>(GET_NEXT_OBJECT(ARGS));
+        std::vector<PaletteEntry> p;
+        if(!indices||!output||!readPalette(API,colors,p))return;
+        auto n=API->object->array_int_size(indices);
+        if(n<1||n>4194304||API->object->array_int_size(output)!=n*4)return;
+        std::vector<t_CKINT> result(static_cast<size_t>(n)*4);
+        for(t_CKINT i=0;i<n;i++){
+            auto k=API->object->array_int_get_idx(indices,i);
+            if(k<0||static_cast<size_t>(k)>=p.size())return;
+            for(int c=0;c<4;c++)result[i*4+c]=p[k][c];
+        }
+        for(size_t i=0;i<result.size();i++)API->object->array_int_set_idx(output,i,result[i]);
+        RETURN->v_int=1;
+    }catch(...){}
+}
+CK_DLL_SFUN(palette_reorder){
+    RETURN->v_int=0;
+    try{
+        auto indices=reinterpret_cast<IntArr>(GET_NEXT_OBJECT(ARGS));
+        auto colors=reinterpret_cast<IntArr>(GET_NEXT_OBJECT(ARGS));
+        auto order=reinterpret_cast<IntArr>(GET_NEXT_OBJECT(ARGS));
+        std::vector<PaletteEntry> p;
+        if(!indices||!colors||!order||indices==colors||order==colors||order==indices||
+           !readPalette(API,colors,p)||API->object->array_int_size(order)!=static_cast<t_CKINT>(p.size()))return;
+        auto n=API->object->array_int_size(indices);
+        if(n<1||n>4194304)return;
+        std::vector<int> inverse(p.size(),-1);std::vector<PaletteEntry> reordered(p.size());
+        for(size_t i=0;i<p.size();i++){
+            auto k=API->object->array_int_get_idx(order,i);
+            if(k<0||static_cast<size_t>(k)>=p.size()||inverse[k]>=0)return;
+            inverse[k]=static_cast<int>(i);reordered[i]=p[k];
+        }
+        std::vector<t_CKINT> remapped(n);
+        for(t_CKINT i=0;i<n;i++){
+            auto k=API->object->array_int_get_idx(indices,i);
+            if(k<0||static_cast<size_t>(k)>=p.size())return;
+            remapped[i]=inverse[k];
+        }
+        for(size_t i=0;i<p.size();i++)for(int c=0;c<4;c++)API->object->array_int_set_idx(colors,i*4+c,reordered[i][c]);
+        for(t_CKINT i=0;i<n;i++)API->object->array_int_set_idx(indices,i,remapped[i]);
+        RETURN->v_int=1;
+    }catch(...){}
+}
+
 CK_DLL_QUERY(MediaAnalysis){
     QUERY->setname(QUERY,"MediaAnalysis");
     QUERY->begin_class(QUERY,"MediaAnalysis","Object");
@@ -190,5 +304,22 @@ CK_DLL_QUERY(MediaAnalysis){
     QUERY->add_arg(QUERY,"int","destinationSpace");
     QUERY->add_arg(QUERY,"float[]","inputColor");
     QUERY->add_arg(QUERY,"float[]","outputColor");
+    if(!QUERY->end_class(QUERY))return FALSE;
+    QUERY->begin_class(QUERY,"MediaPalette","Object");
+    QUERY->add_sfun(QUERY,palette_encode,"int","encodeIndexed");
+    QUERY->add_arg(QUERY,"int","imageWidth");
+    QUERY->add_arg(QUERY,"int","imageHeight");
+    QUERY->add_arg(QUERY,"int[]","rgbaPixels");
+    QUERY->add_arg(QUERY,"int[]","paletteColors");
+    QUERY->add_arg(QUERY,"int","ditherMode");
+    QUERY->add_arg(QUERY,"int[]","outputIndices");
+    QUERY->add_sfun(QUERY,palette_decode,"int","decodeIndexed");
+    QUERY->add_arg(QUERY,"int[]","inputIndices");
+    QUERY->add_arg(QUERY,"int[]","paletteColors");
+    QUERY->add_arg(QUERY,"int[]","outputPixels");
+    QUERY->add_sfun(QUERY,palette_reorder,"int","reorderPalette");
+    QUERY->add_arg(QUERY,"int[]","imageIndices");
+    QUERY->add_arg(QUERY,"int[]","paletteColors");
+    QUERY->add_arg(QUERY,"int[]","newOrder");
     return QUERY->end_class(QUERY);
 }
