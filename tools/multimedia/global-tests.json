@@ -91,6 +91,7 @@
     "transport-model-animation",
     "transport-model-fragments",
     "transport-final-consolidation",
-    "geometry-guides"
+    "geometry-guides",
+    "geometry-transforms"
   ]
 }

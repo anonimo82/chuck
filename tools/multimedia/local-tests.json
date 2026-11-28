@@ -1,4 +1,7 @@
 {
   "version": 1,
-  "groups": ["geometry-guides"]
+  "groups": [
+    "geometry-guides",
+    "geometry-transforms"
+  ]
 }
