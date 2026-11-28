@@ -98,6 +98,7 @@
     "geometry-projection",
     "geometry-vector-paths",
     "geometry-path-operations",
-    "geometry-selection-paths"
+    "geometry-selection-paths",
+    "analysis-numeric"
   ]
 }

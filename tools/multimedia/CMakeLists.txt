@@ -121,3 +121,5 @@ if(WIN32)
 endif()
 
 chugin(MediaGeometry geometry/MediaGeometry.cpp)
+
+chugin(MediaAnalysis analysis/MediaAnalysis.cpp)
